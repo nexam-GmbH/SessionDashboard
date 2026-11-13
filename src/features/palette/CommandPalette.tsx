@@ -4,7 +4,7 @@
 // search with shouldFilter={false} so thousands of sessions stay fast.
 import { useDeferredValue, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
-import { FolderGit2, Search, CornerDownLeft, ArrowUpDown, Waypoints } from "lucide-react"
+import { FolderGit2, History, Search, CornerDownLeft, ArrowUpDown, Waypoints } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { getApp, useApp } from "@/store/app"
 import { closePalette, openRepo, openSession } from "@/store/actions"
@@ -14,8 +14,11 @@ import { STATUS_TIER } from "@/lib/status"
 import { relTime } from "@/lib/format"
 import { prepareQuery, scoreSession } from "@/features/sessions/search"
 import type { Session } from "@/lib/model"
-import { COMMANDS, fuzzyScore } from "./commands"
+import { COMMANDS } from "./commands"
+import { matchScore } from "@/lib/match"
 import { searchCodeGraph } from "@/features/code-graph/graphIntent"
+import { setSessionsFilter } from "@/features/sessions/sessionsUi"
+import { navigate } from "@/app/nav"
 
 export default function CommandPalette() {
   const prefix = useApp((s) => s.palettePrefix)
@@ -25,11 +28,12 @@ export default function CommandPalette() {
 
   // Deferred so typing never waits for the 5k-session scan (stress fixture).
   const deferred = useDeferredValue(query)
-  const { sessions, repos, commands } = useMemo(() => {
+  const { sessions, past, pastTotal, repos, commands } = useMemo(() => {
     const s = getApp()
     const q = deferred
-    const cmds = COMMANDS.filter((c) => !c.when || c.when())
-      .map((c) => ({ c, score: fuzzyScore(q, `${c.title} ${c.keywords ?? ""} ${c.group}`) }))
+    // developer commands (fixtures, perf, WebGL) only in ">" command mode
+    const cmds = COMMANDS.filter((c) => (!c.when || c.when()) && (mode === "commands" || c.group !== "Developer"))
+      .map((c) => ({ c, score: matchScore(q, `${c.title} ${c.keywords ?? ""} ${c.group}`) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.c)
@@ -37,16 +41,22 @@ export default function CommandPalette() {
     const limit = q ? 12 : 8
     const pq = prepareQuery(q)
     const top: { x: Session; repo: string; rank: number }[] = []
+    // history/archive matches go in their own short group (calm: live work first, no wall of old runs)
+    const pastAll: { x: Session; repo: string; rank: number }[] = []
     for (const id in s.sessions) {
       const x = s.sessions[id]
-      if (!q && (x.control === "history" || x.archived)) continue
+      const isPast = x.control === "history" || x.archived
+      if (!q && isPast) continue
       const repo = x.repoId ? (s.repos[x.repoId]?.name ?? "") : "main"
       let rank: number
       if (q) {
         const score = scoreSession(pq, x, repo)
         if (!score) continue
-        // live sessions above history, archived last; recency breaks ties
-        rank = score + (x.archived ? -60 : x.control === "history" ? -20 : 0) + Date.parse(x.updatedAt) / 1e13
+        rank = score + (x.archived ? -5 : 0) + Date.parse(x.updatedAt) / 1e13
+        if (isPast) {
+          pastAll.push({ x, repo, rank })
+          continue
+        }
       } else {
         rank = -STATUS_TIER[x.status] * 1e3 + Date.parse(x.updatedAt) / 1e10
       }
@@ -56,12 +66,23 @@ export default function CommandPalette() {
       if (top.length > limit) top.pop()
     }
     const rps = s.repoOrder
-      .map((id) => ({ r: s.repos[id], score: fuzzyScore(q, s.repos[id].name) }))
+      .map((id) => ({ r: s.repos[id], score: matchScore(q, s.repos[id].name) }))
       .filter((v) => v.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, q ? 6 : 5)
-    return { sessions: top, repos: rps, commands: cmds.slice(0, q ? 12 : 8) }
-  }, [deferred])
+    // one row per title+repo (the same task re-run many times reads as noise), newest first among equals
+    pastAll.sort((a, b) => b.rank - a.rank)
+    const seen = new Set<string>()
+    const pastTop: typeof pastAll = []
+    for (const p of pastAll) {
+      const k = `${p.x.title}|${p.repo}`
+      if (seen.has(k)) continue
+      seen.add(k)
+      pastTop.push(p)
+      if (pastTop.length === 4) break
+    }
+    return { sessions: top, past: pastTop, pastTotal: pastAll.length, repos: rps, commands: cmds.slice(0, q ? 12 : 8) }
+  }, [deferred, mode])
 
   // Controlled selection: results arrive one render late (deferred query), so cmdk's own
   // "select the first item" can point at an item that no longer exists and Enter does nothing.
@@ -70,6 +91,8 @@ export default function CommandPalette() {
   const showCode = mode === "all" && query.length >= 2
   const values = [
     ...(mode === "all" || mode === "sessions" ? sessions.map(({ x }) => `s:${x.id}`) : []),
+    ...(mode === "all" || mode === "sessions" ? past.map(({ x }) => `s:${x.id}`) : []),
+    ...((mode === "all" || mode === "sessions") && pastTotal > past.length ? ["h:all"] : []),
     ...(mode === "all" || mode === "commands" ? commands.map((c) => `c:${c.id}`) : []),
     ...(showCode ? ["g:search"] : []),
     ...(mode === "all" || mode === "repos" ? repos.map(({ r }) => `r:${r.id}`) : []),
@@ -113,6 +136,33 @@ export default function CommandPalette() {
                     <span className="tabular ml-auto shrink-0 text-[11px] text-fg-faint">{relTime(x.updatedAt)}</span>
                   </Item>
                 ))}
+              </Group>
+            )}
+            {(mode === "all" || mode === "sessions") && past.length > 0 && (
+              <Group heading="History">
+                {past.map(({ x, repo }) => (
+                  <Item key={x.id} value={`s:${x.id}`} onSelect={() => run(() => openSession(x.id))}>
+                    <StatusGlyph status={x.status} size="sm" animate={false} />
+                    <span className="truncate text-fg-muted">{x.title}</span>
+                    <span className="shrink-0 text-[11px] text-fg-faint">{repo}</span>
+                    {x.archived && <span className="shrink-0 rounded-sm border border-line-subtle px-1 text-[10px] text-fg-faint">archived</span>}
+                    <span className="tabular ml-auto shrink-0 text-[11px] text-fg-faint">{relTime(x.updatedAt)}</span>
+                  </Item>
+                ))}
+                {pastTotal > past.length && (
+                  <Item
+                    value="h:all"
+                    onSelect={() =>
+                      run(() => {
+                        setSessionsFilter({ view: "history", query })
+                        navigate("/sessions")
+                      })
+                    }
+                  >
+                    <History size={14} className="text-fg-faint" />
+                    <span className="truncate text-fg-muted">All {pastTotal} in History</span>
+                  </Item>
+                )}
               </Group>
             )}
             {(mode === "all" || mode === "commands") && commands.length > 0 && (

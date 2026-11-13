@@ -1,10 +1,10 @@
 import type { Session } from "@/lib/model"
-import { fuzzyScore } from "@/features/palette/commands"
+import { chunkScore } from "@/lib/match"
 
 /**
  * Session search (UI_PLAN §5.2, §5.9). Whitespace-separated tokens must all match.
  * A token matches as a substring of the title (best), at a word start in the repo /
- * branch / first prompt, or as a subsequence of the title only. Subsequence matching over
+ * branch / first prompt, or as word-start chunks of the title only (see chunkScore). Subsequence matching over
  * the long prompt text made "auth" match nearly every session; plain substrings there made
  * "rate" match every prompt that says "migrate" or "generate".
  * Haystacks are lowercased once per session object (records are replaced on update).
@@ -52,9 +52,9 @@ export function scoreSession(q: ReturnType<typeof prepareQuery>, s: Session, ext
       score += 30
       continue
     }
-    const f = tok.length > 1 ? fuzzyScore(tok, h.title) : 0
+    const f = tok.length > 1 ? chunkScore(tok, h.title) : 0
     if (!f) return 0
-    score += Math.min(25, f)
+    score += f
   }
   if (q.tokens.length > 1 && h.title.includes(q.lower)) score += 200
   return score
