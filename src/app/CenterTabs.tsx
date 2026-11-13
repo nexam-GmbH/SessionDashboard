@@ -5,7 +5,7 @@ import { memo, useState } from "react"
 import { FolderGit2, GitCompareArrows, Network, Rows3, Settings2, Waypoints, Wrench, X, ExternalLink, Plus } from "lucide-react"
 import { navigate } from "./nav"
 import { useApp, type Tab } from "@/store/app"
-import { closeTab, moveTab, openNewSession } from "@/store/actions"
+import { closeTab, moveTab, openNewSession, pinTab } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { cn } from "@/lib/utils"
 import { useTabTitle } from "./tabMeta"
@@ -60,7 +60,10 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
       role="tab"
       aria-selected={active}
       draggable={!tab.pinned}
-      onDragStart={(e) => e.dataTransfer.setData("text/tab", tab.key)}
+      onDragStart={(e) => {
+        pinTab(tab.key)
+        e.dataTransfer.setData("text/tab", tab.key)
+      }}
       onDragOver={(e) => {
         if (!tab.pinned) {
           e.preventDefault()
@@ -80,7 +83,8 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
         }
       }}
       onClick={() => navigate(tab.key)}
-      title={meta.title}
+      onDoubleClick={() => pinTab(tab.key)}
+      title={tab.preview ? `${meta.title} (preview: double-click to keep open)` : meta.title}
       className={cn(
         "group/tab relative flex shrink-0 cursor-default items-center gap-1.5 border-r border-line-subtle text-xs transition-colors",
         tab.pinned ? "px-3" : "max-w-[220px] min-w-[96px] pr-1 pl-3",
@@ -95,7 +99,7 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
       ) : Icon ? (
         <Icon size={13} className={active ? "text-fg-muted" : undefined} />
       ) : null}
-      <span className="truncate">{meta.title}</span>
+      <span className={cn("truncate", tab.preview && "italic")}>{meta.title}</span>
       {!tab.pinned && (
         <span className="ml-auto flex shrink-0 items-center">
           {tab.kind === "session" && (

@@ -63,7 +63,7 @@ export function NodeTooltipContent({ children, position, className, isVisible, .
   return (
     <NodeToolbar
       isVisible
-      className={cn("pointer-events-none rounded-md border border-line bg-elevated shadow-lg", className)}
+      className={cn("pointer-events-none rounded-md border border-line-strong bg-hover shadow-[0_10px_30px_rgba(0,0,0,0.6)]", className)}
       position={position}
       {...props}
     >

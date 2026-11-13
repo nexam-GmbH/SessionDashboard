@@ -29,6 +29,8 @@ export interface Tab {
   kind: TabKind
   refId?: string
   pinned?: boolean
+  /** VS Code-style preview tab: reused by the next open until you interact with it or double-click it */
+  preview?: boolean
 }
 
 export interface Toast {

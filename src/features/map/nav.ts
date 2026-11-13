@@ -55,10 +55,10 @@ export function pickInDirection(rects: Map<ID, NavRect>, curId: ID, dir: Dir, al
 
 export type AttentionTarget = { kind: "session" | "subagent"; id: ID }
 
-/** The waiting item after `current` (tier 0 first; falls back to errors and unseen). */
+/** The item after `current` that needs you (waiting + errors; falls back to finished-unseen). */
 export function nextAttention(current: ID | null): AttentionTarget | null {
   const all = selectAttention(getApp())
-  const waiting = all.filter((e) => STATUS_TIER[e.status] === 0)
+  const waiting = all.filter((e) => STATUS_TIER[e.status] <= 1)
   const list = waiting.length ? waiting : all
   if (!list.length) return null
   const idx = current ? list.findIndex((e) => e.id === current) : -1

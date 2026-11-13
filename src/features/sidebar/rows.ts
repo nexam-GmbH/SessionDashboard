@@ -9,7 +9,7 @@ import { isVisibleLive, selectAttention, selectLiveSessionIds, type AttentionEnt
  * row's display props from the store, render rows dumb.
  */
 export type SidebarRow =
-  | { type: "section"; key: "needs" | "main" | "repos" | "group"; label: string; count?: number; open: boolean; groupKey?: string }
+  | { type: "section"; key: "needs" | "done" | "main" | "repos" | "group"; label: string; count?: number; open: boolean; groupKey?: string }
   | { type: "attention"; key: string; entry: AttentionEntry; index: number }
   | { type: "session"; key: string; id: ID; depth: number; hasChildren: boolean; open: boolean; twoLine: boolean }
   | { type: "subagent"; key: string; id: ID; depth: number }
@@ -45,6 +45,7 @@ export function hasSignal(s: AppState, id: ID) {
 export interface SidebarUi {
   needsOpen: boolean
   needsAll: boolean
+  doneOpen: boolean
   mainOpen: boolean
   reposOpen: boolean
   closedGroups: Record<string, true>
@@ -54,16 +55,23 @@ export function buildRows(s: AppState, ui: SidebarUi): SidebarRow[] {
   const rows: SidebarRow[] = []
   const attention = selectAttention(s)
 
-  rows.push({ type: "section", key: "needs", label: "Needs you", count: attention.length, open: ui.needsOpen })
+  const needs = attention.filter((e) => STATUS_TIER[e.status] <= 1)
+  const done = attention.filter((e) => e.status === "done_unseen")
+  rows.push({ type: "section", key: "needs", label: "Needs you", count: needs.length, open: ui.needsOpen })
   if (ui.needsOpen) {
-    if (!attention.length) rows.push({ type: "empty", key: "needs-empty", text: "Nothing needs you right now." })
+    if (!needs.length) rows.push({ type: "empty", key: "needs-empty", text: "Nothing needs you." })
     const limit = ui.needsAll ? 60 : 6
-    attention.slice(0, limit).forEach((entry, index) =>
+    needs.slice(0, limit).forEach((entry, index) =>
       rows.push({ type: "attention", key: `att:${entry.kind}:${entry.id}`, entry, index }),
     )
-    if (attention.length > 6) {
-      rows.push({ type: "more", key: "needs-more", text: ui.needsAll ? "Show fewer" : `${attention.length - 6} more` })
+    if (needs.length > 6) {
+      rows.push({ type: "more", key: "needs-more", text: ui.needsAll ? "Show fewer" : `${needs.length - 6} more` })
     }
+  }
+  if (done.length) {
+    // finished but not looked at: a quiet, collapsed-by-default list
+    rows.push({ type: "section", key: "done", label: "Done", count: done.length, open: ui.doneOpen })
+    if (ui.doneOpen) done.slice(0, 20).forEach((entry, index) => rows.push({ type: "attention", key: `done:${entry.id}`, entry, index }))
   }
 
   rows.push({ type: "section", key: "main", label: "Main agent", open: ui.mainOpen })

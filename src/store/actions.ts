@@ -51,11 +51,27 @@ function tabFor(path: string): Tab {
 }
 
 /** Called by the router whenever the location changes. */
+const PREVIEW_KINDS: TabKind[] = ["session", "repo", "review", "graph"]
+
 export function syncActiveTab(pathname: string) {
   const key = pathname === "/" ? "/map" : pathname
   setApp((s) => {
-    const tabs = s.tabs.some((t) => t.key === key) ? s.tabs : [...s.tabs, tabFor(key)]
-    const mounted = [key, ...s.mountedTabs.filter((k) => k !== key)].slice(0, 5)
+    let tabs = s.tabs
+    let mounted = s.mountedTabs
+    if (!tabs.some((t) => t.key === key)) {
+      const tab = tabFor(key)
+      if (PREVIEW_KINDS.includes(tab.kind)) {
+        // reuse the existing preview tab (calm: opening many sessions doesn't pile up tabs)
+        const i = tabs.findIndex((t) => t.preview)
+        const next = { ...tab, preview: true }
+        if (i >= 0) {
+          const old = tabs[i].key
+          tabs = tabs.map((t, j) => (j === i ? next : t))
+          mounted = mounted.filter((k) => k !== old)
+        } else tabs = [...tabs, next]
+      } else tabs = [...tabs, tab]
+    }
+    mounted = [key, ...mounted.filter((k) => k !== key)].slice(0, 5)
     return { tabs, activeTab: key, mountedTabs: mounted }
   })
   const [, kind, refId] = key.split("/")
@@ -65,6 +81,12 @@ export function syncActiveTab(pathname: string) {
     if (!sel || sel.kind !== "session" || sel.id !== refId) select({ kind: "session", id: refId }, { reveal: false })
   }
 }
+
+/** Turn a preview tab into a normal tab (double-click, or when you interact with the session). */
+export function pinTab(key: string) {
+  setApp((s) => (s.tabs.some((t) => t.key === key && t.preview) ? { tabs: s.tabs.map((t) => (t.key === key ? { ...t, preview: false } : t)) } : s))
+}
+const pinSessionTab = (sessionId: ID) => pinTab(`/session/${sessionId}`)
 
 export function closeTab(key: string) {
   const s = getApp()
@@ -205,6 +227,7 @@ export function snoozeSession(id: ID, hours: number) {
 }
 
 export function renameSession(id: ID, title: string) {
+  pinSessionTab(id)
   patchSession(id, { title, titleSource: "custom", titleLocked: true })
 }
 
@@ -340,6 +363,7 @@ export function resolvePermission(requestId: ID, optionId: string, feedback?: st
   const s = getApp()
   const req = s.requests[requestId]
   if (!req || req.type === "question") return
+  if (s.activeTab === `/session/${req.sessionId}`) pinSessionTab(req.sessionId)
   const option = req.options.find((o) => o.id === optionId)
   const rejected = option?.kind === "reject_once" || option?.kind === "reject_always"
   setApp((st) => ({
@@ -380,6 +404,7 @@ export function resolvePermission(requestId: ID, optionId: string, feedback?: st
 export function answerQuestion(requestId: ID, answers: Record<string, string | string[]>) {
   const req = getApp().requests[requestId] as QuestionRequest | undefined
   if (!req || req.type !== "question") return
+  pinSessionTab(req.sessionId)
   setApp((st) => ({
     requests: { ...st.requests, [requestId]: { ...req, state: "answered" } },
     toasts: st.toasts.filter((t) => t.sessionId !== req.sessionId),
@@ -395,6 +420,7 @@ export function answerQuestion(requestId: ID, answers: Record<string, string | s
 export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" = "queue") {
   const s = getApp().sessions[sessionId]
   if (!s || !text.trim()) return
+  pinSessionTab(sessionId)
   const t = getApp().transcripts[sessionId]
   if (t && (s.status === "working" || s.status === "starting") && mode === "queue") {
     setApp((st) => ({
@@ -518,7 +544,10 @@ export function setEngine(patch: Partial<{ running: boolean; rate: number }>) {
 /** Go to the next item that needs the user (tier 0 first). */
 export async function goToNextWaiting() {
   const { selectAttention } = await import("./selectors")
-  const list = selectAttention(getApp())
+  const { STATUS_TIER } = await import("@/lib/status")
+  const all = selectAttention(getApp())
+  const needs = all.filter((e) => STATUS_TIER[e.status] <= 1)
+  const list = needs.length ? needs : all
   if (!list.length) return
   const current = getApp().activeTab
   const idx = list.findIndex((e) => current === `/session/${e.kind === "session" ? e.id : e.sessionId}`)

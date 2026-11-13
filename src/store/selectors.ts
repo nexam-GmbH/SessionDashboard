@@ -62,9 +62,9 @@ export const selectAttention = memoOn(sv, (s) => {
 })
 export const useAttention = () => useApp(selectAttention)
 
-/** Number of items that need the user right now (tier 0 = waiting). */
+/** Number of items that need the user right now: waiting (tier 0) + errors (tier 1). One definition everywhere. */
 export const selectWaitingCount = (s: AppState) =>
-  selectAttention(s).filter((e) => STATUS_TIER[e.status] === 0).length
+  selectAttention(s).filter((e) => STATUS_TIER[e.status] <= 1).length
 
 // ---------- status counts ----------
 export type StatusCounts = Record<SessionStatus, number> & { background: number }

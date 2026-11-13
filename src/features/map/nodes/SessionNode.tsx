@@ -293,7 +293,6 @@ export const SessionGlance = memo(function SessionGlance({ id, mode }: { id: str
   const s = useSession(id)
   // the compact glance opens toward the roomier side of the canvas so it is never clipped
   const left = useStore((st) => {
-    if (mode === "meta") return false
     const n = st.nodeLookup.get(id)
     if (!n) return false
     const sx = n.internals.positionAbsolute.x * st.transform[2] + st.transform[0]
@@ -302,7 +301,8 @@ export const SessionGlance = memo(function SessionGlance({ id, mode }: { id: str
   if (!s) return null
   if (mode === "meta") {
     return (
-      <NodeTooltipContent nodeId={id} isVisible position={Position.Bottom} offset={6} className="px-3 py-2" style={{ width: CARD_W }}>
+      // beside the card (roomier side), so it never hides the next card in the same repo
+      <NodeTooltipContent nodeId={id} isVisible position={left ? Position.Left : Position.Right} offset={10} className="px-3 py-2" style={{ width: CARD_W }}>
         <SessionMeta s={s} />
       </NodeTooltipContent>
     )

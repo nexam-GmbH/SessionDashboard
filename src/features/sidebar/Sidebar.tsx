@@ -55,7 +55,7 @@ import type { ID, SessionStatus } from "@/lib/model"
 import { buildRows, rowHeight, type SidebarRow, type SidebarUi } from "./rows"
 
 export function Sidebar() {
-  const [ui, setUi] = useState<SidebarUi>({ needsOpen: true, needsAll: false, mainOpen: true, reposOpen: true, closedGroups: {} })
+  const [ui, setUi] = useState<SidebarUi>({ needsOpen: true, needsAll: false, doneOpen: false, mainOpen: true, reposOpen: true, closedGroups: {} })
   const structVersion = useApp((s) => s.structVersion)
   const statusVersion = useApp((s) => s.statusVersion)
   const expanded = useApp((s) => s.sidebarExpanded)
@@ -82,6 +82,7 @@ export function Sidebar() {
   const toggleSection = useCallback((row: Extract<SidebarRow, { type: "section" }>) => {
     setUi((u) => {
       if (row.key === "needs") return { ...u, needsOpen: !u.needsOpen }
+      if (row.key === "done") return { ...u, doneOpen: !u.doneOpen }
       if (row.key === "main") return { ...u, mainOpen: !u.mainOpen }
       if (row.key === "repos") return { ...u, reposOpen: !u.reposOpen }
       const g = { ...u.closedGroups }
