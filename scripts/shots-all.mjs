@@ -285,7 +285,7 @@ const sessionShots = [
   ["session-question", "Session view: AskUserQuestion card", ids.question],
   ["session-plan", "Session view: plan approval (ExitPlanMode)", ids.plan],
   ["session-error", "Session view: error notice", ids.error],
-  ["session-observed", "Session view: observed / read-only banner", ids.observed],
+  ["session-observed", "Session view: observed session (running in your terminal)", ids.observed],
   ["session-history", "Session view: history session (Resume / Fork)", ids.history],
 ]
 for (const [name, desc, id] of sessionShots) {
@@ -294,6 +294,19 @@ for (const [name, desc, id] of sessionShots) {
     await go(`#/session/${id}`)
     await wait(900)
   })
+}
+
+await shot("session-rewind", `Session view: Rewind dialog (${ids.bash})`, async () => {
+  await go(`#/session/${ids.bash}`)
+  await wait(700)
+  await page.locator('button[aria-label="More actions"]:visible').first().click()
+  await wait(200)
+  await page.getByRole("menuitem", { name: /Rewind/ }).click()
+  await wait(500)
+})
+if (want("session-rewind")) {
+  await page.keyboard.press("Escape")
+  await wait(200)
 }
 
 // ---------------- review ----------------
@@ -435,6 +448,16 @@ await shot("palette-query", "Command palette with query 'auth'", async () => {
   await page.keyboard.type("auth")
   await wait(300)
 })
+await shot("palette-history", "Command palette: live sessions first, one short History group", async () => {
+  await page.keyboard.press("Control+k")
+  await wait(300)
+  await page.keyboard.type("oidc")
+  await wait(400)
+})
+if (want("palette-history")) {
+  await page.keyboard.press("Escape")
+  await wait(200)
+}
 await shot("palette-commands", "Command palette in > command mode", async () => {
   await page.keyboard.press("Control+k")
   await wait(300)
