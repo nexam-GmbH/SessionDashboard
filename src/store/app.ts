@@ -158,6 +158,28 @@ export const PINNED_TABS: Tab[] = [
   { key: "/sessions", kind: "sessions", pinned: true },
 ]
 
+/**
+ * Open tabs survive a reload/restart (VS Code). Tabs whose session/repo no longer exists (other
+ * fixture, archived and gone) are dropped; Map and Sessions are always first.
+ */
+const TABS_KEY = "sd.tabs"
+function loadTabs(): Tab[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) ?? "null") as Tab[] | null
+    if (!Array.isArray(raw)) return [...PINNED_TABS]
+    const valid = raw.filter((t) => {
+      if (!t || typeof t.key !== "string" || t.pinned) return false
+      const [, kind, ref] = t.key.split("/")
+      if (kind === "session" || kind === "review") return !!ref && !!world.sessions[ref]
+      if (kind === "repo") return !!ref && !!world.repos[ref]
+      return kind === "graph" || kind === "settings" || kind === "dev"
+    })
+    return [...PINNED_TABS, ...valid]
+  } catch {
+    return [...PINNED_TABS]
+  }
+}
+
 export const useApp = create<AppState>()(
   subscribeWithSelector((): AppState => ({
     ...world,
@@ -165,7 +187,7 @@ export const useApp = create<AppState>()(
     structVersion: 0,
     statusVersion: 0,
 
-    tabs: [...PINNED_TABS],
+    tabs: loadTabs(),
     mountedTabs: ["/map"],
     activeTab: "/map",
     selection: null,
@@ -215,6 +237,17 @@ useApp.subscribe(
       localStorage.setItem("sd.settings", JSON.stringify(settings))
     } catch {
       /* storage unavailable: settings stay in memory */
+    }
+  },
+)
+
+useApp.subscribe(
+  (s) => s.tabs,
+  (tabs) => {
+    try {
+      localStorage.setItem(TABS_KEY, JSON.stringify(tabs.filter((t) => !t.pinned)))
+    } catch {
+      /* storage unavailable: tabs stay in memory */
     }
   },
 )
