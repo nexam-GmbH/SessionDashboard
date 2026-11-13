@@ -486,10 +486,30 @@ export function setHistoryRange(r: HistoryRange) {
 }
 
 // ---------- dialogs ----------
+// Type-ahead: keys pressed between Ctrl+K and the palette input getting focus (first open loads a
+// chunk and mounts a dialog) are buffered and handed to the palette, so fast typing isn't lost.
+let typeAhead = ""
+function captureTypeAhead(e: KeyboardEvent) {
+  if ((document.activeElement as HTMLElement | null)?.hasAttribute("cmdk-input")) return
+  if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return
+  typeAhead += e.key
+  e.preventDefault()
+  e.stopPropagation()
+}
+/** Called by the palette once its input is focused: stops buffering, returns what was typed. */
+export function takePaletteTypeAhead() {
+  window.removeEventListener("keydown", captureTypeAhead, true)
+  const t = typeAhead
+  typeAhead = ""
+  return t
+}
 export function openPalette(prefix = "") {
+  typeAhead = ""
+  window.addEventListener("keydown", captureTypeAhead, true)
   setApp({ paletteOpen: true, palettePrefix: prefix })
 }
 export function closePalette() {
+  takePaletteTypeAhead()
   setApp({ paletteOpen: false, palettePrefix: "" })
 }
 export function openNewSession(repoId?: ID, tab: "new" | "resume" = "new") {

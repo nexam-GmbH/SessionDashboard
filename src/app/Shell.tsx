@@ -14,8 +14,20 @@ import { ToastStack } from "@/features/notifications/ToastStack"
 import { ShortcutsHelp } from "./ShortcutsHelp"
 import { ErrorBoundary } from "@/components/common/ErrorBoundary"
 
-const CommandPalette = lazy(() => import("@/features/palette/CommandPalette"))
-const NewSessionDialog = lazy(() => import("@/features/new-session/NewSessionDialog"))
+const loadPalette = () => import("@/features/palette/CommandPalette")
+const loadNewSession = () => import("@/features/new-session/NewSessionDialog")
+const CommandPalette = lazy(loadPalette)
+const NewSessionDialog = lazy(loadNewSession)
+
+// Preload the dialogs once the app is idle, so keys typed right after Ctrl+K / Ctrl+N aren't lost
+// while the chunk downloads (they stay out of the initial bundle).
+if (typeof window !== "undefined") {
+  const idle = window.requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1200))
+  idle(() => {
+    void loadPalette()
+    void loadNewSession()
+  })
+}
 const CrossRepoDialog = lazy(() => import("@/features/new-session/CrossRepoDialog"))
 const AddReposDialog = lazy(() => import("@/features/settings/AddReposDialog").then((m) => ({ default: m.AddReposDialog })))
 

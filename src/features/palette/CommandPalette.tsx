@@ -2,12 +2,12 @@
 // Yaak CommandPaletteDialog.tsx (MIT) and Orca's worktree-jump palette (MIT):
 // recents on top, groups, prefix modes (> commands, @ sessions, # repos), own fuzzy
 // search with shouldFilter={false} so thousands of sessions stay fast.
-import { useDeferredValue, useMemo, useState } from "react"
+import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
 import { FolderGit2, History, Search, CornerDownLeft, ArrowUpDown, Waypoints } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { getApp, useApp } from "@/store/app"
-import { closePalette, openRepo, openSession } from "@/store/actions"
+import { closePalette, openRepo, openSession, takePaletteTypeAhead } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Kbd, Shortcut } from "@/components/common/bits"
 import { STATUS_TIER } from "@/lib/status"
@@ -23,6 +23,12 @@ import { navigate } from "@/app/nav"
 export default function CommandPalette() {
   const prefix = useApp((s) => s.palettePrefix)
   const [raw, setRaw] = useState(prefix)
+  // keys typed before the input had focus (see openPalette)
+  useEffect(() => {
+    const early = takePaletteTypeAhead()
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time merge of buffered keystrokes on mount
+    if (early) setRaw((r) => r + early)
+  }, [])
   const mode = raw.startsWith(">") ? "commands" : raw.startsWith("@") ? "sessions" : raw.startsWith("#") ? "repos" : "all"
   const query = mode === "all" ? raw.trim() : raw.slice(1).trim()
 
