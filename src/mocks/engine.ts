@@ -155,8 +155,8 @@ function tick() {
     } else if (roll < 0.94) {
       const running = (s.subagentIdsBySession[x.id] ?? []).filter((a) => s.subagents[a].status === "running")
       if (running.length) enqueue({ t: "subagent-done", aid: rng.pick(running) })
-    } else if (roll < 0.965 && x.role !== "main") {
-      // occasional transitions so the attention queue stays alive
+    } else if (roll < 0.9435 && x.role !== "main") {
+      // occasional transitions (~1/min at the default rate) so the attention queue stays alive without noise
       const next = rng.pick(["done_unseen", "done_unseen", "waiting_permission", "waiting_input"] as const)
       if (next === "waiting_permission") {
         const id = `r_${rng.hex(8)}`

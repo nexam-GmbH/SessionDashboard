@@ -11,6 +11,7 @@ import { Sidebar } from "@/features/sidebar/Sidebar"
 import { Inspector } from "@/features/inspector/Inspector"
 import { BottomPanel } from "./BottomPanel"
 import { ToastStack } from "@/features/notifications/ToastStack"
+import { ShortcutsHelp } from "./ShortcutsHelp"
 import { ErrorBoundary } from "@/components/common/ErrorBoundary"
 
 const CommandPalette = lazy(() => import("@/features/palette/CommandPalette"))
@@ -148,6 +149,7 @@ export function Shell() {
       </div>
       <StatusBar />
       <ToastStack />
+      <ShortcutsHelp />
       <ErrorBoundary label="Dialog">
         <Suspense fallback={null}>
           {paletteOpen && <CommandPalette />}

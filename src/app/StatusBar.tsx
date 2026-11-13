@@ -1,7 +1,8 @@
 // Status bar — UI_PLAN §4.6 + Calm UI rules (§2.5): glyph + count only, attention counts only when
 // non-zero, no labels (tooltips instead). After Orca status-bar/StatusBar.tsx (MIT); 22px like VS Code.
 import { memo } from "react"
-import { Radio } from "lucide-react"
+import { Keyboard, Radio } from "lucide-react"
+import { openShortcutsHelp } from "./ShortcutsHelp"
 import { useApp } from "@/store/app"
 import { useStatusCounts } from "@/store/selectors"
 import { navigate } from "./nav"
@@ -38,6 +39,9 @@ export const StatusBar = memo(function StatusBar() {
         ) : null,
       )}
       <div className="ml-auto flex items-stretch">
+        <button className={item} onClick={openShortcutsHelp} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <Keyboard size={12} />
+        </button>
         <button
           className={item}
           onClick={() => setEngine({ running: !engine.running })}
