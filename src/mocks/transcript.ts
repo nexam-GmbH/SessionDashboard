@@ -54,6 +54,41 @@ function codeFor(lang: RepoSpec["language"], file: string, symbol: string, rng: 
           next: `export function ${symbol}({ tickets }: { tickets: TicketV3[] }) {\n  return (\n    <Table>\n      {tickets.map((t) => (\n        <Row\n          key={t.id}\n          title={t.subject}\n          status={t.state.kind}\n          assignee={t.assignee?.name}\n          slaDueAt={t.sla?.dueAt}\n        />\n      ))}\n    </Table>\n  )\n}\n`,
         }
       }
+      {
+        const base = file.split("/").pop() ?? file
+        if (base.includes(".test.")) {
+          const subject = base.split(".")[0].replace(/-./g, (m) => m[1].toUpperCase())
+          return {
+            old: `describe("${subject}", () => {\n  it("handles the happy path", async () => {\n    expect(await ${subject}(fixture())).toMatchSnapshot()\n  })\n})\n`,
+            next: `describe("${subject}", () => {\n  it("handles the happy path", async () => {\n    expect(await ${subject}(fixture())).toMatchSnapshot()\n  })\n\n  it("keeps v2 payloads readable", async () => {\n    const out = await ${subject}(fixture({ version: 2 }))\n    expect(out.version).toBe(3)\n    expect(out.state.kind).toBe("open")\n  })\n})\n`,
+          }
+        }
+        if (base.startsWith("migrate")) {
+          return {
+            old: `export function migrateV2toV3(t: TicketV2): TicketV3 {\n  return { ...t, version: 3 }\n}\n`,
+            next: `export function migrateV2toV3(t: TicketV2): TicketV3 {\n  return {\n    ...t,\n    version: 3,\n    state: { kind: t.status === "closed" ? "closed" : "open", since: t.updatedAt },\n    sla: t.dueAt ? { dueAt: t.dueAt } : undefined,\n  }\n}\n`,
+          }
+        }
+        if (base.startsWith("ticket")) {
+          return {
+            old: `export interface Ticket {\n  id: string\n  subject: string\n  status: "open" | "pending" | "closed"\n  dueAt?: string\n}\n`,
+            next: `export interface TicketV3 {\n  id: string\n  version: 3\n  subject: string\n  state: { kind: "open" | "pending" | "closed"; since: string }\n  assignee?: { id: string; name: string }\n  sla?: { dueAt: string }\n}\n\n/** @deprecated read through migrateV2toV3 */\nexport type Ticket = TicketV2\n`,
+          }
+        }
+        if (file.includes("/routes/") && !base.startsWith("ticket")) {
+          const name = base.split(".")[0]
+          return {
+            old: `router.get("/v2/${name}", async (req, res) => {\n  const rows = await db.${name}.list(req.query)\n  res.json(rows)\n})\n`,
+            next: `router.get("/v2/${name}", async (req, res) => {\n  const query = ListQuery.parse(req.query)\n  const rows = await db.${name}.list(query)\n  res.json(rows.map(toV3))\n})\n`,
+          }
+        }
+        if (base.startsWith("sla")) {
+          return {
+            old: `export async function checkSla(ticket: Ticket) {\n  if (ticket.dueAt && Date.parse(ticket.dueAt) < Date.now()) await notify(ticket)\n}\n`,
+            next: `export async function checkSla(ticket: TicketV3) {\n  const due = ticket.sla?.dueAt\n  if (!due || ticket.state.kind === "closed") return\n  if (Date.parse(due) < Date.now()) await notify(ticket, { reason: "sla_breach" })\n}\n`,
+          }
+        }
+      }
       return rng.pick([
         {
           old: `export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {\n  let attempt = 0\n  while (true) {\n    try {\n      attempt++\n      return await fn()\n    } catch (err) {\n      attempt++\n      if (attempt >= (opts.maxAttempts ?? 3) || !isRetryable(err)) throw err\n      await sleep(backoff(attempt, opts))\n    }\n  }\n}\n`,
@@ -176,7 +211,7 @@ function buildTurn(ctx: Ctx, turnIndex: number, prompt: string, mode: "complete"
   // sessions in the same repo work on different files/symbols; a path named in the session's
   // activity or prompt wins, so the transcript matches what the map and sidebar say it is doing
   const offset = hashString(session.id)
-  const named = [session.activity, prompt].join(" ").match(/[\w-]+(?:\/[\w.-]+)+\.\w+/)?.[0]
+  const named = [...[session.activity, prompt].join(" ").matchAll(/[\w-]+(?:\/[\w.-]+)+\.\w+/g)].map((m) => m[0]).find((f) => !/\.(test|spec)\./.test(f))
   const file = turnIndex === 0 && named ? named : files[(turnIndex + offset) % files.length]
   const test = files.find((f) => f.includes("test")) ?? files[files.length - 1]
   const symbols = spec?.symbols ?? ["main"]
