@@ -119,6 +119,9 @@ function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, 
   const nodes: GNode[] = []
   const members: string[][] = Array.from({ length: communities }, () => [])
   const ext = files[0]?.split(".").pop() ?? "ts"
+  // the first code node of each catalog symbol is the symbol itself (withRetry()), so searching
+  // for a name the sessions talk about finds it; labels only, the rng sequence is unchanged
+  const named = new Set<string>()
   for (let i = 0; i < nodeCount; i++) {
     // power-law-ish community sizes
     const c = Math.min(communities - 1, Math.floor(Math.pow(rng.float(), 1.7) * communities))
@@ -126,8 +129,8 @@ function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, 
     const base = symbols[i % symbols.length]
     const label = isFile
       ? `${commNames[c]}/${["index", "client", "types", "handler", "store", "utils", "config", "service"][i % 8]}${i > 30 ? i : ""}.${ext}`
-      : i < symbols.length
-        ? `${base}()`
+      : !named.has(base)
+        ? (named.add(base), `${base}()`)
         : `${base}${["Helper", "Options", "Error", "Config", "Builder", "Result", "Cache", "Client"][i % 8]}${i % 7 === 0 ? "" : i}`
     const id = `${prefix}n${i}`
     nodes.push({

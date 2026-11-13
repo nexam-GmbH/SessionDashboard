@@ -509,6 +509,12 @@ export function ensureTranscript(sessionId: ID) {
   if (st.transcripts[sessionId]) return
   const session = st.sessions[sessionId]
   if (!session) return
+  // a session created in the app moments ago starts with just its first prompt, not a fake history
+  if (session.firstPrompt && session.role !== "main" && Date.now() - Date.parse(session.createdAt) < 5 * 60_000) {
+    setApp((s) => ({ transcripts: { ...s.transcripts, [sessionId]: { sessionId, turns: [], order: [], items: {}, queued: [], todos: [] } } }))
+    appendUserMessage(sessionId, session.firstPrompt)
+    return
+  }
   const t = generateTranscript(session, isBig(session))
   setApp((s) => ({ transcripts: { ...s.transcripts, [sessionId]: t } }))
 }

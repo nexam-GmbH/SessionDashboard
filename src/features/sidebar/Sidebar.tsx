@@ -8,9 +8,9 @@ import {
   ArchiveRestore,
   ChevronRight,
   Copy,
-  ExternalLink,
   GitFork,
   ListFilter,
+  PictureInPicture2,
   Pin,
   Plus,
   SquarePen,
@@ -35,13 +35,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  archiveSession,
   forkSession,
   openNewSession,
   openRepo,
   openSession,
   pinSession,
-  restoreSession,
   select,
   setSidebarGroupBy,
   toggleSidebarNode,
@@ -53,6 +51,7 @@ import { setSessionsFilter } from "@/features/sessions/sessionsUi"
 import { cn } from "@/lib/utils"
 import type { ID, SessionStatus } from "@/lib/model"
 import { buildRows, rowHeight, type SidebarRow, type SidebarUi } from "./rows"
+import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
 
 export function Sidebar() {
   const [ui, setUi] = useState<SidebarUi>({ needsOpen: true, needsAll: false, doneOpen: false, mainOpen: true, reposOpen: true, closedGroups: {} })
@@ -129,6 +128,10 @@ export function Sidebar() {
     } else if (e.key === "Enter" && row) {
       e.preventDefault()
       activate(row)
+    } else if ((e.key === "e" || e.key === "E") && row?.type === "session") {
+      // same key as the Sessions table (the context menu shows it)
+      e.preventDefault()
+      archiveWithUndo([row.id])
     } else if ((e.key === "ArrowRight" || e.key === "ArrowLeft" || e.key === " ") && row) {
       e.preventDefault()
       const want = e.key === "ArrowRight" ? true : e.key === "ArrowLeft" ? false : undefined
@@ -409,7 +412,7 @@ function SessionRow({
                 className="hidden size-4 items-center justify-center rounded-sm text-fg-faint group-hover/row:flex hover:bg-selected hover:text-fg"
                 onClick={(e) => {
                   e.stopPropagation()
-                  archiveSession(row.id)
+                  archiveWithUndo([row.id])
                 }}
                 title="Archive"
                 aria-label="Archive session"
@@ -534,14 +537,14 @@ function SidebarContextMenu({ row }: { row: SidebarRow | null }) {
     <ContextMenuContent className="min-w-52">
       <ContextMenuItem onSelect={() => openSession(session.id)}>Open</ContextMenuItem>
       <ContextMenuItem onSelect={() => openPopout(`/session/${session.id}`)}>
-        <ExternalLink /> Open in new window
+        <PictureInPicture2 /> Pop out
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onSelect={() => pinSession(session.id)}>
         <Pin /> {session.pinned ? "Unpin" : "Pin"}
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => forkSession(session.id)}>
-        <GitFork /> Fork session
+        <GitFork /> Fork
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(`claude --resume ${session.providerSessionIds.at(-1)}`)}>
         <Copy /> Copy resume command
@@ -550,11 +553,11 @@ function SidebarContextMenu({ row }: { row: SidebarRow | null }) {
         <>
           <ContextMenuSeparator />
           {session.archived ? (
-            <ContextMenuItem onSelect={() => restoreSession(session.id)}>
+            <ContextMenuItem onSelect={() => restoreWithUndo([session.id])}>
               <ArchiveRestore /> Restore
             </ContextMenuItem>
           ) : (
-            <ContextMenuItem onSelect={() => archiveSession(session.id)}>
+            <ContextMenuItem onSelect={() => archiveWithUndo([session.id])}>
               <Archive /> Archive <ContextMenuShortcut>E</ContextMenuShortcut>
             </ContextMenuItem>
           )}

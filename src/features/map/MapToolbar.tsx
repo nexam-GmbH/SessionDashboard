@@ -1,12 +1,13 @@
 // Map toolbar — UI_PLAN §5.1 toolbar, reshaped by the Calm UI rules (§2.5 rule 7: 3–5 controls,
 // the rest in one menu): node search, one "View" menu (status filter, repositories, history
-// range, repo links, minimap), a clear-filters chip while a filter hides something, and the
-// "Needs you N ›" jump on the right. The per-status counters live in the status bar.
+// range, repo links, minimap) and a clear-filters chip while a filter hides something. The
+// "needs you" count and jump live once, in the title bar (N on the map selects the next card);
+// the per-status counters live in the status bar.
 import { memo, useCallback } from "react"
-import { ChevronDown, ChevronRight, FolderGit2, SlidersHorizontal, X } from "lucide-react"
+import { ChevronDown, FolderGit2, SlidersHorizontal, X } from "lucide-react"
 import { useApp, getApp, type HistoryRange } from "@/store/app"
 import { patchMap, setHistoryRange } from "@/store/actions"
-import { selectStatusCounts, selectWaitingCount, isVisibleLive, type StatusCounts } from "@/store/selectors"
+import { selectStatusCounts, isVisibleLive, type StatusCounts } from "@/store/selectors"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { NodeSearch } from "@/components/flow/node-search"
 import {
@@ -24,7 +25,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { cn } from "@/lib/utils"
 import type { ID, SessionStatus } from "@/lib/model"
 import { STATUS_TIER } from "@/lib/status"
 import { setMapLocal, useMapLocal } from "./mapStore"
@@ -52,16 +52,9 @@ export type SearchItem = {
   status?: SessionStatus
 }
 
-export const MapToolbar = memo(function MapToolbar({
-  onSearchSelect,
-  onNextWaiting,
-}: {
-  onSearchSelect: (item: SearchItem) => void
-  onNextWaiting: () => void
-}) {
+export const MapToolbar = memo(function MapToolbar({ onSearchSelect }: { onSearchSelect: (item: SearchItem) => void }) {
   const statusFilter = useApp((s) => s.map.statusFilter)
   const repoFilter = useApp((s) => s.map.repoFilter)
-  const waiting = useApp(selectWaitingCount)
   const onSearch = useCallback((q: string) => searchMap(q), [])
   const filtered = statusFilter.length > 0 || repoFilter.length > 0
 
@@ -90,20 +83,6 @@ export const MapToolbar = memo(function MapToolbar({
           <X size={12} /> Filtered
         </button>
       )}
-      <button
-        onClick={onNextWaiting}
-        disabled={!waiting}
-        className={cn(
-          "ml-auto flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
-          waiting ? "border-st-perm/40 bg-st-perm-tint text-st-perm-fg hover:border-st-perm/70" : "border-transparent text-fg-faint",
-        )}
-        title={waiting ? "Jump to the next item that needs you (N)" : "Nothing needs you"}
-      >
-        <StatusGlyph status={waiting ? "waiting_permission" : "idle"} size="xs" title={null} />
-        <span className="whitespace-nowrap">Needs you</span>
-        <span className="tabular font-medium">{waiting}</span>
-        {waiting > 0 && <ChevronRight size={12} className="-mr-0.5" />}
-      </button>
     </div>
   )
 })

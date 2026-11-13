@@ -209,6 +209,26 @@ export function deriveChangedFiles(t: Transcript | undefined): ChangedFile[] {
 
 const changedCache = new Map<ID, { order: ID[]; value: ChangedFile[] }>()
 /** Memoized on the transcript's `order` (diffs never change while text streams). */
+/**
+ * Number of delegated child sessions of a main agent (what its combined review shows); 0 for
+ * standard sessions. Recounted only when the structure changes, not on every engine tick.
+ */
+let delegatedCache: { v: number; byParent: Map<ID, number> } | null = null
+function delegatedIn(s: ReturnType<typeof getApp>, sessionId: ID): number {
+  if (s.sessions[sessionId]?.role !== "main") return 0
+  if (delegatedCache?.v !== s.structVersion) {
+    const byParent = new Map<ID, number>()
+    for (const id in s.sessions) {
+      const c = s.sessions[id]
+      if (c.parent?.kind === "delegated" && !c.archived) byParent.set(c.parent.sessionId, (byParent.get(c.parent.sessionId) ?? 0) + 1)
+    }
+    delegatedCache = { v: s.structVersion, byParent }
+  }
+  return delegatedCache.byParent.get(sessionId) ?? 0
+}
+export const useDelegatedCount = (sessionId: ID) => useApp((s) => delegatedIn(s, sessionId))
+export const getDelegatedCount = (sessionId: ID) => delegatedIn(getApp(), sessionId)
+
 export function useChangedFiles(sessionId: ID): ChangedFile[] {
   return useApp((s) => {
     const t = s.transcripts[sessionId]

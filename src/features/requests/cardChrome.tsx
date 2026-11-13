@@ -184,11 +184,12 @@ const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
 
 /**
  * 1–3 word label for an ACP permission option (the full `name` goes in the tooltip):
- * "Yes" → Allow, "Yes, and don't ask again for npm test:* in this project" → Always allow
+ * "Yes" → Allow once (the same label as map cards and the inspector), "Yes, and don't ask again
+ * for npm test:* in this project" → Always allow
  * `npm test:*`, "No, keep planning" → Keep planning.
  */
 export function optionLabel(o: PermissionOption): ReactNode {
-  if (o.kind === "allow_once" && /^(yes|allow)\.?$/i.test(o.name.trim())) return "Allow"
+  if (o.kind === "allow_once" && /^(yes|allow)\.?$/i.test(o.name.trim())) return "Allow once"
   if (o.kind === "reject_once" && /^no,? and tell/i.test(o.name)) return "Deny"
   if (o.kind === "reject_always" && /^no\.?$/i.test(o.name.trim())) return "Always deny"
   const pattern = /(\S+(?: \S+)?:\*)/.exec(o.name)?.[1]

@@ -4,7 +4,7 @@
 // Real mechanism later: a Claude Code session with --add-dir per repo + Graphify global MCP
 // + cross-session messaging (RESEARCH §1.2).
 import { useMemo, useState } from "react"
-import { FolderGit2, Network, Check, Link2 } from "lucide-react"
+import { FolderGit2, Network, Link2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -18,7 +18,14 @@ export default function CrossRepoDialog() {
   const order = useApp((s) => s.repoOrder)
   const repos = useApp((s) => s.repos)
   const links = useApp((s) => s.links)
-  const [selected, setSelected] = useState<ID[]>(["repo_shared-rules"].filter((id) => repos[id]))
+  // start from what you were looking at (a selected repo, or the repo of a selected session), not
+  // from a fixed default you'd have to untick
+  const [selected, setSelected] = useState<ID[]>(() => {
+    const st = getApp()
+    const sel = st.selection
+    const id = sel?.kind === "repo" ? sel.id : sel?.kind === "session" ? st.sessions[sel.id]?.repoId : null
+    return id && st.repos[id] ? [id] : []
+  })
   const [task, setTask] = useState("")
   const [planFirst, setPlanFirst] = useState(true)
   const [worktrees, setWorktrees] = useState(true)
@@ -116,7 +123,7 @@ export default function CrossRepoDialog() {
         <div className="flex items-center gap-2 border-t border-line-subtle px-4 py-2.5">
           <Button size="sm" variant="ghost" className="ml-auto" onClick={() => openCrossRepo(false)}>Cancel</Button>
           <Button size="sm" variant="default" disabled={!task.trim() || !selected.length} onClick={start} title="Runs in the main agent with --add-dir for each repo">
-            <Check /> {planFirst ? "Plan" : `Delegate (${selected.length})`}
+            {planFirst ? "Plan" : `Delegate (${selected.length})`}
           </Button>
         </div>
       </DialogContent>

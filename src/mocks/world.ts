@@ -460,6 +460,11 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
     })
   }
 
+  // a "yesterday" session to find and resume (usability walkthrough task)
+  if (fixture === "normal") {
+    makeSession("repo_api-gateway", "Rate limiting for /v1/chat", "stopped", { history: true, createdAgo: 26 * HOUR })
+  }
+
   // ---------- links ----------
   const links: RepoLink[] = []
   const link = (from: string, to: string, kind: RepoLink["kind"], label: string, weight?: number) => {

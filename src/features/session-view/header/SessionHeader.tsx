@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import type { Effort, ID, PermissionMode, Session } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { archiveSession, forkSession, openRepo, openReview, renameSession, setBottomTab, setSessionSettings } from "@/store/actions"
+import { forkSession, openRepo, openReview, renameSession, setBottomTab, setSessionSettings } from "@/store/actions"
 import { openPopout } from "@/app/popout"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Button } from "@/components/ui/button"
@@ -41,7 +41,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PERMISSION_MODE_LABEL, STATUS_LABEL, capabilities } from "@/lib/status"
 import { compact, homePath, plural, usd } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { interruptSession, useChangedFiles } from "../sessionStore"
+import { interruptSession, useChangedFiles, useDelegatedCount } from "../sessionStore"
+import { archiveWithUndo } from "@/features/notifications/undo"
 
 export const MODELS = [
   { value: "claude-opus-5-5", label: "Opus 5.5" },
@@ -237,6 +238,8 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
   const s = useApp((st) => st.sessions[sessionId])
   const repo = useApp((st) => (s?.repoId ? st.repos[s.repoId] : undefined))
   const files = useChangedFiles(sessionId)
+  // the main agent has no edits of its own; its Review is the combined review of its delegated sessions
+  const delegated = useDelegatedCount(sessionId)
   const [editing, setEditing] = useState(false)
   // "Rename" from the menu: start editing once the menu has closed and returned focus.
   const renameNext = useRef(false)
@@ -276,8 +279,8 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
             </Button>
           </Hint>
         )}
-        {changed > 0 && (
-          <Hint label={`${plural(changed, "file")} · +${added} −${removed}`}>
+        {(changed > 0 || delegated > 0) && (
+          <Hint label={changed > 0 ? `${plural(changed, "file")} · +${added} −${removed}` : `Changes across ${plural(delegated, "delegated session")}`}>
             <Button size="sm" variant="ghost" onClick={() => openReview(sessionId)}>
               <FileDiff /> Review
             </Button>
@@ -321,7 +324,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
               <Copy /> Copy resume command
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-[12px]" disabled={s.role === "main"} onSelect={() => archiveSession(sessionId)}>
+            <DropdownMenuItem className="text-[12px]" disabled={s.role === "main"} onSelect={() => archiveWithUndo([sessionId])}>
               <Archive /> Archive
             </DropdownMenuItem>
           </DropdownMenuContent>

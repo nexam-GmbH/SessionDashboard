@@ -7,6 +7,8 @@
 // data (RESEARCH §5), community aggregation above 5k nodes with drill-down into a subset graph
 // (Graphify viewer behavior), our tokens and IDE layout (communities/filters left, inspector right).
 import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { setNewSessionPrefill } from "@/features/new-session/prefill"
+import { clearGraphIntent, peekGraphIntent, useGraphIntent } from "./graphIntent"
 import type Graph from "graphology"
 import type { Sigma as SigmaType } from "sigma"
 import {
@@ -28,8 +30,8 @@ import {
   MessageSquarePlus,
   FileCode,
 } from "lucide-react"
-import { useApp } from "@/store/app"
-import { openGraph, openNewSession } from "@/store/actions"
+import { getApp, useApp } from "@/store/app"
+import { openGraph, openNewSession, togglePanel } from "@/store/actions"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Kbd } from "@/components/common/bits"
 import {
@@ -63,7 +65,7 @@ export default function CodeGraphView({ scope }: { scope: string }) {
   const [relations, setRelations] = useState<Set<string>>(new Set(RELATIONS))
   const [confidence, setConfidence] = useState<Set<string>>(new Set(CONFIDENCE))
   const [selected, setSelected] = useState<string | null>(null)
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState(() => peekGraphIntent(scope))
   const [activeResult, setActiveResult] = useState(0)
   const [layoutRunning, setLayoutRunning] = useState(false)
   const [showReport, setShowReport] = useState(false)
@@ -87,6 +89,36 @@ export default function CodeGraphView({ scope }: { scope: string }) {
       return 0
     }
   }, [])
+
+  // "/" focuses the symbol search from anywhere while this tab is visible (effects are torn down
+  // while hidden under <Activity>), not only after clicking into the view
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return
+      if (document.querySelector("[role=dialog],[role=menu]")) return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  // a search started elsewhere ("Find … in code graph" in the palette): picked up at mount
+  // (initial query) or while mounted (subscription), then cleared
+  useEffect(() => {
+    // arrived with a query: focus the field so Enter opens the first match
+    if (peekGraphIntent(scope)) searchRef.current?.focus()
+    clearGraphIntent(scope)
+    return useGraphIntent.subscribe((s, prev) => {
+      if (s.seq === prev.seq || s.scope !== scope || !s.query) return
+      setQuery(s.query)
+      setActiveResult(0)
+      clearGraphIntent(scope)
+      searchRef.current?.focus()
+    })
+  }, [scope])
 
   // load data (scope never changes for a mounted view: each scope is its own tab)
   useEffect(() => {
@@ -131,6 +163,8 @@ export default function CodeGraphView({ scope }: { scope: string }) {
 
   const applySelection = (id: string | null) => {
     const g = graphRef.current
+    // the node panel is this view's inspector: don't squeeze the canvas between two side panels
+    if (id && getApp().panels.inspector) togglePanel("inspector", false)
     selectedRef.current = id
     neighborsRef.current = id && g?.hasNode(id) ? new Set(g.neighbors(id)) : new Set()
     setSelected(id)
@@ -340,9 +374,12 @@ export default function CodeGraphView({ scope }: { scope: string }) {
     const q = deferredQuery.trim()
     if (!data || !q) return []
     const top: { n: GNode; s: number }[] = []
+    const exact = q.toLowerCase()
     for (const n of data.nodes) {
-      const s = fuzzyScore(q, n.label)
+      let s = fuzzyScore(q, n.label)
       if (s <= 0) continue
+      // the symbol itself ("withRetry" → withRetry()) before withRetryCache, withRetryError…
+      if (n.label.toLowerCase().replace(/\(\)$/, "") === exact) s += 1000
       if (top.length < 8) top.push({ n, s })
       else if (s > top[7].s) top[7] = { n, s }
       else continue
@@ -393,10 +430,7 @@ export default function CodeGraphView({ scope }: { scope: string }) {
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const typing = (e.target as HTMLElement).tagName === "INPUT"
-    if (e.key === "/" && !typing) {
-      e.preventDefault()
-      searchRef.current?.focus()
-    } else if (e.key === "Escape" && !typing && selected) {
+    if (e.key === "Escape" && !typing && selected) {
       applySelection(null)
     }
   }
@@ -456,8 +490,11 @@ export default function CodeGraphView({ scope }: { scope: string }) {
                   className={cn("flex h-7 w-full items-center gap-2 px-2.5 text-left text-xs", i === activeResult && "bg-selected")}
                 >
                   <span className="size-2 shrink-0 rounded-full" style={{ background: colorOf(n.community) }} />
-                  <span className="truncate font-mono text-[11px] text-fg">{n.label}</span>
-                  <span className="ml-auto shrink-0 text-[10.5px] text-fg-faint">{n.community_name}</span>
+                  <span className="max-w-[65%] shrink-0 truncate font-mono text-[11px] text-fg">{n.label}</span>
+                  {/* file, not community (the dot has the community color): tells same-named symbols apart */}
+                  <span className="min-w-0 flex-1 truncate pl-2 text-right font-mono text-[10.5px] text-fg-faint" title={n.source_file}>
+                    {n.label === n.source_file ? n.community_name : n.source_file}
+                  </span>
                 </button>
               ))}
             </div>
@@ -694,7 +731,16 @@ function NodeInspector({ data, id, color, onFocus, onClose, scope }: { data: Gra
           {node.community_name}
         </div>
         <div className="mt-3 flex items-center gap-1">
-          <Button size="sm" variant="default" onClick={() => openNewSession(scope === "global" ? undefined : scope)} title="Start a session with this symbol as context">
+          <Button
+            size="sm"
+            variant="default"
+            onClick={() => {
+              setNewSessionPrefill(`About \`${node.label}\` (${node.source_file}:${node.source_location.replace("L", "")}): `)
+              // global graph nodes carry their repo's name
+              openNewSession(scope === "global" ? Object.values(getApp().repos).find((r) => r.name === node.repo)?.id : scope)
+            }}
+            title="Start a session with this symbol as context"
+          >
             <MessageSquarePlus /> Ask a session
           </Button>
           <Button size="icon-sm" variant="ghost" onClick={() => onFocus(id)} title="Frame in view" aria-label="Frame in view"><Crosshair /></Button>

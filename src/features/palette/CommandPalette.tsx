@@ -4,7 +4,7 @@
 // search with shouldFilter={false} so thousands of sessions stay fast.
 import { useDeferredValue, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
-import { FolderGit2, Search, CornerDownLeft, ArrowUpDown } from "lucide-react"
+import { FolderGit2, Search, CornerDownLeft, ArrowUpDown, Waypoints } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { getApp, useApp } from "@/store/app"
 import { closePalette, openRepo, openSession } from "@/store/actions"
@@ -15,6 +15,7 @@ import { relTime } from "@/lib/format"
 import { prepareQuery, scoreSession } from "@/features/sessions/search"
 import type { Session } from "@/lib/model"
 import { COMMANDS, fuzzyScore } from "./commands"
+import { searchCodeGraph } from "@/features/code-graph/graphIntent"
 
 export default function CommandPalette() {
   const prefix = useApp((s) => s.palettePrefix)
@@ -62,6 +63,19 @@ export default function CommandPalette() {
     return { sessions: top, repos: rps, commands: cmds.slice(0, q ? 12 : 8) }
   }, [deferred])
 
+  // Controlled selection: results arrive one render late (deferred query), so cmdk's own
+  // "select the first item" can point at an item that no longer exists and Enter does nothing.
+  // Fall back to the first visible item whenever the selected one is gone.
+  const [value, setValue] = useState("")
+  const showCode = mode === "all" && query.length >= 2
+  const values = [
+    ...(mode === "all" || mode === "sessions" ? sessions.map(({ x }) => `s:${x.id}`) : []),
+    ...(mode === "all" || mode === "commands" ? commands.map((c) => `c:${c.id}`) : []),
+    ...(showCode ? ["g:search"] : []),
+    ...(mode === "all" || mode === "repos" ? repos.map(({ r }) => `r:${r.id}`) : []),
+  ]
+  const selected = values.includes(value) ? value : (values[0] ?? "")
+
   const run = (fn: () => void) => {
     closePalette()
     fn()
@@ -74,7 +88,7 @@ export default function CommandPalette() {
         className="top-[14%] max-w-[640px] translate-y-0 gap-0 overflow-hidden border-line bg-elevated p-0 shadow-[0_16px_48px_rgba(0,0,0,0.55)] sm:max-w-[640px]"
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <Cmdk shouldFilter={false} loop className="flex flex-col" label="Command palette">
+        <Cmdk shouldFilter={false} loop value={selected} onValueChange={setValue} className="flex flex-col" label="Command palette">
           <div className="flex h-10 items-center gap-2 border-b border-line-subtle px-3">
             <Search size={14} className="shrink-0 text-fg-faint" />
             <Cmdk.Input
@@ -109,6 +123,17 @@ export default function CommandPalette() {
                     {c.shortcut && <Shortcut keys={c.shortcut} className="ml-auto" />}
                   </Item>
                 ))}
+              </Group>
+            )}
+            {/* code symbols aren't indexed here: one way into the graph search instead of "No results" */}
+            {showCode && (
+              <Group heading="Code">
+                <Item value="g:search" onSelect={() => run(() => searchCodeGraph(query))}>
+                  <Waypoints size={14} className="text-fg-faint" />
+                  <span className="truncate text-fg">
+                    Find <code className="font-mono text-[12px]">{query}</code> in code graph
+                  </span>
+                </Item>
               </Group>
             )}
             {(mode === "all" || mode === "repos") && repos.length > 0 && (

@@ -3,9 +3,10 @@ import { fuzzyScore } from "@/features/palette/commands"
 
 /**
  * Session search (UI_PLAN §5.2, §5.9). Whitespace-separated tokens must all match.
- * A token matches as a substring of the title (best), of the repo / branch / first
- * prompt, or as a subsequence of the title only. Subsequence matching over the long
- * prompt text is what made "auth" match nearly every session before.
+ * A token matches as a substring of the title (best), at a word start in the repo /
+ * branch / first prompt, or as a subsequence of the title only. Subsequence matching over
+ * the long prompt text made "auth" match nearly every session; plain substrings there made
+ * "rate" match every prompt that says "migrate" or "generate".
  * Haystacks are lowercased once per session object (records are replaced on update).
  */
 const hayCache = new WeakMap<Session, { title: string; rest: string }>()
@@ -17,6 +18,18 @@ function hay(s: Session, extra: string) {
     hayCache.set(s, h)
   }
   return h
+}
+
+/** `tok` occurs in `text` at the start of a word (after a non-alphanumeric character). */
+function hasWordStart(text: string, tok: string) {
+  let i = text.indexOf(tok)
+  while (i >= 0) {
+    const c = i === 0 ? 32 : text.charCodeAt(i - 1)
+    // not [0-9a-z] (haystacks are lowercased)
+    if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 122))) return true
+    i = text.indexOf(tok, i + 1)
+  }
+  return false
 }
 
 export function prepareQuery(q: string) {
@@ -35,7 +48,7 @@ export function scoreSession(q: ReturnType<typeof prepareQuery>, s: Session, ext
       score += 100 + (ti === 0 || h.title[ti - 1] === " " ? 40 : 0)
       continue
     }
-    if (h.rest.includes(tok)) {
+    if (hasWordStart(h.rest, tok)) {
       score += 30
       continue
     }

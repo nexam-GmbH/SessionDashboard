@@ -11,6 +11,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Copy,
+  FileDiff,
   FolderGit2,
   FolderOpen,
   GitFork,
@@ -32,11 +33,11 @@ import {
 } from "@/components/ui/context-menu"
 import { useApp, getApp } from "@/store/app"
 import {
-  archiveSession,
   forkSession,
   openCrossRepo,
   openNewSession,
   openRepo,
+  openReview,
   openSession,
   patchMap,
   resumeSession,
@@ -48,7 +49,8 @@ import {
 import { capabilities } from "@/lib/status"
 import { isTauri } from "@/lib/tauri"
 import type { ID, PermissionOption, PermissionRequest, Session } from "@/lib/model"
-import { interruptSession, resolveRequest } from "@/features/session-view/sessionStore"
+import { getDelegatedCount, interruptSession, resolveRequest } from "@/features/session-view/sessionStore"
+import { archiveWithUndo } from "@/features/notifications/undo"
 
 export type MapTarget = { type: "session" | "repo" | "subagent" | "stack" | "main"; id: ID }
 
@@ -58,6 +60,8 @@ interface Action {
   icon: ReactNode
   run: () => void
   primary?: boolean
+  /** icon + label in the floating toolbar (otherwise icon only, label as tooltip) */
+  labeled?: boolean
   /** status tone: perm (orange) for a permission, input (amber) for a question or plan */
   tone?: "perm" | "input"
   shortcut?: string
@@ -91,9 +95,13 @@ function sessionActions(s: Session): Action[] {
   if (caps.interrupt && (s.status === "working" || s.status === "starting"))
     out.push({ id: "interrupt", label: "Interrupt", icon: <Square className="size-4 fill-current p-[3px]" />, run: () => interruptSession(s.id) })
   if (caps.resume) out.push({ id: "resume", label: "Resume", icon: <Play />, run: () => resumeSession(s.id) })
-  if (s.role === "main") out.push({ id: "cross", label: "Cross-repo task", icon: <Network />, run: () => openCrossRepo() })
+  // same action, label and icon as the session header / inspector; the main agent's review is the
+  // combined review of its delegated sessions
+  if (s.diff.filesChanged > 0 || getDelegatedCount(s.id) > 0) out.push({ id: "review", label: "Review changes", icon: <FileDiff />, run: () => openReview(s.id) })
+  // the main agent's own job: labeled so it can be found without hovering every icon
+  if (s.role === "main") out.push({ id: "cross", label: "Cross-repo task", icon: <Network />, run: () => openCrossRepo(), labeled: true })
   out.push({ id: "fork", label: "Fork", icon: <GitFork />, run: () => forkSession(s.id) })
-  if (s.role !== "main") out.push({ id: "archive", label: "Archive", icon: <Archive />, run: () => archiveSession(s.id) })
+  if (s.role !== "main") out.push({ id: "archive", label: "Archive", icon: <Archive />, run: () => archiveWithUndo([s.id]) })
   return out
 }
 
@@ -112,7 +120,9 @@ export const SessionToolbar = memo(function SessionToolbar({ id }: { id: ID }) {
   const agents = useApp((st) => st.subagentIdsBySession[id]?.length ?? 0)
   const agentsOpen = useApp((st) => !!st.map.expandedSubagents[id])
   if (!s) return null
-  const actions = sessionActions(s).filter((a) => !INLINE_ON_CARD.has(a.id))
+  // ≤ 5 controls (§2.5 rule 7): Review stays in the menu for normal cards; the main agent swaps
+  // Fork (rare) for its Review + Cross-repo task
+  const actions = sessionActions(s).filter((a) => !INLINE_ON_CARD.has(a.id) && (s.role === "main" ? a.id !== "fork" : a.id !== "review"))
   return (
     <div
       className="nodrag nopan flex items-center gap-0.5 rounded-md border border-line bg-elevated p-0.5 shadow-md"
@@ -120,8 +130,8 @@ export const SessionToolbar = memo(function SessionToolbar({ id }: { id: ID }) {
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {actions.map((a) =>
-        a.primary ? (
-          <Button key={a.id} size="xs" variant="secondary" onClick={a.run} title={a.shortcut ? `${a.label} (${a.shortcut})` : a.label}>
+        a.primary || a.labeled ? (
+          <Button key={a.id} size="xs" variant={a.primary ? "secondary" : "ghost"} onClick={a.run} title={a.shortcut ? `${a.label} (${a.shortcut})` : a.label}>
             {a.icon}
             {a.label}
           </Button>

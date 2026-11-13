@@ -133,7 +133,7 @@ function ChildRequest({ req, sessionId, canApprove, more }: { req: PermissionReq
       <span className="ml-1 flex shrink-0 items-center gap-0.5">
         {allow && (
           <Button size="xs" variant="perm" disabled={!canApprove} onClick={() => resolveRequest(req, allow.id)} title={allow.name}>
-            Allow
+            Allow once
           </Button>
         )}
         {deny && (

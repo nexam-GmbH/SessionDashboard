@@ -25,7 +25,7 @@ export const STATUS_LABEL: Record<SessionStatus, string> = {
   working: "Working",
   starting: "Starting",
   idle: "Idle",
-  stopped: "Stopped",
+  stopped: "Not running",
 }
 
 export const STATUS_SHORT: Record<SessionStatus, string> = {

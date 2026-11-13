@@ -75,11 +75,12 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     for (const o of owners) ensureTranscript(o.id)
   }, [owners])
-  // Keep the inspector on the reviewed session while this tab is visible.
+  // Keep the inspector on the reviewed session while this tab is visible, without opening it:
+  // the diff needs the width (Calm UI rule 7: the inspector opens when you select something).
   useEffect(() => {
     const sel = getApp().selection
     if (sel?.kind !== "session" || sel.id !== sessionId)
-      select({ kind: "session", id: sessionId })
+      select({ kind: "session", id: sessionId }, { reveal: false })
   }, [sessionId])
   const changes = useOwnerChanges(owners)
   const ready = owners.length > 0 && changes.every((c) => c !== null)

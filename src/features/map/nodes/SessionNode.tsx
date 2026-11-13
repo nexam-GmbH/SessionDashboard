@@ -43,7 +43,9 @@ export const SessionNode = memo(function SessionNode({ id, height }: NodeProps<M
     <>
       <MapHandles />
       {selected && (
-        <NodeToolbar isVisible position={Position.Top} offset={6}>
+        // right-aligned: it then covers the (usually empty) bottom-right corner of the card above
+        // instead of the start of its title or context line
+        <NodeToolbar isVisible position={Position.Top} align="end" offset={4}>
           <SessionToolbar id={id} />
         </NodeToolbar>
       )}

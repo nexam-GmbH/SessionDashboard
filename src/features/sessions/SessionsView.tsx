@@ -33,9 +33,10 @@ import {
   X,
 } from "lucide-react"
 import { getApp, useApp } from "@/store/app"
-import { useStatusCounts, selectAttention } from "@/store/selectors"
+import { useStatusCounts, selectAttention, selectWaitingCount, EMPTY } from "@/store/selectors"
 import type { AppState } from "@/store/app"
-import { archiveSessions, openSession, pinSession, restoreSessions, resumeSession, select, patchSettings } from "@/store/actions"
+import { openSession, pinSession, resumeSession, select, patchSettings } from "@/store/actions"
+import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { ControlTag, EmptyState, Kbd, MOD } from "@/components/common/bits"
 import { useRelTime } from "@/components/common/RelativeTime"
@@ -64,17 +65,29 @@ import { cmpIso, compareAttentionFast } from "@/features/sessions/search"
 const DAY = 86_400_000
 
 const VIEWS: { id: SessionsViewName; label: string; hint: string }[] = [
-  { id: "attention", label: "Needs you", hint: "Waiting for you, failed, or finished and not yet seen" },
+  { id: "attention", label: "Needs you", hint: "Waiting for you or failed (the same count as the title bar and sidebar)" },
   { id: "active", label: "Active", hint: "Running and idle sessions" },
   { id: "recent", label: "Recent", hint: "Updated in the last 7 days" },
   { id: "history", label: "History", hint: "Ended sessions you can resume or fork" },
   { id: "archived", label: "Archive", hint: "Hidden from the map, sidebar and lists. Nothing is deleted; restore any time." },
 ]
 
-function inView(s: Session, view: SessionsViewName, now: number) {
+/**
+ * Attention tier with subagents folded in: a session whose subagent waits for permission needs
+ * you (tier 0), whatever its own status says. Same rule as the sidebar queue and the title bar.
+ */
+function tierOf(s: Session, subWaiting: Set<ID>) {
+  return subWaiting.has(s.id) ? 0 : STATUS_TIER[s.status]
+}
+
+const VIEW_IDS: SessionsViewName[] = ["attention", "active", "recent", "history", "archived"]
+
+function inView(s: Session, view: SessionsViewName, now: number, subWaiting: Set<ID>) {
   switch (view) {
     case "attention":
-      return !s.archived && s.control !== "history" && STATUS_TIER[s.status] <= 2
+      // "Needs you" means waiting + errors everywhere (selectWaitingCount); finished-unseen
+      // sessions sort first in Active and have their own "Done" section in the sidebar
+      return !s.archived && s.control !== "history" && tierOf(s, subWaiting) <= 1
     case "active":
       return !s.archived && s.control !== "history"
     case "recent":
@@ -126,7 +139,7 @@ export default function SessionsView() {
   const counts = useStatusCounts()
   const archivedCount = useApp((s) => selectViewCounts(s).archived)
   const historyCount = useApp((s) => selectViewCounts(s).history)
-  const attentionCount = useApp((s) => selectAttention(s).filter((e) => e.kind === "session").length)
+  const attentionCount = useApp(selectWaitingCount)
   const [sorting, setSorting] = useState<SortingState>([])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const searchRef = useRef<HTMLInputElement>(null)
@@ -134,18 +147,40 @@ export default function SessionsView() {
   // reset selection when the view changes
   useEffect(() => setRowSelection({}), [ui.view])
 
+  // Keyboard: arriving here (G S, palette, tab click) puts focus on the table when nothing else
+  // has it, so arrows / x / E work at once, and "/" focuses search from anywhere while this tab is
+  // visible (effects are torn down while the tab is hidden under <Activity>).
+  useEffect(() => {
+    if (document.activeElement === document.body) scrollRef.current?.focus({ preventScroll: true })
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return
+      if (document.querySelector("[role=dialog],[role=menu]")) return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
   // Search runs on a deferred copy so typing stays responsive over 5k rows; status ticks only
   // matter for views whose membership depends on status (history/archive rows never change).
   const query = useDeferredValue(ui.query)
   const statusDep = ui.view === "history" || ui.view === "archived" ? 0 : statusVersion
-  const data = useMemo(() => {
+  const { data, matchCounts } = useMemo(() => {
     const st = getApp()
     const now = Date.now()
     const pq = prepareQuery(query)
     const q = pq.tokens.length > 0
+    const subWaiting = new Set<ID>()
+    for (const e of selectAttention(st)) if (e.kind === "subagent") subWaiting.add(e.sessionId)
     const out: { s: Session; repo: string; score: number }[] = []
+    // while searching, every view tab shows how many matches it holds (no dead-end "No matches")
+    const counts: Record<SessionsViewName, number> = { attention: 0, active: 0, recent: 0, history: 0, archived: 0 }
     for (const s of Object.values(st.sessions)) {
-      if (!inView(s, ui.view, now)) continue
+      const here = inView(s, ui.view, now, subWaiting)
+      if (!here && !q) continue
       if (ui.status.length && !ui.status.includes(s.status)) continue
       if (ui.repos.length && !(s.repoId && ui.repos.includes(s.repoId))) continue
       if (ui.control.length && !ui.control.includes(s.control)) continue
@@ -155,14 +190,16 @@ export default function SessionsView() {
       if (q) {
         score = scoreSession(pq, s, repo)
         if (!score) continue
+        for (const v of VIEW_IDS) if (inView(s, v, now, subWaiting)) counts[v]++
       }
-      out.push({ s, repo, score })
+      if (here) out.push({ s, repo, score })
     }
-    if (q) out.sort((a, b) => b.score - a.score)
+    // best match first; among equally good matches the most recent one (yesterday before last month)
+    if (q) out.sort((a, b) => b.score - a.score || cmpIso(b.s.updatedAt, a.s.updatedAt))
     else if (ui.view === "history" || ui.view === "archived" || ui.view === "recent")
       out.sort((a, b) => cmpIso(b.s.archivedAt ?? b.s.updatedAt, a.s.archivedAt ?? a.s.updatedAt))
-    else out.sort((a, b) => compareAttentionFast(a.s, b.s, STATUS_TIER))
-    return out.map(({ s, repo }) => ({ s, repo }))
+    else out.sort((a, b) => tierOf(a.s, subWaiting) - tierOf(b.s, subWaiting) || compareAttentionFast(a.s, b.s, STATUS_TIER))
+    return { data: out.map(({ s, repo }) => ({ s, repo })), matchCounts: q ? counts : null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ui.view, query, ui.status, ui.repos, ui.control, ui.model, structVersion, statusDep])
 
@@ -181,9 +218,8 @@ export default function SessionsView() {
             className="size-3.5"
           />
         ),
-        cell: ({ row, table }) => (
-          <RowCheck checked={row.getIsSelected()} onToggle={() => row.toggleSelected()} hidden={!row.getIsSelected() && !table.getIsSomeRowsSelected()} />
-        ),
+        // rendered by SessionRow from its `selected` prop (see there)
+        cell: () => null,
       },
       {
         id: "status",
@@ -408,12 +444,9 @@ export default function SessionsView() {
       const r = rows[focus]
       const ids = selectedIds.length ? selectedIds : r?.kind === "session" ? [r.s.id] : []
       if (!ids.length) return
-      if (ui.view === "archived") restoreSessions(ids)
-      else archiveSessions(ids)
+      if (ui.view === "archived") restoreWithUndo(ids)
+      else archiveWithUndo(ids)
       setRowSelection({})
-    } else if (e.key === "/" ) {
-      e.preventDefault()
-      searchRef.current?.focus()
     }
   }
 
@@ -433,7 +466,11 @@ export default function SessionsView() {
               )}
             >
               {v.label}
-              {v.id === "attention" && attentionCount > 0 && <span className="tabular text-[11px] text-fg-muted">{attentionCount}</span>}
+              {matchCounts ? (
+                matchCounts[v.id] > 0 && <span className="tabular text-[11px] text-fg-muted">{matchCounts[v.id]}</span>
+              ) : (
+                v.id === "attention" && attentionCount > 0 && <span className="tabular text-[11px] text-fg-muted">{attentionCount}</span>
+              )}
             </button>
           ))}
         </div>
@@ -445,9 +482,14 @@ export default function SessionsView() {
             value={ui.query}
             onChange={(e) => setSessionsFilter({ query: e.target.value })}
             onKeyDown={(e) => {
+              const elsewhere = !data.length && matchCounts ? VIEWS.find((v) => matchCounts[v.id] > 0) : undefined
               if (e.key === "Escape") {
                 if (ui.query) setSessionsFilter({ query: "" })
                 else e.currentTarget.blur()
+              } else if ((e.key === "Enter" || e.key === "ArrowDown") && elsewhere) {
+                // nothing here but matches in another view: go there (keyboard twin of the empty-state buttons)
+                e.preventDefault()
+                setSessionsFilter({ view: elsewhere.id })
               } else if (e.key === "ArrowDown") {
                 e.preventDefault()
                 scrollRef.current?.focus()
@@ -487,11 +529,11 @@ export default function SessionsView() {
         <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line-subtle bg-chrome px-3 text-xs">
           <span className="tabular text-fg-muted">{selectedIds.length} selected</span>
           {ui.view === "archived" ? (
-            <Button size="sm" title="Restore (E)" onClick={() => { restoreSessions(selectedIds); setRowSelection({}) }}>
+            <Button size="sm" title="Restore (E)" onClick={() => { restoreWithUndo(selectedIds); setRowSelection({}) }}>
               <ArchiveRestore /> Restore
             </Button>
           ) : (
-            <Button size="sm" title="Archive (E)" onClick={() => { archiveSessions(selectedIds); setRowSelection({}) }}>
+            <Button size="sm" title="Archive (E)" onClick={() => { archiveWithUndo(selectedIds); setRowSelection({}) }}>
               <Archive /> Archive
             </Button>
           )}
@@ -509,14 +551,20 @@ export default function SessionsView() {
       {/* table */}
       <div ref={scrollRef} data-qa="sessions-table" className="relative min-h-0 flex-1 overflow-auto outline-none contain-strict" tabIndex={0} style={colVars as React.CSSProperties}>
         {data.length === 0 ? (
-          <EmptyState>
-            {ui.query
-              ? `No matches for “${ui.query}”.`
-              : ui.view === "attention"
-                ? "Nothing needs you."
-                : ui.view === "archived"
-                  ? "Archive is empty."
-                  : "No sessions."}
+          <EmptyState
+            action={
+              ui.query && matchCounts && VIEWS.some((v) => matchCounts[v.id] > 0) ? (
+                <span className="flex items-center gap-1">
+                  {VIEWS.filter((v) => matchCounts[v.id] > 0).map((v) => (
+                    <Button key={v.id} size="sm" variant="secondary" onClick={() => setSessionsFilter({ view: v.id })}>
+                      {v.label} <span className="tabular text-fg-faint">{matchCounts[v.id]}</span>
+                    </Button>
+                  ))}
+                </span>
+              ) : undefined
+            }
+          >
+            {ui.query ? "No matches here." : ui.view === "attention" ? "Nothing needs you." : ui.view === "archived" ? "Archive is empty." : "No sessions."}
           </EmptyState>
         ) : (
           <div style={{ width: Math.max(totalWidth, 0), minWidth: "100%" }}>
@@ -625,6 +673,7 @@ const SessionRow = memo(function SessionRow({
   height,
   focused,
   selected,
+  someSelected,
   onFocusRow,
 }: {
   row: TRow
@@ -661,7 +710,13 @@ const SessionRow = memo(function SessionRow({
           className={cn("flex min-w-0 shrink-0 items-center px-2 first:pl-3", cell.column.id === "title" && "grow")}
           style={{ width: `var(--col-${cell.column.id})`, minWidth: `var(--col-${cell.column.id})` }}
         >
-          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          {/* the checkbox reads `selected` / `someSelected` props: the TanStack row object keeps its
+              identity when only the selection changes, so a memoized cell would show stale state */}
+          {cell.column.id === "select" ? (
+            <RowCheck checked={selected} onToggle={() => row.toggleSelected()} hidden={!selected && !someSelected} />
+          ) : (
+            flexRender(cell.column.columnDef.cell, cell.getContext())
+          )}
         </div>
       ))}
       <RowActions id={id} />
@@ -693,9 +748,14 @@ function BranchCell({ s }: { s: Session }) {
   return <span className="truncate font-mono text-[11px] text-fg-faint" title={branch}>{branch}</span>
 }
 
+/** Id of a subagent of this session that waits for permission (its row then needs you). */
+const useWaitingSubagent = (id: ID) =>
+  useApp((s) => (s.subagentIdsBySession[id] ?? EMPTY).find((sid) => s.subagents[sid]?.status === "waiting_permission"))
+
 function LiveStatus({ id }: { id: ID }) {
   const status = useApp((s) => s.sessions[id]?.status)
-  return status ? <StatusGlyph status={status} size="sm" /> : null
+  const sub = useWaitingSubagent(id)
+  return status ? <StatusGlyph status={sub ? "waiting_permission" : status} size="sm" /> : null
 }
 function LiveAge({ id }: { id: ID }) {
   const iso = useApp((s) => s.sessions[id]?.updatedAt)
@@ -704,7 +764,15 @@ function LiveAge({ id }: { id: ID }) {
 }
 function LiveActivity({ id }: { id: ID }) {
   const s = useApp((st) => st.sessions[id])
+  const subId = useWaitingSubagent(id)
+  const subType = useApp((st) => (subId ? st.subagents[subId]?.agentType : undefined))
   if (!s) return null
+  if (subId)
+    return (
+      <span className="truncate text-st-perm-fg" title={`${subType}: needs permission`}>
+        {subType}: needs permission
+      </span>
+    )
   // Calm UI (§2.5): text only when it carries signal: waiting, error, or what it does right now.
   const text = s.status === "error" ? s.errorMessage : s.waitingFor ? s.waitingFor.summary : s.status === "working" ? s.activity : undefined
   const tone =
@@ -767,7 +835,7 @@ function RowActions({ id }: { id: ID }) {
           className={btn}
           onClick={(e) => {
             e.stopPropagation()
-            restoreSessions([s.id])
+            restoreWithUndo([s.id])
           }}
           title="Restore to the map and lists (E)"
         >
@@ -778,7 +846,7 @@ function RowActions({ id }: { id: ID }) {
           className="flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg"
           onClick={(e) => {
             e.stopPropagation()
-            archiveSessions([s.id])
+            archiveWithUndo([s.id])
           }}
           title="Archive (E)"
           aria-label="Archive"

@@ -1,7 +1,7 @@
 // Inspector — UI_PLAN §4.4 + Calm UI rules (§2.5): header, what it needs from you, one primary
 // action (rest in a menu), key facts; everything else in a collapsed "Details" section.
 // Layout after Orca right-sidebar (MIT) and Trigger.dev PropertyTable/InfoPanel (Apache-2.0).
-import { lazy, memo, Suspense, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react"
 import {
   Archive,
   ArchiveRestore,
@@ -10,27 +10,31 @@ import {
   ChevronRight,
   Copy,
   FolderGit2,
-  GitCompareArrows,
+  FileDiff,
   GitFork,
+  MessageSquareReply,
   MoreHorizontal,
+  PictureInPicture2,
+  Play,
   Plus,
+  Square,
   Waypoints,
   X,
 } from "lucide-react"
 import { getApp, useApp } from "@/store/app"
 import { useRepoRollup, subagentAsStatus, useAttention, EMPTY } from "@/store/selectors"
 import {
-  archiveSession,
   forkSession,
   openGraph,
   openNewSession,
   openRepo,
   openReview,
   openSession,
-  restoreSession,
+  resumeSession,
   select,
   togglePanel,
 } from "@/store/actions"
+import { openPopout } from "@/app/popout"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { DiffStat, EmptyState, GitChips, Prop, PropertyTable } from "@/components/common/bits"
 import { RelativeTime, useNow } from "@/components/common/RelativeTime"
@@ -43,10 +47,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { RequestInline } from "@/features/requests/RequestInline"
+import { interruptSession, useDelegatedCount } from "@/features/session-view/sessionStore"
 import { compact, dateTime, homePath, usd, plural } from "@/lib/format"
-import { CONTROL_LABEL, PERMISSION_MODE_LABEL, STATUS_LABEL, isWaiting, modelShort } from "@/lib/status"
+import { CONTROL_LABEL, PERMISSION_MODE_LABEL, STATUS_LABEL, capabilities, isWaiting, modelShort } from "@/lib/status"
 import type { ID } from "@/lib/model"
 import { cn } from "@/lib/utils"
+import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
 
 // Session panels exported by the session view (ChangesPanel, AgentsPanel), loaded lazily.
 const panelModules = import.meta.glob("../session-view/panels/*.tsx")
@@ -64,6 +70,15 @@ const AgentsPanel = panel("AgentsPanel")
 export function Inspector() {
   const sel = useApp((s) => s.selection)
   const open = useApp((s) => s.panels.inspector)
+  // The inspector follows the selection (Calm UI rule 7): it opened because something was
+  // selected, so it closes when the selection goes away (Esc on the map, the selected session
+  // archived) instead of falling back to an "Overview" that repeats the sidebar. Opened on purpose
+  // with nothing selected (Ctrl+Alt+B), it still shows the overview.
+  const hadSelection = useRef(sel !== null)
+  useEffect(() => {
+    if (hadSelection.current && sel === null && getApp().panels.inspector) togglePanel("inspector", false)
+    hadSelection.current = sel !== null
+  }, [sel])
   // Esc closes the inspector (not while typing, not over dialogs/menus, not in a session tab where Esc interrupts)
   useEffect(() => {
     if (!open) return
@@ -178,6 +193,7 @@ const SessionInspector = memo(function SessionInspector({ id }: { id: ID }) {
   const repo = useApp((st) => (s?.repoId ? st.repos[s.repoId] : undefined))
   const worktree = repo?.worktrees.find((w) => w.id === s?.worktreeId)
   const parent = useApp((st) => (s?.parent ? st.sessions[s.parent.sessionId] : undefined))
+  const delegated = useDelegatedCount(id)
   if (!s) return <EmptyState>Session not found.</EmptyState>
   return (
     <div>
@@ -202,45 +218,7 @@ const SessionInspector = memo(function SessionInspector({ id }: { id: ID }) {
             {s.activity}
           </div>
         )}
-        <div className="mt-3 flex items-center gap-1">
-          <Button size="sm" variant="default" onClick={() => openSession(id)}>
-            <ArrowUpRight /> Open
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="icon-sm" variant="ghost" aria-label="More actions">
-                <MoreHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-44">
-              {s.diff.filesChanged > 0 && (
-                <DropdownMenuItem onSelect={() => openReview(id)}>
-                  <GitCompareArrows /> Review changes
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => forkSession(id)}>
-                <GitFork /> Fork
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(`claude --resume ${s.providerSessionIds.at(-1)}`)}>
-                <Copy /> Copy resume command
-              </DropdownMenuItem>
-              {s.role !== "main" && (
-                <>
-                  <DropdownMenuSeparator />
-                  {s.archived ? (
-                    <DropdownMenuItem onSelect={() => restoreSession(id)}>
-                      <ArchiveRestore /> Restore
-                    </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem onSelect={() => archiveSession(id)}>
-                      <Archive /> Archive
-                    </DropdownMenuItem>
-                  )}
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <SessionActions id={id} />
       </div>
 
       <section className="border-b border-line-subtle px-3 py-3">
@@ -265,6 +243,10 @@ const SessionInspector = memo(function SessionInspector({ id }: { id: ID }) {
                 <span className="text-fg-muted">{plural(s.diff.filesChanged, "file")}</span>
                 <DiffStat added={s.diff.linesAdded} removed={s.diff.linesRemoved} />
               </span>
+            ) : delegated > 0 ? (
+              <button className="text-fg hover:underline" onClick={() => openReview(id)} title="Combined review">
+                {plural(delegated, "delegated session")}
+              </button>
             ) : (
               <span className="text-fg-faint">none</span>
             )}
@@ -321,6 +303,93 @@ const SessionInspector = memo(function SessionInspector({ id }: { id: ID }) {
     </div>
   )
 })
+
+/**
+ * One primary action per state (§2.5): Restore (archived) · Resume (history) · Answer / Review plan
+ * (question, plan) · Open. Open is dropped while that session's tab is the one you're looking at,
+ * Interrupt shows while it runs (same label as the session header), the rest is in "⋯" with the
+ * same labels and order as the session header and map menus.
+ */
+function SessionActions({ id }: { id: ID }) {
+  const s = useApp((st) => st.sessions[id])
+  const viewing = useApp((st) => st.activeTab === `/session/${id}`)
+  const delegated = useDelegatedCount(id)
+  if (!s) return null
+  const caps = capabilities(s.control)
+  const running = (s.status === "working" || s.status === "starting") && caps.interrupt
+  const asks = s.status === "waiting_input"
+  const openLabel = asks ? (s.waitingFor?.kind === "plan" ? "Review plan" : "Answer") : "Open"
+  const primary = s.archived ? "restore" : s.control === "history" ? "resume" : viewing ? null : "open"
+  return (
+    <div className="mt-3 flex items-center gap-1">
+      {primary === "restore" && (
+        <Button size="sm" variant="default" onClick={() => restoreWithUndo([id])}>
+          <ArchiveRestore /> Restore
+        </Button>
+      )}
+      {primary === "resume" && (
+        <Button size="sm" variant="default" onClick={() => resumeSession(id)}>
+          <Play /> Resume
+        </Button>
+      )}
+      {primary === "open" ? (
+        // a pending permission is answered right above (Allow once / Deny): Open is secondary then
+        <Button size="sm" variant={s.status === "waiting_permission" ? "secondary" : "default"} onClick={() => openSession(id)}>
+          {asks ? <MessageSquareReply /> : <ArrowUpRight />} {openLabel}
+        </Button>
+      ) : (
+        primary !== null &&
+        !viewing && (
+          <Button size="sm" variant="ghost" onClick={() => openSession(id)}>
+            Open
+          </Button>
+        )
+      )}
+      {running && (
+        <Button size="sm" variant="ghost" onClick={() => interruptSession(id)} title="Interrupt">
+          <Square className="size-2.5 fill-current" /> Interrupt
+        </Button>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon-sm" variant="ghost" aria-label="More actions" title="More">
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-44">
+          {(s.diff.filesChanged > 0 || delegated > 0) && (
+            <DropdownMenuItem onSelect={() => openReview(id)}>
+              <FileDiff /> Review changes
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => forkSession(id)}>
+            <GitFork /> Fork
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void openPopout(`/session/${id}`)}>
+            <PictureInPicture2 /> Pop out
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(`claude --resume ${s.providerSessionIds.at(-1)}`)}>
+            <Copy /> Copy resume command
+          </DropdownMenuItem>
+          {s.role !== "main" && (
+            <>
+              <DropdownMenuSeparator />
+              {s.archived ? (
+                <DropdownMenuItem onSelect={() => restoreWithUndo([id])}>
+                  <ArchiveRestore /> Restore
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onSelect={() => archiveWithUndo([id])}>
+                  <Archive /> Archive
+                </DropdownMenuItem>
+              )}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
 
 const RepoInspector = memo(function RepoInspector({ id }: { id: ID }) {
   const repo = useApp((s) => s.repos[id])

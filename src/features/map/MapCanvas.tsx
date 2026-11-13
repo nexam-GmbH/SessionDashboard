@@ -322,7 +322,7 @@ export function MapCanvas() {
 
   return (
     <div className="sd-map flex h-full min-h-0 flex-col bg-canvas">
-      <MapToolbar onSearchSelect={useSearchSelect()} onNextWaiting={jumpNext} />
+      <MapToolbar onSearchSelect={useSearchSelect()} />
       <ContextMenu onOpenChange={(o) => setCtxTarget(o ? ctxRef.current : null)}>
         <ContextMenuTrigger asChild>
           <div

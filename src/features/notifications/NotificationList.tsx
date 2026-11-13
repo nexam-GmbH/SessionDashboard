@@ -22,7 +22,7 @@ export function NotificationList() {
           onClick={markAllNotificationsRead}
           disabled={unread === 0}
         >
-          <CheckCheck size={12} /> Read all
+          <CheckCheck size={12} /> Mark all read
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto py-1">

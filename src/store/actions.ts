@@ -183,7 +183,16 @@ export function archiveSessions(ids: ID[]) {
     for (const id of ids) {
       const prev = sessions[id]
       if (!prev || prev.role === "main") continue
-      sessions[id] = { ...prev, archived: true, archivedAt: at, pinned: false }
+      // archiving a running session also stops it (it would otherwise keep spinning in the Archive)
+      sessions[id] = {
+        ...prev,
+        archived: true,
+        archivedAt: at,
+        pinned: false,
+        ...(prev.status === "working" || prev.status === "starting"
+          ? { status: "idle" as const, activity: "Interrupted (archived)", lastStopReason: "cancelled" as const }
+          : {}),
+      }
     }
     const archivedSet = new Set(ids)
     return {

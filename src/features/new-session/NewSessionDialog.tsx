@@ -2,7 +2,7 @@
 // --worktree, --model, --effort, --permission-mode, --add-dir, --agent, --mcp-config,
 // --append-system-prompt, --bg, --resume / --fork-session. Field set after
 // coollabsio/jean@1d53d3c session settings (Apache-2.0); dialog chrome is shadcn (MIT).
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, Copy, FolderGit2, GitBranch, Link2, Play, Search, GitFork, Terminal } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import { prepareQuery, scoreSession } from "@/features/sessions/search"
 import type { Effort, ID, PermissionMode } from "@/lib/model"
 import { cn } from "@/lib/utils"
 import { cmpIso } from "@/features/sessions/search"
+import { clearNewSessionPrefill, peekNewSessionPrefill } from "./prefill"
 
 const MODELS = [
   { value: "claude-opus-5-5", label: "Opus 5.5" },
@@ -113,6 +114,20 @@ function Seg<T extends string>({ value, onChange, options }: { value: T; onChang
   )
 }
 
+/**
+ * Repo to preselect when the dialog is opened without one (Ctrl+N, palette): the repo you are
+ * looking at (session / repo / graph tab), else the selected repo or session, else the first.
+ */
+function contextRepo(): ID {
+  const st = getApp()
+  const [, kind, ref] = st.activeTab.split("/")
+  const fromTab = kind === "session" || kind === "review" ? st.sessions[ref]?.repoId : kind === "repo" || kind === "graph" ? ref : null
+  const sel = st.selection
+  const fromSel = sel?.kind === "repo" ? sel.id : sel?.kind === "session" ? st.sessions[sel.id]?.repoId : sel?.kind === "subagent" ? st.sessions[st.subagents[sel.id]?.sessionId]?.repoId : null
+  const id = [fromTab, fromSel].find((r) => r && st.repos[r])
+  return id ?? st.repoOrder[0]
+}
+
 function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").split("-").slice(0, 4).join("-")
 }
@@ -121,9 +136,10 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
   const defaults = useApp((s) => s.settings.defaults)
   const repoOrder = useApp((s) => s.repoOrder)
   const repos = useApp((s) => s.repos)
-  const [repoId, setRepoId] = useState<ID>(initialRepo ?? getApp().repoOrder[0])
+  const [repoId, setRepoId] = useState<ID>(() => initialRepo ?? contextRepo())
   const [where, setWhere] = useState<"worktree-new" | "main">(defaults.worktree ? "worktree-new" : "main")
-  const [prompt, setPrompt] = useState("")
+  // "Ask a session" from the code graph prefills the symbol reference (read here, cleared after mount)
+  const [prompt, setPrompt] = useState(() => peekNewSessionPrefill() ?? "")
   const [title, setTitle] = useState("")
   const [wtName, setWtName] = useState("")
   const [model, setModel] = useState(defaults.model)
@@ -137,6 +153,13 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
   const [advanced, setAdvanced] = useState(false)
   const [showCli, setShowCli] = useState(false)
   const promptRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (peekNewSessionPrefill() === null) return
+    clearNewSessionPrefill()
+    // caret after the reference, ready for the question
+    const t = promptRef.current
+    t?.setSelectionRange(t.value.length, t.value.length)
+  }, [])
 
   const autoName = wtName || slug(title || prompt) || "new-session"
   const repo = repos[repoId]
@@ -218,30 +241,29 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
             className="w-full resize-none rounded-md border border-line bg-canvas px-2.5 py-2 text-[13px] leading-relaxed text-fg outline-none placeholder:text-fg-faint focus:border-line-strong"
           />
         </Field>
+        <Field label="Model" hint="--model, --effort">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger size="sm" className="h-7 w-32 text-xs" aria-label="Model"><SelectValue /></SelectTrigger>
+              <SelectContent>{MODELS.map((m) => <SelectItem key={m.value} value={m.value} className="text-xs">{m.label}</SelectItem>)}</SelectContent>
+            </Select>
+            <Seg value={effort} onChange={setEffort} options={(["low", "medium", "high", "xhigh", "max"] as const).map((v) => ({ value: v, label: v }))} />
+          </div>
+        </Field>
 
         <button
           className="flex h-6 items-center gap-1 self-start rounded-sm pr-1.5 text-xs text-fg-faint hover:text-fg-muted"
           onClick={() => setAdvanced((v) => !v)}
           aria-expanded={advanced}
-          title="Title, model, permissions, other repos, agent, MCP, system prompt, background"
+          title="Title, permissions, other repos, agent, MCP, system prompt, background"
         >
           {advanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           Options
-          {!advanced && <span className="text-[11px]">{MODELS.find((m) => m.value === model)?.label} · {effort}</span>}
         </button>
         {advanced && (
           <div className="flex flex-col gap-3">
             <Field label="Title" hint="Optional; auto-named otherwise">
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto" className="h-7 w-full rounded-md border border-line-subtle bg-canvas px-2 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong" />
-            </Field>
-            <Field label="Model" hint="--model, --effort">
-              <div className="flex flex-wrap items-center gap-2">
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger size="sm" className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{MODELS.map((m) => <SelectItem key={m.value} value={m.value} className="text-xs">{m.label}</SelectItem>)}</SelectContent>
-                </Select>
-                <Seg value={effort} onChange={setEffort} options={(["low", "medium", "high", "xhigh", "max"] as const).map((v) => ({ value: v, label: v }))} />
-              </div>
             </Field>
             <Field label="Permissions" hint="--permission-mode">
               <Select value={perm} onValueChange={(v) => setPerm(v as PermissionMode)}>
@@ -329,7 +351,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
 }
 
 function ResumeList({ initialRepo }: { initialRepo?: ID }) {
-  const [repoId, setRepoId] = useState<ID>(initialRepo ?? getApp().repoOrder[0])
+  const [repoId, setRepoId] = useState<ID>(() => initialRepo ?? contextRepo())
   const [q, setQ] = useState("")
   const [fork, setFork] = useState(false)
   const sessions = useApp((s) => s.sessions)

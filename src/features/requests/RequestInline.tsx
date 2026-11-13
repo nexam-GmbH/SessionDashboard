@@ -2,16 +2,14 @@ import { memo, useState } from "react"
 import { MessageCircleQuestion, ShieldAlert, ListChecks, Terminal, FilePen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
-import { openSession } from "@/store/actions"
 import { resolveRequest } from "@/features/session-view/sessionStore"
 import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
 
 /**
- * Compact waiting-request block used on map cards, inspector and sidebar
- * previews. Only *once* options are offered inline (UI_PLAN §12.6): always-allow
- * and deny-with-feedback live in the session view where the full request is
- * visible. Options are data (ACP request_permission, RESEARCH §3.1).
+ * Compact waiting-request block for the inspector. Only *once* options are offered inline
+ * (UI_PLAN §12.6): always-allow and deny-with-feedback live in the session view where the full
+ * request is visible. Options are data (ACP request_permission, RESEARCH §3.1).
  */
 export const RequestInline = memo(function RequestInline({
   sessionId,
@@ -28,7 +26,9 @@ export const RequestInline = memo(function RequestInline({
     return rid ? s.requests[rid] : undefined
   })
   const canApprove = session?.control === "owned" || session?.control === "pty"
-  const [busy, setBusy] = useState(false)
+  // per request: a new request on the same session gets fresh, enabled buttons
+  const [busyFor, setBusyFor] = useState<ID | null>(null)
+  const busy = !!req && busyFor === req.id
   if (!session?.waitingFor) return null
   const w = session.waitingFor
   const tone =
@@ -57,43 +57,40 @@ export const RequestInline = memo(function RequestInline({
           )}
         </div>
       </div>
-      <div className="mt-1.5 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        {w.kind === "permission" && allowOnce && rejectOnce && canApprove ? (
-          <>
-            <Button
-              size="xs"
-              variant="perm"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true)
-                resolveRequest(req!, allowOnce.id)
-              }}
-            >
-              Allow once
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true)
-                resolveRequest(req!, rejectOnce.id)
-              }}
-            >
-              Deny
-            </Button>
-            <Button size="xs" variant="ghost" className="ml-auto text-fg-faint" onClick={() => openSession(sessionId)}>
-              More…
-            </Button>
-          </>
-        ) : w.kind === "permission" && !canApprove ? (
-          <span className="text-[11px] text-fg-faint">Approve in terminal</span>
-        ) : (
-          <Button size="xs" variant="ghost" className="text-fg" onClick={() => openSession(sessionId)}>
-            {w.kind === "plan" ? "Review plan…" : "Answer…"}
-          </Button>
-        )}
-      </div>
+      {/* only a permission is answered here; questions and plans open the session (the inspector's
+          primary "Answer" / "Review plan" button), so there is one button per action */}
+      {w.kind === "permission" && (
+        <div className="mt-1.5 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {allowOnce && rejectOnce && canApprove ? (
+            <>
+              <Button
+                size="xs"
+                variant="perm"
+                disabled={busy}
+                onClick={() => {
+                  setBusyFor(req!.id)
+                  resolveRequest(req!, allowOnce.id)
+                }}
+              >
+                Allow once
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setBusyFor(req!.id)
+                  resolveRequest(req!, rejectOnce.id)
+                }}
+              >
+                Deny
+              </Button>
+            </>
+          ) : !canApprove ? (
+            <span className="text-[11px] text-fg-faint">Approve in terminal</span>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 })
