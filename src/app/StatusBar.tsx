@@ -32,6 +32,7 @@ export const StatusBar = memo(function StatusBar() {
               navigate("/sessions")
             }}
             title={`${counts[st]} ${STATUS_LABEL[st].toLowerCase()}`}
+            aria-label={`${counts[st]} ${STATUS_LABEL[st].toLowerCase()}, show in Sessions`}
           >
             <StatusGlyph status={st} size="xs" animate={false} title={null} />
             <span className={cn("tabular", (st === "waiting_permission" || st === "waiting_input" || st === "error") && "text-fg-muted")}>{counts[st]}</span>

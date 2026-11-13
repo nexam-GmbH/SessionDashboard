@@ -30,7 +30,7 @@ function SubElapsed({ since }: { since: string }) {
   return <>{duration(Math.max(0, now - Date.parse(since)))}</>
 }
 
-const ROW = "group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60"
+const ROW = "group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60 focus-visible:ring-1 focus-visible:ring-ring/60"
 const ON_HOVER = "hidden group-hover/tool:inline group-focus-visible/tool:inline"
 
 export const SubagentCard = memo(function SubagentCard({ call }: { call: ToolCall }) {

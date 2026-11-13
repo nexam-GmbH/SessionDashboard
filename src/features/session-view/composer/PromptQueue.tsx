@@ -9,7 +9,7 @@ import { removeQueued } from "@/store/actions"
 import { cn } from "@/lib/utils"
 import { editQueued, sendQueuedNow, useQueued } from "../sessionStore"
 
-const ACTION = "inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+const ACTION = "inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
 
 export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId: ID }) {
   const items = useQueued(sessionId)
@@ -22,7 +22,7 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
   }
   return (
     <div className="mx-auto w-full max-w-[860px] px-5 pb-1.5">
-      <ul className="flex flex-col gap-px">
+      <ul className="flex flex-col gap-px" aria-label="Queued messages">
         {items.map((q) => {
           const editing = editingId === q.id
           return (

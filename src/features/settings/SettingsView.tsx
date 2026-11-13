@@ -3,7 +3,7 @@
 // list, rows with title/description left and control right — and coollabsio/jean@1d53d3c:
 // src/components/preferences/SettingsSection.tsx (Apache-2.0). Modified: our tokens/density,
 // rendered as a tab instead of a dialog.
-import { useMemo, useState, type ReactNode } from "react"
+import { createContext, useContext, useId, useMemo, useState, type ComponentProps, type ReactNode } from "react"
 import {
   Bell,
   Check,
@@ -129,33 +129,48 @@ function SettingsSection({ title, description, children }: { title?: string; des
  * Yaak SettingRow: label left, control right. One line at rest; the explanation is a hover card
  * on the label (§2.5: no explanatory sentences on screen). `hint` = 1–3 words when it matters.
  */
+/** Id of the enclosing SettingRow's title: its switch / select is named by it (aria-labelledby). */
+const RowLabel = createContext<string | undefined>(undefined)
+
 function SettingRow({ title, description, hint, children, disabled }: { title: ReactNode; description?: ReactNode; hint?: string; children: ReactNode; disabled?: boolean }) {
+  const labelId = useId()
   return (
     <div className={cn("grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-line-subtle py-1.5", disabled && "opacity-50")}>
       <div className="flex min-w-0 items-center gap-2">
         {description ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="cursor-default text-[13px] text-fg decoration-line-strong decoration-dotted underline-offset-4 hover:underline">{title}</span>
+              <span id={labelId} className="cursor-default text-[13px] text-fg decoration-line-strong decoration-dotted underline-offset-4 hover:underline">{title}</span>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="start" className="max-w-80 text-xs leading-relaxed">
               {description}
             </TooltipContent>
           </Tooltip>
         ) : (
-          <span className="text-[13px] text-fg">{title}</span>
+          <span id={labelId} className="text-[13px] text-fg">{title}</span>
         )}
         {hint && <span className="text-[11px] text-fg-faint">{hint}</span>}
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-2">{children}</div>
+      <div className="flex min-w-0 items-center justify-end gap-2">
+        <RowLabel.Provider value={labelId}>{children}</RowLabel.Provider>
+      </div>
     </div>
   )
 }
 
+/** Switch named by its row's title. */
+function RowSwitch(props: ComponentProps<typeof Switch>) {
+  const labelledBy = useContext(RowLabel)
+  return <Switch aria-labelledby={labelledBy} {...props} />
+}
+
 function SmallSelect<T extends string>({ value, onChange, options, width = "w-44" }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; width?: string }) {
+  const labelledBy = useContext(RowLabel)
+  const selfId = useId()
   return (
     <Select value={value} onValueChange={(v) => onChange(v as T)}>
-      <SelectTrigger size="sm" className={cn("h-7 text-xs", width)}>
+      {/* name = row title + current value ("Density Compact") */}
+      <SelectTrigger id={selfId} aria-labelledby={labelledBy ? `${labelledBy} ${selfId}` : undefined} size="sm" className={cn("h-7 text-xs", width)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -198,7 +213,7 @@ function ReposPage() {
               <FolderGit2 size={14} className="shrink-0 text-fg-faint" />
               <span className="w-44 shrink-0 truncate text-[13px] text-fg">{r.name}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-faint">{homePath(r.rootPath)}</span>
-              <button className="flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-faint opacity-0 group-hover:opacity-100 hover:bg-selected hover:text-fg" title="Stop tracking (sessions are kept)" aria-label="Stop tracking">
+              <button className="flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-faint opacity-0 outline-none group-hover:opacity-100 hover:bg-selected hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring" title="Stop tracking (sessions are kept)" aria-label={`Stop tracking ${r.name}`}>
                 <Trash2 size={13} />
               </button>
             </div>
@@ -239,7 +254,7 @@ function ClaudePage() {
           <SmallSelect value={d.permissionMode} onChange={(v) => setD({ permissionMode: v })} options={[{ value: "default", label: "Default (ask)" }, { value: "acceptEdits", label: "Accept edits" }, { value: "plan", label: "Plan" }, { value: "auto", label: "Auto" }]} />
         </SettingRow>
         <SettingRow title="Worktree" description={<>Start new sessions in <Code>.claude/worktrees/&lt;name&gt;</Code> (<Code>claude --worktree</Code>).</>}>
-          <Switch checked={d.worktree} onCheckedChange={(v) => setD({ worktree: v })} />
+          <RowSwitch checked={d.worktree} onCheckedChange={(v) => setD({ worktree: v })} />
         </SettingRow>
       </SettingsSection>
     </>
@@ -256,10 +271,10 @@ function AppearancePage() {
           <SmallSelect value={s.density} onChange={(v) => patchSettings({ density: v })} options={[{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }]} />
         </SettingRow>
         <SettingRow title="Reduce motion" description="Disables the status-change flash and spinners.">
-          <Switch checked={s.reduceMotion} onCheckedChange={(v) => patchSettings({ reduceMotion: v })} />
+          <RowSwitch checked={s.reduceMotion} onCheckedChange={(v) => patchSettings({ reduceMotion: v })} />
         </SettingRow>
         <SettingRow title="Native title bar" description="Use the window manager's title bar (recommended on Linux)." hint={OS !== "linux" ? "Linux only" : undefined} disabled={OS !== "linux"}>
-          <Switch checked={s.nativeTitlebar} onCheckedChange={(v) => patchSettings({ nativeTitlebar: v })} disabled={OS !== "linux"} />
+          <RowSwitch checked={s.nativeTitlebar} onCheckedChange={(v) => patchSettings({ nativeTitlebar: v })} disabled={OS !== "linux"} />
         </SettingRow>
         <SettingRow title="Map detail" description="Automatic switches between full cards, compact pills and repo-only overview by zoom.">
           <SmallSelect value={s.mapDefaultLod} onChange={(v) => patchSettings({ mapDefaultLod: v })} options={[{ value: "auto", label: "By zoom" }, { value: "full", label: "Full cards" }, { value: "compact", label: "Compact" }]} />
@@ -275,7 +290,7 @@ function NotificationsPage() {
   const order = useApp((st) => st.repoOrder)
   const rule = (k: keyof typeof s.notify, title: string, description: string) => (
     <SettingRow title={title} description={description}>
-      <Switch checked={s.notify[k]} onCheckedChange={(v) => patchSettings({ notify: { ...s.notify, [k]: v } })} />
+      <RowSwitch checked={s.notify[k]} onCheckedChange={(v) => patchSettings({ notify: { ...s.notify, [k]: v } })} />
     </SettingRow>
   )
   const test = async () => {
@@ -328,7 +343,7 @@ function KeysPage() {
       <PageTitle title="Keybindings" description="Single-key shortcuts are ignored while typing in inputs, the composer or the terminal." />
       <div className="relative mb-3 flex h-7 w-72 items-center">
         <Search size={13} className="absolute left-2 text-fg-faint" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter" className="h-full w-full rounded-md border border-line-subtle bg-chrome pl-7 text-xs outline-none placeholder:text-fg-faint focus:border-line-strong" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter" aria-label="Filter shortcuts" className="h-full w-full rounded-md border border-line-subtle bg-chrome pl-7 text-xs outline-none placeholder:text-fg-faint focus:border-line-strong" />
       </div>
       <div className="overflow-hidden rounded-md border border-line-subtle">
         {list.map((c) => (
@@ -352,13 +367,13 @@ function GraphifyPage() {
       <PageTitle title="Graphify" description="Code knowledge graphs per repo (graphify-out/graph.json) plus the global cross-repo graph used for map links. Agents query it through the Graphify MCP server." />
       <SettingsSection>
         <SettingRow title="Rebuild on commit" description="Installs Graphify's git hooks (post-commit, post-checkout, post-merge).">
-          <Switch checked={s.graphifyAutoBuild} onCheckedChange={(v) => patchSettings({ graphifyAutoBuild: v })} />
+          <RowSwitch checked={s.graphifyAutoBuild} onCheckedChange={(v) => patchSettings({ graphifyAutoBuild: v })} />
         </SettingRow>
         <SettingRow title="Global graph" description={<><Code>~/.graphify/global-graph.json</Code> with cross-repo calls edges.</>}>
           <span className="text-xs text-fg-muted">Fresh</span>
         </SettingRow>
         <SettingRow title="Expose to agents" description={<>Adds the graphify MCP server (<Code>query_graph</Code>, <Code>get_neighbors</Code>, <Code>shortest_path</Code>…) to new sessions.</>}>
-          <Switch checked={s.graphifyExposeMcp} onCheckedChange={(v) => patchSettings({ graphifyExposeMcp: v })} />
+          <RowSwitch checked={s.graphifyExposeMcp} onCheckedChange={(v) => patchSettings({ graphifyExposeMcp: v })} />
         </SettingRow>
       </SettingsSection>
       <SettingsSection title="Repos">

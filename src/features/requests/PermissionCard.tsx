@@ -80,6 +80,7 @@ export const PermissionCard = memo(function PermissionCard({
       ref={ref}
       tone="perm"
       label={`Permission request: ${request.title}`}
+      keyHint={`Enter: ${firstAllow ? "allow once" : "first option"}. 1 to ${Math.min(9, request.options.length)}: pick an option. Escape: deny with feedback.${pager && pager.total > 1 ? " Shift+Enter: next request." : ""}`}
       icon={<ShieldAlert size={14} />}
       title={<AskTitle verb={verb} subject={command ?? path} />}
       meta={

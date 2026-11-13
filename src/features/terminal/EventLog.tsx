@@ -67,9 +67,15 @@ export default function EventLog({ sessionId }: { sessionId: ID | null }) {
   }, [events.length, sessionId, v])
   if (!sessionId) return <EmptyState>No session selected.</EmptyState>
   return (
+    // a log for assistive tech, but silent (the stream would be read line by line); focusable so the
+    // keyboard can scroll it
     <div
       ref={ref}
-      className="absolute inset-0 overflow-auto font-mono text-[11px]"
+      role="log"
+      aria-label="Session events"
+      aria-live="off"
+      tabIndex={0}
+      className="absolute inset-0 overflow-auto font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
       onScroll={(e) => {
         const el = e.currentTarget
         atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24

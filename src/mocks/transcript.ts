@@ -2,7 +2,7 @@ import type { FileChange, ID, Item, PendingRequest, Session, ToolCall, ToolKind,
 import { getApp, setApp } from "@/store/app"
 import type { RepoSpec } from "./catalog"
 import { FOLLOW_UPS } from "./catalog"
-import { Rng } from "./rng"
+import { Rng, hashString } from "./rng"
 
 /**
  * Lazily generated, realistic transcripts (UI_PLAN §3). Shape mirrors what the
@@ -112,7 +112,7 @@ const THOUGHTS = [
 ]
 
 const SUMMARIES = (file: string, symbol: string, test: string) => [
-  `Fixed. \`${symbol}\` counted one attempt twice on failure, so the default of 3 attempts really meant 2.\n\n**Changes**\n- \`${file}\`: one increment per attempt, plus a \`retry_attempts_total\` counter\n- \`${test}\`: regression test — one failure now produces exactly two calls\n\nAll 10 tests pass. The public signature is unchanged, so callers in other repos are unaffected.`,
+  ...(symbol !== "withRetry" ? [] : [`Fixed. \`${symbol}\` counted one attempt twice on failure, so the default of 3 attempts really meant 2.\n\n**Changes**\n- \`${file}\`: one increment per attempt, plus a \`retry_attempts_total\` counter\n- \`${test}\`: regression test — one failure now produces exactly two calls\n\nAll 10 tests pass. The public signature is unchanged, so callers in other repos are unaffected.`]),
   `Done. Summary of what changed:\n\n1. \`${file}\` — updated \`${symbol}\` to the new shape\n2. Added a test in \`${test}\` covering the edge case from the issue\n3. Ran the package tests: **all green**\n\nOne thing to decide: the old field is still read in two places behind a feature flag. I left them as-is; tell me if you want them removed in this PR.`,
   `I made the change in \`${file}\` and verified it:\n\n\`\`\`text\nTests  10 passed (10)\n\`\`\`\n\nNext steps I'd suggest:\n- push the branch and open a draft PR\n- ask the owners of the two downstream services to bump the client`,
 ]
@@ -173,9 +173,14 @@ function buildTurn(ctx: Ctx, turnIndex: number, prompt: string, mode: "complete"
   const add = (x: ID) => itemIds.push(x)
   const files = spec?.files ?? ["README.md"]
   const lang = spec?.language ?? "TypeScript"
-  const file = files[turnIndex % files.length]
+  // sessions in the same repo work on different files/symbols; a path named in the session's
+  // activity or prompt wins, so the transcript matches what the map and sidebar say it is doing
+  const offset = hashString(session.id)
+  const named = [session.activity, prompt].join(" ").match(/[\w-]+(?:\/[\w.-]+)+\.\w+/)?.[0]
+  const file = turnIndex === 0 && named ? named : files[(turnIndex + offset) % files.length]
   const test = files.find((f) => f.includes("test")) ?? files[files.length - 1]
-  const symbol = spec?.symbols[turnIndex % (spec?.symbols.length ?? 1)] ?? "main"
+  const symbols = spec?.symbols ?? ["main"]
+  const symbol = symbols[(turnIndex + offset) % symbols.length]
 
   add(push(ctx, { type: "user_message", id: id(ctx, "u"), turnId, at: new Date(ctx.at).toISOString(), text: prompt }))
   ctx.at += rng.int(1500, 4000)

@@ -147,9 +147,12 @@ export function Sidebar() {
           <div
             ref={scrollRef}
             tabIndex={0}
+            role="tree"
+            aria-label="Sessions and repositories"
+            aria-activedescendant={focusIndex >= 0 ? `sb-row-${focusIndex}` : undefined}
             onKeyDown={onKeyDown}
             onFocus={() => focusIndex < 0 && setFocusIndex(0)}
-            className="min-h-0 flex-1 overflow-y-auto outline-none"
+            className="min-h-0 flex-1 overflow-y-auto outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
             onContextMenu={(e) => {
               if (!ctxRef.current) e.preventDefault()
             }}
@@ -160,6 +163,10 @@ export function Sidebar() {
                 return (
                   <div
                     key={vi.key}
+                    id={`sb-row-${vi.index}`}
+                    role={row.type === "empty" ? "presentation" : "treeitem"}
+                    aria-selected={vi.index === focusIndex}
+                    aria-expanded={row.type === "repo" || row.type === "idle" || row.type === "section" ? row.open : row.type === "session" && row.hasChildren ? row.open : undefined}
                     className="absolute inset-x-0"
                     style={{ height: vi.size, transform: `translateY(${vi.start}px)` }}
                     onContextMenuCapture={() => {
@@ -232,6 +239,7 @@ const RowView = memo(function RowView({
     case "idle":
       return (
         <button
+          tabIndex={-1}
           className={cn("flex h-full w-full items-center gap-1.5 pl-[26px] text-left text-[11.5px] text-fg-faint hover:bg-hover hover:text-fg-muted", focused && "ring-1 ring-ring/60 ring-inset")}
           onClick={() => onActivate(row)}
         >
@@ -242,6 +250,7 @@ const RowView = memo(function RowView({
     case "more":
       return (
         <button
+          tabIndex={-1}
           className="flex h-full w-full items-center pl-[22px] text-left text-[11px] text-fg-faint hover:text-fg-muted"
           onClick={() => onActivate(row)}
         >
@@ -276,7 +285,7 @@ function SectionRow({
       {row.key === "repos" && (
         <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/sec:opacity-100" onClick={(e) => e.stopPropagation()}>
           <DropdownMenu>
-            <DropdownMenuTrigger className="flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg" title="Group by">
+            <DropdownMenuTrigger tabIndex={-1} className="flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg" title="Group by">
               <ListFilter size={12} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-36">
@@ -289,6 +298,7 @@ function SectionRow({
             </DropdownMenuContent>
           </DropdownMenu>
           <button
+            tabIndex={-1}
             className="flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg"
             onClick={() => openNewSession()}
             title="New session"
@@ -357,13 +367,15 @@ function SessionRow({
   const age = useRelTime(session?.updatedAt)
   if (!session) return null
   const isMain = session.role === "main"
-  const note = row.twoLine
-    ? session.status === "waiting_permission" || session.status === "waiting_input"
+  const detail =
+    session.status === "waiting_permission" || session.status === "waiting_input"
       ? session.waitingFor?.summary
       : session.status === "error"
         ? session.errorMessage
-        : session.activity
-    : undefined
+        : session.status === "working"
+          ? session.activity
+          : undefined
+  const note = row.twoLine ? detail : undefined
   const noteTone =
     session.status === "waiting_permission"
       ? "text-st-perm-fg"
@@ -382,10 +394,11 @@ function SessionRow({
       )}
       style={{ paddingLeft: 6 + row.depth * 14 }}
       onClick={() => onActivate(row)}
-      title={session.title}
+      title={detail && !note ? `${session.title}\n${detail}` : session.title}
     >
       {row.hasChildren ? (
         <button
+          tabIndex={-1}
           className="flex size-4 shrink-0 items-center justify-center rounded-sm text-fg-faint opacity-60 hover:text-fg hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
@@ -409,6 +422,7 @@ function SessionRow({
             <span className="tabular text-[11px] text-fg-faint group-hover/row:hidden">{age}</span>
             {!isMain && (
               <button
+                tabIndex={-1}
                 className="hidden size-4 items-center justify-center rounded-sm text-fg-faint group-hover/row:flex hover:bg-selected hover:text-fg"
                 onClick={(e) => {
                   e.stopPropagation()
@@ -503,12 +517,14 @@ function RepoRow({
       </span>
       <span className="ml-auto hidden shrink-0 items-center group-hover/row:flex">
         <button
+          tabIndex={-1}
           className="flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg"
           onClick={(e) => {
             e.stopPropagation()
             openNewSession(row.id)
           }}
           title={`New session in ${repo.name}`}
+          aria-label={`New session in ${repo.name}`}
         >
           <Plus size={12} />
         </button>

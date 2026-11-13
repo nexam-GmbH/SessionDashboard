@@ -10,7 +10,10 @@
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check:ui": "node scripts/ui-checks.mjs",
+    "shots": "node scripts/shots-all.mjs ./.shots",
+    "perf": "node scripts/perf-stress.mjs ./.shots/perf.json"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",

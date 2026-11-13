@@ -15,14 +15,14 @@ export function NotificationList() {
   return (
     <div className="flex max-h-[480px] flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line-subtle px-3">
-        <span className="text-xs font-medium">Notifications</span>
+        <h2 className="text-xs font-medium">Notifications</h2>
         {unread > 0 && <span className="tabular text-[11px] text-fg-faint" title={`${unread} unread`}>{unread}</span>}
         <button
           className="ml-auto flex h-5 items-center gap-1 rounded-sm px-1.5 text-[11px] text-fg-faint hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40"
           onClick={markAllNotificationsRead}
           disabled={unread === 0}
         >
-          <CheckCheck size={12} /> Mark all read
+          <CheckCheck size={12} aria-hidden /> Mark all read
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -35,6 +35,8 @@ export function NotificationList() {
     </div>
   )
 }
+
+const KIND_LABEL = { permission: "Needs permission", question: "Waiting for input", error: "Error", finished: "Finished" } as const
 
 const ICON = {
   permission: <ShieldAlert size={14} color="var(--st-perm)" />,
@@ -55,7 +57,9 @@ const Row = memo(function Row({ n }: { n: AppNotification }) {
         openSession(n.sessionId)
       }}
     >
-      <span className="mt-px shrink-0">{ICON[n.kind]}</span>
+      <span className="mt-px shrink-0" role="img" aria-label={`${KIND_LABEL[n.kind]}${n.readAt ? "" : ", unread"}`}>
+        {ICON[n.kind]}
+      </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className={cn("truncate text-xs", n.readAt ? "text-fg-muted" : "font-medium text-fg")}>{n.title}</span>

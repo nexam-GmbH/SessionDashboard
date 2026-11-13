@@ -2,7 +2,7 @@
 // --worktree, --model, --effort, --permission-mode, --add-dir, --agent, --mcp-config,
 // --append-system-prompt, --bg, --resume / --fork-session. Field set after
 // coollabsio/jean@1d53d3c session settings (Apache-2.0); dialog chrome is shadcn (MIT).
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, Copy, FolderGit2, GitBranch, Link2, Play, Search, GitFork, Terminal } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -45,6 +45,7 @@ export default function NewSessionDialog() {
             <button
               key={t}
               onClick={() => setTab(t)}
+              aria-pressed={tab === t}
               className={cn("h-7 rounded-md px-2.5 text-xs", tab === t ? "bg-selected text-fg" : "text-fg-faint hover:text-fg-muted")}
             >
               {t === "new" ? "New session" : "Resume"}
@@ -64,7 +65,7 @@ function RepoPicker({ value, onChange }: { value: ID; onChange: (id: ID) => void
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button className="flex h-7 w-full items-center gap-2 rounded-md border border-line bg-canvas px-2 text-left text-xs text-fg hover:border-line-strong">
+        <button aria-label={`Repository: ${repos[value]?.name ?? "none"}`} className="flex h-7 w-full items-center gap-2 rounded-md border border-line bg-canvas px-2 text-left text-xs text-fg hover:border-line-strong">
           <FolderGit2 size={13} className="text-fg-faint" />
           {repos[value]?.name ?? "Choose repository"}
           <ChevronDown size={12} className="ml-auto text-fg-faint" />
@@ -92,21 +93,25 @@ function RepoPicker({ value, onChange }: { value: ID; onChange: (id: ID) => void
 
 /** Label column + control. Flag names and explanations are tooltips (§2.5 copy budget). */
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  const id = useId()
   return (
     <div className="grid grid-cols-[96px_1fr] items-start gap-3">
-      <div className="pt-1.5 text-xs text-fg-muted" title={hint}>
+      <div id={id} className="pt-1.5 text-xs text-fg-muted" title={hint}>
         {label}
       </div>
-      <div className="min-w-0">{children}</div>
+      {/* the visible label names the field's group; single controls also carry their own aria-label */}
+      <div role="group" aria-labelledby={id} className="min-w-0">
+        {children}
+      </div>
     </div>
   )
 }
 
-function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[] }) {
+function Seg<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; label: string }) {
   return (
-    <div className="inline-flex rounded-md border border-line-subtle bg-canvas p-0.5">
+    <div role="group" aria-label={label} className="inline-flex rounded-md border border-line-subtle bg-canvas p-0.5">
       {options.map((o) => (
-        <button key={o.value} onClick={() => onChange(o.value)} className={cn("h-6 rounded-sm px-2 text-xs", value === o.value ? "bg-selected text-fg" : "text-fg-faint hover:text-fg-muted")}>
+        <button key={o.value} aria-pressed={value === o.value} onClick={() => onChange(o.value)} className={cn("h-6 rounded-sm px-2 text-xs", value === o.value ? "bg-selected text-fg" : "text-fg-faint hover:text-fg-muted")}>
           {o.label}
         </button>
       ))}
@@ -216,7 +221,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
         </Field>
         <Field label="Where">
           <div className="flex items-center gap-2">
-            <Seg value={where} onChange={setWhere} options={[{ value: "worktree-new", label: "New worktree" }, { value: "main", label: "Main checkout" }]} />
+            <Seg label="Where" value={where} onChange={setWhere} options={[{ value: "worktree-new", label: "New worktree" }, { value: "main", label: "Main checkout" }]} />
             {where === "worktree-new" && (
               <div
                 className="flex h-7 min-w-0 flex-1 items-center rounded-md border border-line-subtle bg-canvas px-2 focus-within:border-line-strong"
@@ -236,6 +241,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={5}
+            aria-label="Prompt"
             placeholder="Describe the task"
             title="/ for commands, @ to mention files, Ctrl+Enter to start"
             className="w-full resize-none rounded-md border border-line bg-canvas px-2.5 py-2 text-[13px] leading-relaxed text-fg outline-none placeholder:text-fg-faint focus:border-line-strong"
@@ -247,7 +253,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
               <SelectTrigger size="sm" className="h-7 w-32 text-xs" aria-label="Model"><SelectValue /></SelectTrigger>
               <SelectContent>{MODELS.map((m) => <SelectItem key={m.value} value={m.value} className="text-xs">{m.label}</SelectItem>)}</SelectContent>
             </Select>
-            <Seg value={effort} onChange={setEffort} options={(["low", "medium", "high", "xhigh", "max"] as const).map((v) => ({ value: v, label: v }))} />
+            <Seg label="Effort" value={effort} onChange={setEffort} options={(["low", "medium", "high", "xhigh", "max"] as const).map((v) => ({ value: v, label: v }))} />
           </div>
         </Field>
 
@@ -263,11 +269,11 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
         {advanced && (
           <div className="flex flex-col gap-3">
             <Field label="Title" hint="Optional; auto-named otherwise">
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto" className="h-7 w-full rounded-md border border-line-subtle bg-canvas px-2 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong" />
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto" aria-label="Title" className="h-7 w-full rounded-md border border-line-subtle bg-canvas px-2 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong" />
             </Field>
             <Field label="Permissions" hint="--permission-mode">
               <Select value={perm} onValueChange={(v) => setPerm(v as PermissionMode)}>
-                <SelectTrigger size="sm" className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
+                <SelectTrigger size="sm" className="h-7 w-40 text-xs" aria-label="Permissions"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default" className="text-xs">Ask</SelectItem>
                   <SelectItem value="acceptEdits" className="text-xs">Accept edits</SelectItem>
@@ -302,7 +308,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
             </Field>
             <Field label="Agent" hint="--agent (.claude/agents)">
               <Select value={agent} onValueChange={setAgent}>
-                <SelectTrigger size="sm" className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
+                <SelectTrigger size="sm" className="h-7 w-40 text-xs" aria-label="Agent"><SelectValue /></SelectTrigger>
                 <SelectContent>{AGENTS.map((a) => <SelectItem key={a} value={a} className="text-xs">{a === "none" ? "None" : a}</SelectItem>)}</SelectContent>
               </Select>
             </Field>
@@ -317,11 +323,11 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
               </div>
             </Field>
             <Field label="Instructions" hint="--append-system-prompt">
-              <textarea value={append} onChange={(e) => setAppend(e.target.value)} rows={2} placeholder="Appended to the system prompt" className="w-full resize-none rounded-md border border-line-subtle bg-canvas px-2 py-1.5 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong" />
+              <textarea value={append} onChange={(e) => setAppend(e.target.value)} rows={2} placeholder="Appended to the system prompt" aria-label="Instructions" className="w-full resize-none rounded-md border border-line-subtle bg-canvas px-2 py-1.5 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong" />
             </Field>
             <Field label="Background" hint="claude --bg">
               <div className="pt-1">
-                <Switch checked={bg} onCheckedChange={setBg} />
+                <Switch checked={bg} onCheckedChange={setBg} aria-label="Run in the background" />
               </div>
             </Field>
           </div>
@@ -338,7 +344,7 @@ function NewForm({ initialRepo }: { initialRepo?: ID }) {
         </div>
       )}
       <div className="flex items-center gap-2 border-t border-line-subtle px-4 py-2.5">
-        <Button size="xs" variant="ghost" data-active={showCli} onClick={() => setShowCli((v) => !v)} title="Show the equivalent claude command">
+        <Button size="xs" variant="ghost" data-active={showCli} aria-pressed={showCli} onClick={() => setShowCli((v) => !v)} title="Show the equivalent claude command">
           <Terminal /> CLI
         </Button>
         <Button size="sm" variant="ghost" className="ml-auto" onClick={closeNewSession}>Cancel</Button>
@@ -372,6 +378,7 @@ function ResumeList({ initialRepo }: { initialRepo?: ID }) {
   }, [repoId, q, structVersion])
   const branchOf = (s: (typeof list)[number]) => repos[repoId]?.worktrees.find((w) => w.id === s.worktreeId)?.branch ?? repos[repoId]?.defaultBranch
   const [sel, setSel] = useState(0)
+  const listId = useId()
   const go = (id: ID) => {
     closeNewSession()
     if (fork) forkSession(id)
@@ -386,6 +393,12 @@ function ResumeList({ initialRepo }: { initialRepo?: ID }) {
           <input
             autoFocus
             value={q}
+            aria-label="Search past sessions"
+            role="combobox"
+            aria-expanded
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={list[sel] ? `${listId}-${sel}` : undefined}
             onChange={(e) => { setQ(e.target.value); setSel(0) }}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setSel((i) => Math.min(list.length - 1, i + 1)) }
@@ -398,10 +411,10 @@ function ResumeList({ initialRepo }: { initialRepo?: ID }) {
           />
         </div>
       </div>
-      <div className="max-h-[380px] overflow-y-auto py-1">
+      <div id={listId} role="listbox" aria-label="Past sessions" className="max-h-[380px] overflow-y-auto py-1">
         {list.length === 0 && <div className="px-4 py-8 text-center text-xs text-fg-faint">No past sessions.</div>}
         {list.map((s, i) => (
-          <button key={s.id} ref={i === sel ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined} onMouseEnter={() => setSel(i)} onClick={() => go(s.id)} className={cn("flex w-full items-start gap-3 px-4 py-1.5 text-left", i === sel && "bg-selected")}>
+          <button key={s.id} id={`${listId}-${i}`} role="option" aria-selected={i === sel} tabIndex={-1} ref={i === sel ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined} onMouseEnter={() => setSel(i)} onClick={() => go(s.id)} className={cn("flex w-full items-start gap-3 px-4 py-1.5 text-left", i === sel && "bg-selected")}>
             <div className="min-w-0 flex-1" title={`${s.title}\n${branchOf(s)}`}>
               <div className="flex items-center gap-2">
                 <span className="truncate text-[12.5px] text-fg">{s.title}</span>

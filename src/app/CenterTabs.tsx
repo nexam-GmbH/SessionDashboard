@@ -18,9 +18,11 @@ export function CenterTabs() {
   return (
     <div className="flex h-[var(--tab-h)] shrink-0 items-stretch border-b border-line-subtle bg-chrome">
       <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none]">
-        {tabs.map((t) => (
-          <TabItem key={t.key} tab={t} />
-        ))}
+        <div role="tablist" aria-label="Open tabs" className="flex items-stretch" onKeyDown={onTablistKey}>
+          {tabs.map((t) => (
+            <TabItem key={t.key} tab={t} />
+          ))}
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -38,6 +40,28 @@ export function CenterTabs() {
       </div>
     </div>
   )
+}
+
+/** Left/Right move between tabs, Home/End jump to the ends, Delete closes (WAI-ARIA tabs pattern). */
+function onTablistKey(e: React.KeyboardEvent<HTMLDivElement>) {
+  const { tabs, activeTab } = useApp.getState()
+  const i = tabs.findIndex((t) => t.key === activeTab)
+  let next = -1
+  if (e.key === "ArrowRight") next = (i + 1) % tabs.length
+  else if (e.key === "ArrowLeft") next = (i - 1 + tabs.length) % tabs.length
+  else if (e.key === "Home") next = 0
+  else if (e.key === "End") next = tabs.length - 1
+  else if (e.key === "Delete" && i >= 0 && !tabs[i].pinned) {
+    e.preventDefault()
+    closeTab(tabs[i].key)
+    requestAnimationFrame(() => (e.currentTarget?.querySelector('[role="tab"][tabindex="0"]') as HTMLElement | null)?.focus())
+    return
+  }
+  if (next < 0) return
+  e.preventDefault()
+  const el = e.currentTarget
+  navigate(tabs[next].key)
+  requestAnimationFrame(() => (el.querySelector(`[data-tab-key="${CSS.escape(tabs[next].key)}"]`) as HTMLElement | null)?.focus())
 }
 
 const ICONS = {
@@ -59,6 +83,14 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
     <div
       role="tab"
       aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      data-tab-key={tab.key}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          if (tab.preview) pinTab(tab.key)
+        }
+      }}
       draggable={!tab.pinned}
       onDragStart={(e) => {
         pinTab(tab.key)
@@ -86,7 +118,7 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
       onDoubleClick={() => pinTab(tab.key)}
       title={tab.preview ? `${meta.title} (preview: double-click to keep open)` : meta.title}
       className={cn(
-        "group/tab relative flex shrink-0 cursor-default items-center gap-1.5 border-r border-line-subtle text-xs transition-colors",
+        "group/tab relative flex shrink-0 cursor-default items-center gap-1.5 border-r border-line-subtle text-xs transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
         tab.pinned ? "px-3" : "max-w-[220px] min-w-[96px] pr-1 pl-3",
         active
           ? "bg-canvas text-fg before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-brand"
@@ -109,6 +141,7 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
                 e.stopPropagation()
                 openPopout(tab.key)
               }}
+              tabIndex={-1}
               aria-label="Open in new window"
               title="Open in new window"
             >
@@ -118,13 +151,14 @@ const TabItem = memo(function TabItem({ tab }: { tab: Tab }) {
           <button
             className={cn(
               "flex size-5 items-center justify-center rounded-sm text-fg-faint hover:bg-selected hover:text-fg",
-              !active && "opacity-0 group-hover/tab:opacity-100",
+              !active && "opacity-0 group-hover/tab:opacity-100 group-focus-visible/tab:opacity-100",
             )}
+            tabIndex={-1}
             onClick={(e) => {
               e.stopPropagation()
               closeTab(tab.key)
             }}
-            aria-label="Close tab"
+            aria-label={`Close ${meta.title}`}
           >
             <X size={12} />
           </button>

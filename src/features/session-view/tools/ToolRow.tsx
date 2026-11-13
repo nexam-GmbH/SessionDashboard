@@ -58,7 +58,7 @@ const ToolRowInner = memo(function ToolRowInner({ call, itemId }: { call: ToolCa
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         title={waiting ? (asks ? "Waiting for your answer" : "Waiting for your approval") : undefined}
-        className="group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60"
+        className="group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60 focus-visible:ring-1 focus-visible:ring-ring/60"
       >
         <ToolStatusDot display={call.display} tone={asks ? "input" : undefined} />
         <span className="w-[52px] shrink-0 truncate text-[12px] text-fg-faint">{summary.name}</span>

@@ -58,6 +58,8 @@ function PaletteTrigger() {
   return (
     <button
       onClick={() => openPalette()}
+      aria-label="Search sessions, repos, commands"
+      aria-keyshortcuts="Control+K"
       className="flex h-6 w-[min(420px,36vw)] shrink-0 items-center gap-2 rounded-md border border-line-subtle bg-canvas px-2 text-xs text-fg-faint transition-colors hover:border-line hover:text-fg-muted"
     >
       <Search size={13} />
@@ -74,6 +76,8 @@ function AttentionButton() {
       <TooltipTrigger asChild>
         <button
           onClick={() => void goToNextWaiting()}
+          aria-label={waiting ? `${waiting} need you, jump to next` : "Nothing needs you"}
+          aria-keyshortcuts="N"
           className={cn(
             "flex h-6 items-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors hover:bg-hover",
             waiting ? "text-st-perm-fg" : "text-fg-faint",
@@ -84,7 +88,7 @@ function AttentionButton() {
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        {waiting ? `${waiting} waiting for you · jump to next` : "Nothing is waiting for you"} <Shortcut keys={["N"]} className="ml-1" />
+        {waiting ? `${waiting} need you · jump to next` : "Nothing needs you"} <Shortcut keys={["N"]} className="ml-1" />
       </TooltipContent>
     </Tooltip>
   )
@@ -96,7 +100,7 @@ function NotificationsButton() {
   return (
     <Popover open={open} onOpenChange={setNotificationsOpen}>
       <PopoverTrigger asChild>
-        <button className="relative flex size-6 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg" aria-label="Notifications">
+        <button className="relative flex size-6 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
           <Bell size={14} />
           {unread > 0 && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-brand" />}
         </button>

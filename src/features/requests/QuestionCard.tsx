@@ -9,7 +9,7 @@ import { Check, MessageCircleQuestion } from "lucide-react"
 import type { QuestionRequest } from "@/lib/model"
 import { answerRequest } from "@/features/session-view/sessionStore"
 import { cn } from "@/lib/utils"
-import { CardFrame, canStealFocus, type Pager } from "./cardChrome"
+import { CardFrame, canStealFocus, FOCUS, type Pager } from "./cardChrome"
 
 type Answer = { picked: string[]; other: string; otherOn: boolean }
 const EMPTY: Answer = { picked: [], other: "", otherOn: false }
@@ -66,7 +66,7 @@ export const QuestionCard = memo(function QuestionCard({
 
   const tabs =
     request.questions.length > 1 ? (
-      <div role="tablist" className="flex shrink-0 items-center gap-0.5">
+      <div role="tablist" aria-label="Questions" className="flex shrink-0 items-center gap-0.5">
         {request.questions.map((qq, i) => (
           <button
             key={qq.header}
@@ -76,10 +76,11 @@ export const QuestionCard = memo(function QuestionCard({
             onClick={() => setTab(i)}
             className={cn(
               "inline-flex h-5 items-center gap-1 rounded-[3px] px-1.5 text-[11.5px]",
+              FOCUS,
               i === tab ? "bg-selected text-fg" : "text-fg-faint hover:bg-hover hover:text-fg-muted",
             )}
           >
-            {answered[i] && <Check size={10} className="text-fg-muted" />}
+            {answered[i] && <Check size={10} className="text-fg-muted" aria-label="answered" />}
             {qq.header}
           </button>
         ))}
@@ -91,6 +92,7 @@ export const QuestionCard = memo(function QuestionCard({
       ref={ref}
       tone="input"
       label="Question from Claude"
+      keyHint={`1 to ${Math.min(9, q.options.length)} or A to ${String.fromCharCode(64 + Math.min(26, q.options.length))}: pick an answer. Enter: ${request.questions.length > 1 ? "next question or submit" : "submit"}.${request.questions.length > 1 ? " Left and Right arrows: switch question." : ""}`}
       icon={<MessageCircleQuestion size={14} />}
       title={<span className="min-w-0">{q.question}</span>}
       aside={tabs}
@@ -101,7 +103,7 @@ export const QuestionCard = memo(function QuestionCard({
         if (idx >= 0 && q.options[idx]) {
           e.preventDefault()
           pick(q.options[idx].label)
-        } else if (e.key === "ArrowRight" || e.key === "Tab") {
+        } else if (e.key === "ArrowRight" || (e.key === "Tab" && !e.shiftKey)) {
           if (tab < request.questions.length - 1) {
             e.preventDefault()
             setTab(tab + 1)
@@ -122,7 +124,7 @@ export const QuestionCard = memo(function QuestionCard({
             disabled={!allAnswered || !canAnswer}
             onClick={submit}
             title="Enter"
-            className="inline-flex h-6 items-center rounded-[4px] bg-brand px-2.5 text-[12px] font-medium text-white hover:bg-[#0588f0] disabled:opacity-40"
+            className={cn("inline-flex h-6 items-center rounded-[4px] bg-brand px-2.5 text-[12px] font-medium text-white hover:bg-[#0588f0] disabled:opacity-40", FOCUS, "focus-visible:ring-offset-1 focus-visible:ring-offset-elevated")}
           >
             Submit
           </button>
@@ -130,7 +132,7 @@ export const QuestionCard = memo(function QuestionCard({
             <button
               type="button"
               onClick={() => setTab(tab + 1)}
-              className="inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:bg-hover"
+              className={cn("inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:bg-hover", FOCUS)}
             >
               Next
             </button>
@@ -153,6 +155,7 @@ export const QuestionCard = memo(function QuestionCard({
               title={`${o.description ? `${o.description} · ` : ""}${i + 1} or ${String.fromCharCode(65 + i)}`}
               className={cn(
                 "flex min-w-0 flex-col rounded-[4px] px-1 py-1 text-left disabled:opacity-60",
+                FOCUS,
                 on ? "bg-brand/10" : "hover:bg-hover/60",
               )}
             >
@@ -175,7 +178,7 @@ export const QuestionCard = memo(function QuestionCard({
             aria-label="Other"
             disabled={!canAnswer}
             onClick={() => patch(tab, { otherOn: !a.otherOn, picked: q.multiSelect ? a.picked : [] })}
-            className="inline-flex"
+            className={cn("inline-flex rounded-[3px]", FOCUS)}
           >
             <Mark on={a.otherOn} multi={q.multiSelect} />
           </button>
@@ -183,6 +186,7 @@ export const QuestionCard = memo(function QuestionCard({
             value={a.other}
             disabled={!canAnswer}
             placeholder="Other…"
+            aria-label="Other answer"
             onFocus={() => patch(tab, { otherOn: true, picked: q.multiSelect ? a.picked : [] })}
             onChange={(e) => patch(tab, { other: e.target.value, otherOn: true })}
             onKeyDown={(e) => {

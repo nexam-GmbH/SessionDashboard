@@ -87,12 +87,15 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
   // The scroll container always renders so the virtualizer's listeners attach on mount.
   return (
     <div className="relative min-h-0 flex-1">
+      {/* role=log implies aria-live=polite, which would read every streamed token: turned off here;
+          StatusAnnouncer speaks state changes instead. Focusable so the keyboard can scroll it. */}
       <div
         ref={scrollRef}
         role="log"
         aria-label="Session transcript"
-        tabIndex={-1}
-        className="absolute inset-0 overflow-y-auto outline-none [overflow-anchor:none]"
+        aria-live="off"
+        tabIndex={0}
+        className="absolute inset-0 overflow-y-auto outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
       >
         {ready && !rows.length && <EmptyState>No messages yet.</EmptyState>}
         <div ref={contentRef} className="pt-1 pb-6">
@@ -128,9 +131,10 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
         <button
           type="button"
           onClick={() => scrollToBottom("smooth")}
-          className="absolute bottom-3 left-1/2 inline-flex h-6 -translate-x-1/2 items-center gap-1 rounded-[4px] border border-line bg-elevated px-2 text-[11px] text-fg-muted shadow-md hover:bg-hover hover:text-fg"
+          aria-label="Jump to latest message"
+          className="absolute bottom-3 left-1/2 inline-flex h-6 -translate-x-1/2 items-center gap-1 rounded-[4px] border border-line bg-elevated px-2 text-[11px] text-fg-muted shadow-md outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
         >
-          <ArrowDown size={12} /> Latest
+          <ArrowDown size={12} aria-hidden /> Latest
         </button>
       )}
     </div>

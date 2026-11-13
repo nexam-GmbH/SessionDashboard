@@ -19,6 +19,7 @@ export const ComposerMenu = memo(function ComposerMenu({
   bottom,
   onHighlight,
   onSelect,
+  onAria,
 }: {
   items: MenuItem[]
   activeId: string | null
@@ -29,12 +30,21 @@ export const ComposerMenu = memo(function ComposerMenu({
   bottom: number
   onHighlight: (id: string) => void
   onSelect: (item: MenuItem) => void
+  /**
+   * DOM ids of the listbox and its active option, for the textarea's aria-controls /
+   * aria-activedescendant (cmdk generates the ids; focus stays in the textarea).
+   */
+  onAria?: (aria: { listId?: string; optionId?: string }) => void
 }) {
   const listRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
-    if (!activeId || !listRef.current) return
-    listRef.current.querySelector<HTMLElement>(`[data-menu-id="${CSS.escape(activeId)}"]`)?.scrollIntoView({ block: "nearest" })
-  }, [activeId])
+    const list = listRef.current
+    if (!list) return
+    const el = activeId ? list.querySelector<HTMLElement>(`[data-menu-id="${CSS.escape(activeId)}"]`) : null
+    el?.scrollIntoView({ block: "nearest" })
+    onAria?.({ listId: list.id || undefined, optionId: el?.id || undefined })
+  }, [activeId, items, onAria])
+  useLayoutEffect(() => () => onAria?.({}), [onAria])
 
   return (
     <div
@@ -45,9 +55,11 @@ export const ComposerMenu = memo(function ComposerMenu({
       <Command shouldFilter={false} value={activeId ?? ""} loop label={kind === "slash" ? "Commands" : "Files"}>
         <div className="flex h-6 items-center border-b border-line-subtle px-2 text-[11px] text-fg-faint">
           {kind === "slash" ? "Commands" : "Files in this repository"}
-          <span className="ml-auto">↑↓ · ⏎ or Tab · Esc</span>
+          <span className="ml-auto" aria-hidden>
+            ↑↓ · ⏎ or Tab · Esc
+          </span>
         </div>
-        <Command.List ref={listRef} className="max-h-[240px] overflow-y-auto p-1">
+        <Command.List ref={listRef} label={kind === "slash" ? "Commands" : "Files in this repository"} className="max-h-[240px] overflow-y-auto p-1">
           {items.length === 0 && <div className="px-2 py-2 text-[12px] text-fg-faint">{kind === "slash" ? "No matching command." : "No matching files."}</div>}
           {items.map((item) => (
             <Command.Item

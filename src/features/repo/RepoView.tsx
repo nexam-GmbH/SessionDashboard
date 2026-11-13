@@ -121,16 +121,25 @@ function Card({
   const [open, setOpen] = useState(!collapsible)
   return (
     <section className="overflow-hidden rounded-md border border-line-subtle">
+      {/* the whole header toggles for the pointer; the keyboard gets a real disclosure button
+          (its click bubbles to the header handler, so it toggles once) */}
       <div
         className={cn("flex h-8 items-center gap-1.5 bg-chrome px-3", open && "border-b border-line-subtle", collapsible && "cursor-default hover:bg-hover")}
         onClick={collapsible ? () => setOpen((v) => !v) : undefined}
-        role={collapsible ? "button" : undefined}
-        aria-expanded={collapsible ? open : undefined}
       >
-        {collapsible && (open ? <ChevronDown size={12} className="-ml-1 text-fg-faint" /> : <ChevronRight size={12} className="-ml-1 text-fg-faint" />)}
-        <span className="section-label">{title}</span>
-        {count !== undefined && <span className="tabular text-[11px] text-fg-faint">{count}</span>}
-        {!open && summary && <span className="min-w-0 truncate text-[11px] text-fg-faint">{summary}</span>}
+        {collapsible ? (
+          <button type="button" aria-expanded={open} className="flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring">
+            {open ? <ChevronDown size={12} className="-ml-1 shrink-0 text-fg-faint" /> : <ChevronRight size={12} className="-ml-1 shrink-0 text-fg-faint" />}
+            <span className="section-label">{title}</span>
+            {count !== undefined && <span className="tabular text-[11px] text-fg-faint">{count}</span>}
+            {!open && summary && <span className="min-w-0 truncate text-[11px] text-fg-faint">{summary}</span>}
+          </button>
+        ) : (
+          <>
+            <span className="section-label">{title}</span>
+            {count !== undefined && <span className="tabular text-[11px] text-fg-faint">{count}</span>}
+          </>
+        )}
         <span className="ml-auto" onClick={(e) => e.stopPropagation()}>{actions}</span>
       </div>
       {open && children}
@@ -179,15 +188,39 @@ const WorktreeTable = memo(function WorktreeTable({ worktrees }: { worktrees: Wo
   )
 })
 
+/**
+ * Keyboard twin of a list row's click (select) / double-click (open): focusable, Enter opens,
+ * Space selects, with the app's 1px focus ring drawn inside the row.
+ */
+const ROW_FOCUS = "outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+function rowKeys(label: string, onOpen: () => void, onSelect: () => void) {
+  return {
+    role: "button",
+    tabIndex: 0,
+    "aria-label": label,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return
+      if (e.key === "Enter") {
+        e.preventDefault()
+        onOpen()
+      } else if (e.key === " ") {
+        e.preventDefault()
+        onSelect()
+      }
+    },
+  } as const
+}
+
 /** One worktree row; subscribes to its own session only (status ticks don't re-render the table). */
 const WorktreeRow = memo(function WorktreeRow({ w, sid, cols, template }: { w: Worktree; sid: ID | undefined; cols: { diff: boolean; ab: boolean; pr: boolean }; template: string }) {
   const sess = useApp((s) => (sid ? s.sessions[sid] : undefined))
   return (
     <div
-      className="grid h-7 min-w-[420px] cursor-default items-center gap-3 border-b border-line-subtle/70 px-3 last:border-0 hover:bg-hover"
+      className={cn("grid h-7 min-w-[420px] cursor-default items-center gap-3 border-b border-line-subtle/70 px-3 last:border-0 hover:bg-hover", sess && ROW_FOCUS)}
       style={{ gridTemplateColumns: template }}
       onClick={() => sess && select({ kind: "session", id: sess.id })}
       onDoubleClick={() => sess && openSession(sess.id)}
+      {...(sess ? rowKeys(`${w.branch}: ${sess.title}`, () => openSession(sess.id), () => select({ kind: "session", id: sess.id })) : {})}
     >
       <span className="flex min-w-0 items-center gap-1.5">
         <GitBranch size={12} className="shrink-0 text-fg-faint" />
@@ -254,10 +287,13 @@ function SessionLine({ id }: { id: ID }) {
   const age = useRelTime(s?.updatedAt)
   if (!s) return null
   return (
+    // keyboard: Tab to a row, Enter opens the session, Space selects it (inspector); the hover
+    // buttons are pointer shortcuts for the same actions
     <div
-      className="group flex h-7 cursor-default items-center gap-2 border-b border-line-subtle/70 px-3 last:border-0 hover:bg-hover"
+      className={cn("group flex h-7 cursor-default items-center gap-2 border-b border-line-subtle/70 px-3 last:border-0 hover:bg-hover", ROW_FOCUS)}
       onClick={() => select({ kind: "session", id })}
       onDoubleClick={() => openSession(id)}
+      {...rowKeys(`${s.title}${s.waitingFor ? `, ${s.waitingFor.summary}` : ""}`, () => openSession(id), () => select({ kind: "session", id }))}
     >
       <StatusGlyph status={s.status} size="sm" />
       <span className={cn("min-w-0 flex-1 truncate", s.control === "history" ? "text-fg-muted" : "text-fg")} title={s.title}>{s.title}</span>
@@ -268,11 +304,11 @@ function SessionLine({ id }: { id: ID }) {
       )}
       <span className="tabular w-8 text-right text-[11px] text-fg-faint">{age}</span>
       {s.control === "history" ? (
-        <button className="hidden h-5 items-center gap-1 rounded-sm px-1.5 text-[11px] text-fg-muted group-hover:flex hover:bg-selected hover:text-fg" onClick={(e) => { e.stopPropagation(); resumeSession(id) }} title="Resume (claude --resume)">
+        <button className="hidden h-5 items-center gap-1 rounded-sm px-1.5 text-[11px] text-fg-muted group-hover:flex hover:bg-selected hover:text-fg" onClick={(e) => { e.stopPropagation(); resumeSession(id) }} title="Resume (claude --resume)" tabIndex={-1}>
           <Play size={11} /> Resume
         </button>
       ) : (
-        <button className="hidden size-5 items-center justify-center rounded-sm text-fg-faint group-hover:flex hover:bg-selected hover:text-fg" onClick={(e) => { e.stopPropagation(); openSession(id) }} title="Open">
+        <button className="hidden size-5 items-center justify-center rounded-sm text-fg-faint group-hover:flex hover:bg-selected hover:text-fg" onClick={(e) => { e.stopPropagation(); openSession(id) }} title="Open" aria-label="Open session" tabIndex={-1}>
           <ArrowUpRight size={12} />
         </button>
       )}
@@ -295,10 +331,11 @@ function LinksCard({ repoId }: { repoId: ID }) {
             return (
               <div
                 key={l.id}
-                className="flex h-7 cursor-default items-center gap-2 px-3 text-xs hover:bg-hover"
+                className={cn("flex h-7 cursor-default items-center gap-2 px-3 text-xs hover:bg-hover", ROW_FOCUS)}
                 onClick={() => select({ kind: "repo", id: other.id })}
                 onDoubleClick={() => openRepo(other.id)}
                 title={`${l.kind} · ${l.label}`}
+                {...rowKeys(`${other.name}, ${l.kind}`, () => openRepo(other.id), () => select({ kind: "repo", id: other.id }))}
               >
                 <Link2 size={12} className="shrink-0 text-fg-faint" />
                 <span className="truncate text-fg">{other.name}</span>

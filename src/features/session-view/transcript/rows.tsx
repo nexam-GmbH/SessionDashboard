@@ -60,12 +60,13 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       title="Copy message"
+      aria-label={done ? "Copied" : "Copy message"}
       onClick={() => {
         void navigator.clipboard?.writeText(text)
         setDone(true)
         setTimeout(() => setDone(false), 1200)
       }}
-      className="inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+      className="inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
     >
       {done ? <Check size={11} /> : <Copy size={11} />}
     </button>
@@ -78,7 +79,7 @@ export const AgentRow = memo(function AgentRow({ sessionId, itemId, eager }: { s
   return (
     <div className="group/msg relative py-1.5">
       <CachedMarkdown cacheKey={itemId} content={item.text} eager={eager} />
-      <div className="absolute -top-1 right-0 opacity-0 group-hover/msg:opacity-100">
+      <div className="absolute -top-1 right-0 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100">
         <CopyButton text={item.text} />
       </div>
     </div>
@@ -113,7 +114,7 @@ export const ThoughtRow = memo(function ThoughtRow({ sessionId, itemId }: { sess
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="group/th -ml-1 flex h-6 items-center gap-1 rounded-[3px] px-1 text-[12.5px] text-fg-faint hover:text-fg-muted"
+        className="group/th -ml-1 flex h-6 items-center gap-1 rounded-[3px] px-1 text-[12.5px] text-fg-faint outline-none hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span>{thoughtLabel(item.durationMs)}</span>
         <Chevron open={open} className="opacity-60 group-hover/th:opacity-100" />
@@ -182,7 +183,7 @@ export const ToolGroupRow = memo(function ToolGroupRow({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="group/grp -ml-1 flex h-6 max-w-full min-w-0 items-center gap-1 rounded-[3px] px-1 text-left text-[12.5px] text-fg-faint hover:text-fg-muted"
+        className="group/grp -ml-1 flex h-6 max-w-full min-w-0 items-center gap-1 rounded-[3px] px-1 text-left text-[12.5px] text-fg-faint outline-none hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span className="min-w-0 truncate">
           <span className={cn(active && "text-fg-muted")}>
@@ -261,7 +262,7 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
           <button
             type="button"
             onClick={() => sendMessage(sessionId, "continue", "now")}
-            className="h-5 shrink-0 rounded-[3px] border border-st-error/40 px-1.5 text-[11px] text-st-error-fg hover:border-st-error/70"
+            className="h-5 shrink-0 rounded-[3px] border border-st-error/40 px-1.5 text-[11px] text-st-error-fg outline-none hover:border-st-error/70 focus-visible:ring-1 focus-visible:ring-ring"
           >
             Retry
           </button>
@@ -288,7 +289,7 @@ export const ReceiptRow = memo(function ReceiptRow({ sessionId, receipt }: { ses
           <button
             type="button"
             onClick={() => openReview(sessionId)}
-            className="inline-flex items-center gap-1 rounded-[3px] px-1 hover:bg-hover hover:text-fg-muted"
+            className="inline-flex items-center gap-1 rounded-[3px] px-1 outline-none hover:bg-hover hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
           >
             <FileDiff size={11} />
             {plural(receipt.filesChanged, "file")}

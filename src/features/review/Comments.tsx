@@ -194,8 +194,12 @@ export const PendingComments = memo(function PendingComments({
             role="button"
             tabIndex={0}
             onClick={() => onJump(c)}
-            onKeyDown={(e) => e.key === "Enter" && onJump(c)}
-            className="group/pc flex cursor-default gap-1.5 rounded-[3px] px-2 py-1 hover:bg-hover"
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return
+              e.preventDefault()
+              onJump(c)
+            }}
+            className="group/pc flex cursor-default gap-1.5 rounded-[3px] px-2 py-1 outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
             title={c.text}
           >
             <div className="min-w-0 flex-1">
@@ -212,7 +216,7 @@ export const PendingComments = memo(function PendingComments({
               aria-label="Delete comment"
               title="Delete comment"
               className={cn(
-                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[3px] text-fg-faint opacity-0 group-hover/pc:opacity-100 hover:bg-selected hover:text-fg"
+                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[3px] text-fg-faint opacity-0 outline-none group-hover/pc:opacity-100 hover:bg-selected hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
               )}
               onClick={(e) => {
                 e.stopPropagation()

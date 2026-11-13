@@ -14,6 +14,7 @@ import { AttentionDock } from "./attention/AttentionDock"
 import { PromptQueue } from "./composer/PromptQueue"
 import { Composer } from "./composer/Composer"
 import { DiffWorkerPool } from "./tools/InlineDiff"
+import { StatusAnnouncer } from "./StatusAnnouncer"
 
 export default function SessionView({ sessionId, popout }: { sessionId: string; popout?: boolean }) {
   const exists = useApp((s) => !!s.sessions[sessionId])
@@ -30,7 +31,8 @@ export default function SessionView({ sessionId, popout }: { sessionId: string; 
 
 const SessionLayout = memo(function SessionLayout({ sessionId, popout }: { sessionId: ID; popout?: boolean }) {
   return (
-    <div className="flex h-full min-h-0 flex-col bg-canvas contain-strict">
+    <div data-session-view={sessionId} className="flex h-full min-h-0 flex-col bg-canvas contain-strict">
+      <StatusAnnouncer sessionId={sessionId} />
       <SessionHeader sessionId={sessionId} popout={popout} />
       <ControlBanner sessionId={sessionId} />
       <Transcript sessionId={sessionId} />

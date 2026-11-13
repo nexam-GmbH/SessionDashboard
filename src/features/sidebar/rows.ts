@@ -35,10 +35,15 @@ export function rowHeight(row: SidebarRow) {
   return ROW_H_BY_TYPE[row.type]
 }
 
-/** Second line only for sessions that need you, failed, or are actively working. */
+/**
+ * Second line only on the main agent (what it is coordinating). Repo-tree rows stay one line:
+ * what a waiting/failed session needs is already spelled out in "Needs you" right above, and
+ * live activity text changes every few seconds, which reads as noise in a navigation list.
+ * The map and the session itself show the activity; the row tooltip has it too.
+ */
 export function hasSignal(s: AppState, id: ID) {
   const x = s.sessions[id]
-  if (!x) return false
+  if (!x || x.role !== "main") return false
   return x.status === "waiting_permission" || x.status === "waiting_input" || x.status === "error" || (x.status === "working" && !!x.activity)
 }
 

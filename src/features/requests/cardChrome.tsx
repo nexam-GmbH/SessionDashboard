@@ -4,11 +4,14 @@
 // action row. Changes: status tokens (perm orange / input amber), a compact "1/2" pager,
 // calm copy (§2.5): short option labels with the full ACP name as tooltip, keyboard
 // hints only while the card has focus.
-import { forwardRef, type KeyboardEvent, type ReactNode } from "react"
+import { forwardRef, useId, type KeyboardEvent, type ReactNode } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import type { PermissionOption } from "@/lib/model"
 import { MOD } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
+
+/** Keyboard focus ring for the cards' own buttons (the shadcn Button's ring: 1px `ring`). */
+export const FOCUS = "outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
 export interface Pager {
   index: number
@@ -32,17 +35,23 @@ export const CardFrame = forwardRef<
     onKeyDown?: (e: KeyboardEvent<HTMLElement>) => void
     className?: string
     label: string
+    /** keyboard model for screen readers (the visible key hints only show while focused) */
+    keyHint?: string
   }
->(function CardFrame({ tone, icon, title, meta, aside, pager, children, footer, onKeyDown, className, label }, ref) {
+>(function CardFrame({ tone, icon, title, meta, aside, pager, children, footer, onKeyDown, className, label, keyHint }, ref) {
+  const hintId = useId()
   return (
+    // a labelled region (landmark): focus lands here when a request arrives, and screen reader
+    // users can jump to it; the dock around it is the polite live region that announces it
     <section
       ref={ref}
-      role="alertdialog"
+      role="region"
       aria-label={label}
+      aria-describedby={keyHint ? hintId : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
       className={cn(
-        "group/card overflow-hidden rounded-[6px] border bg-elevated outline-none focus-visible:ring-1 focus-visible:ring-brand/70",
+        "group/card overflow-hidden rounded-[6px] border bg-elevated outline-none focus-visible:ring-1 focus-visible:ring-ring/70",
         tone === "perm" ? "border-st-perm/45" : "border-st-input/40",
         className,
       )}
@@ -54,15 +63,25 @@ export const CardFrame = forwardRef<
         {aside}
         {pager && pager.total > 1 && (
           <span className="flex shrink-0 items-center text-[11px] text-fg-faint">
-            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className="inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg">
+            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg", FOCUS)}>
               <ChevronLeft size={12} />
             </button>
             <span className="tabular" title="Pending requests">
-              {pager.index + 1}/{pager.total}
+              <span aria-hidden>
+                {pager.index + 1}/{pager.total}
+              </span>
+              <span className="sr-only">
+                Request {pager.index + 1} of {pager.total}
+              </span>
             </span>
-            <button type="button" aria-label="Next request" onClick={pager.onNext} className="inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg">
+            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg", FOCUS)}>
               <ChevronRight size={12} />
             </button>
+          </span>
+        )}
+        {keyHint && (
+          <span id={hintId} className="sr-only">
+            {keyHint}
           </span>
         )}
       </header>
@@ -81,7 +100,7 @@ export function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () 
       aria-label={open ? "Hide details" : "Show details"}
       title={open ? "Hide details" : "Details"}
       onClick={onToggle}
-      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+      className={cn("inline-flex size-5 shrink-0 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg", FOCUS)}
     >
       <ChevronRight size={12} className={cn("transition-transform duration-150", open && "rotate-90")} />
     </button>
@@ -111,6 +130,7 @@ export function FeedbackField({
         rows={2}
         value={value}
         placeholder={placeholder}
+        aria-label={placeholder.replace(/\s*\(optional\)$/, "")}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           e.stopPropagation()
@@ -129,11 +149,11 @@ export function FeedbackField({
           type="button"
           onClick={onSubmit}
           title={`${MOD}+Enter`}
-          className="inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:border-line-strong hover:bg-hover"
+          className={cn("inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:border-line-strong hover:bg-hover", FOCUS)}
         >
           {submitLabel}
         </button>
-        <button type="button" onClick={onCancel} title="Esc" className="h-6 rounded-[4px] px-2 text-[12px] text-fg-faint hover:bg-hover hover:text-fg-muted">
+        <button type="button" onClick={onCancel} title="Esc" className={cn("h-6 rounded-[4px] px-2 text-[12px] text-fg-faint hover:bg-hover hover:text-fg-muted", FOCUS)}>
           Cancel
         </button>
       </div>
@@ -168,14 +188,17 @@ export function OptionButton({
       title={title}
       className={cn(
         "inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
+        FOCUS,
+        // on the blue primary the ring needs an offset to stay visible
+        variant === "primary" && "focus-visible:ring-offset-1 focus-visible:ring-offset-elevated",
         variant === "primary" && "border-transparent bg-brand text-white hover:bg-[#0588f0]",
         variant === "secondary" && "border-line bg-elevated text-fg hover:border-line-strong hover:bg-hover",
         variant === "quiet" && "border-transparent text-fg-muted hover:bg-hover hover:text-fg",
       )}
     >
-      <span className={cn("tabular hidden text-[10.5px] group-focus-within/card:inline", variant === "primary" ? "text-white/70" : "text-fg-faint")}>{n}</span>
+      <span aria-hidden className={cn("tabular hidden text-[10.5px] group-focus-within/card:inline", variant === "primary" ? "text-white/70" : "text-fg-faint")}>{n}</span>
       <span className="min-w-0 truncate">{children}</span>
-      {enter && <span className="hidden text-[10.5px] text-white/70 group-focus-within/card:inline">⏎</span>}
+      {enter && <span aria-hidden className="hidden text-[10.5px] text-white/70 group-focus-within/card:inline">⏎</span>}
     </button>
   )
 }

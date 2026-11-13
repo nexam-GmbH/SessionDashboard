@@ -95,9 +95,11 @@ export function Shell() {
             collapsedSize="0px"
             className="bg-chrome"
           >
-            <ErrorBoundary label="Sidebar">
-              <Sidebar />
-            </ErrorBoundary>
+            <div className="h-full" inert={!panels.sidebar}>
+              <ErrorBoundary label="Sidebar">
+                <Sidebar />
+              </ErrorBoundary>
+            </div>
           </ResizablePanel>
           <ResizableHandle className={cn(!panels.sidebar && "hidden")} />
           <ResizablePanel id="center" minSize="420px">
@@ -124,9 +126,11 @@ export function Shell() {
                 collapsedSize="0px"
                 className="bg-chrome"
               >
-                <ErrorBoundary label="Panel">
-                  <BottomPanel />
-                </ErrorBoundary>
+                <div className="h-full" inert={!panels.bottom}>
+                  <ErrorBoundary label="Panel">
+                    <BottomPanel />
+                  </ErrorBoundary>
+                </div>
               </ResizablePanel>
             </ResizablePanelGroup>
           </ResizablePanel>
@@ -141,9 +145,11 @@ export function Shell() {
             collapsedSize="0px"
             className="bg-chrome"
           >
-            <ErrorBoundary label="Inspector">
-              <Inspector />
-            </ErrorBoundary>
+            <div className="h-full" inert={!panels.inspector}>
+              <ErrorBoundary label="Inspector">
+                <Inspector />
+              </ErrorBoundary>
+            </div>
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

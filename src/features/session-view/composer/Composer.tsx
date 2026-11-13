@@ -4,7 +4,7 @@
 // empty composer interrupts, Shift+Tab cycles the permission mode. Calm rules (§2.5):
 // short placeholder, attach / commands / mention as small icons, key hints in the send
 // button's tooltip; the permission mode lives in the header's settings menu.
-import { memo, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useId, useMemo, useRef, useState } from "react"
 import { ArrowUp, AtSign, Paperclip, Slash, Square, X } from "lucide-react"
 import type { ID, PermissionMode } from "@/lib/model"
 import { useApp } from "@/store/app"
@@ -39,6 +39,11 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const taRef = useRef<HTMLTextAreaElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const hintId = useId()
+  const [menuAria, setMenuAria] = useState<{ listId?: string; optionId?: string }>({})
+  const onMenuAria = useCallback((a: { listId?: string; optionId?: string }) => {
+    setMenuAria((p) => (p.listId === a.listId && p.optionId === a.optionId ? p : a))
+  }, [])
 
   const highlights = useMemo(() => highlightRanges(text, fileSet), [text, fileSet])
   const items: MenuItem[] = useMemo(() => {
@@ -127,6 +132,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
             bottom={anchor.bottom}
             onHighlight={setActiveId}
             onSelect={applyItem}
+            onAria={onMenuAria}
           />
         )}
         {attachments.length > 0 && (
@@ -135,7 +141,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
               <span key={`${a}:${i}`} className="inline-flex h-5 items-center gap-1 rounded-[3px] border border-line-subtle bg-chrome pr-0.5 pl-1.5 font-mono text-[11px] text-fg-muted">
                 <Paperclip size={10} />
                 {a}
-                <button type="button" aria-label={`Remove ${a}`} className="inline-flex size-4 items-center justify-center rounded-[2px] hover:bg-hover hover:text-fg" onClick={() => setAttachments((x) => x.filter((_, j) => j !== i))}>
+                <button type="button" aria-label={`Remove ${a}`} className="inline-flex size-4 items-center justify-center rounded-[2px] outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring" onClick={() => setAttachments((x) => x.filter((_, j) => j !== i))}>
                   <X size={10} />
                 </button>
               </span>
@@ -148,6 +154,12 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
           rows={1}
           highlights={highlights}
           aria-label="Message Claude"
+          aria-describedby={hintId}
+          // the / and @ menus: a listbox driven from the textarea (focus never leaves it)
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-controls={menuOpen ? menuAria.listId : undefined}
+          aria-activedescendant={menuOpen ? menuAria.optionId : undefined}
           placeholder={working ? "Queue a message" : "Message Claude"}
           className={TEXT_CLASS}
           onChange={(e) => {
@@ -212,12 +224,18 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
             }
           }}
         />
+        <span id={hintId} className="sr-only">
+          {working ? `Enter queues, ${MOD}+Enter sends now, Escape interrupts.` : "Enter sends, Shift+Enter adds a line."} Slash for commands, at sign
+          to mention a file.{caps.changeSettings ? " Shift+Tab changes the permission mode; Tab moves on." : ""}
+        </span>
         <div className="flex h-8 items-center gap-0.5 px-1.5 pb-0.5">
           <input
             ref={fileInput}
             type="file"
             multiple
             hidden
+            tabIndex={-1}
+            aria-hidden
             onChange={(e) => {
               const names = [...(e.target.files ?? [])].map((f) => f.name)
               if (names.length) setAttachments((a) => [...a, ...names])
@@ -225,7 +243,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
             }}
           />
           <Hint label="Attach · or paste / drop" side="top">
-            <button type="button" aria-label="Attach" onClick={() => fileInput.current?.click()} className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg">
+            <button type="button" aria-label="Attach" onClick={() => fileInput.current?.click()} className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring">
               <Paperclip size={13} />
             </button>
           </Hint>
@@ -242,7 +260,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
                   syncTrigger("/", 1)
                 })
               }}
-              className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+              className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
             >
               <Slash size={13} />
             </button>
@@ -260,7 +278,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
                   syncTrigger(next, next.length)
                 })
               }}
-              className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+              className="inline-flex size-6 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
             >
               <AtSign size={13} />
             </button>
@@ -268,7 +286,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
           <span className="flex-1" />
           {working && !text && caps.interrupt ? (
             <Hint label="Interrupt · Esc" side="top">
-              <button type="button" aria-label="Interrupt" onClick={() => interruptSession(sessionId)} className="inline-flex size-6 items-center justify-center rounded-[4px] bg-fg text-canvas hover:bg-st-error hover:text-white">
+              <button type="button" aria-label="Interrupt" onClick={() => interruptSession(sessionId)} className="inline-flex size-6 items-center justify-center rounded-[4px] bg-fg text-canvas outline-none hover:bg-st-error hover:text-white focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-elevated">
                 <Square size={10} fill="currentColor" />
               </button>
             </Hint>
@@ -282,7 +300,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
                 aria-label="Send"
                 disabled={!text.trim()}
                 onClick={() => submit("queue")}
-                className="inline-flex size-6 items-center justify-center rounded-[4px] bg-brand text-white hover:bg-[#0588f0] disabled:bg-hover disabled:text-fg-faint"
+                className="inline-flex size-6 items-center justify-center rounded-[4px] bg-brand text-white outline-none hover:bg-[#0588f0] focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-elevated disabled:bg-hover disabled:text-fg-faint"
               >
                 <ArrowUp size={13} strokeWidth={2.5} />
               </button>

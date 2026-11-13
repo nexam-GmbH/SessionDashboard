@@ -1,5 +1,5 @@
 // Session header (UI_PLAN §5.3, calm rules §2.5): one row — status glyph · title · muted
-// repo — and on the right a compact "Opus · high · default" settings menu (model,
+// repo — and on the right a compact "Opus" settings menu, naming effort and permission mode only when they differ from the defaults (model,
 // effort, permission mode, plus context, cost and branch as details on demand),
 // Interrupt only while working, Review only when there are changes, and a "⋯" menu
 // for everything else. Layout ideas from Cline session-status.tsx and the Vibe Kanban
@@ -164,6 +164,9 @@ const SettingsMenu = memo(function SettingsMenu({ session: s, branch }: { sessio
   const pct = s.usage.contextPct
   const ctxTone = pct >= 90 ? "bg-st-error" : pct >= 75 ? "bg-st-input" : "bg-fg-faint"
   const short = modelLabel(s.model).split(" ")[0]
+  const defaultEffort = useApp((st) => st.settings.defaults.effort)
+  // calm rule: the trigger names the model and only the settings that differ from the defaults
+  const extras = [s.effort !== defaultEffort && s.effort, s.permissionMode !== "default" && PERMISSION_MODE_LABEL[s.permissionMode].toLowerCase()].filter(Boolean)
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -173,7 +176,7 @@ const SettingsMenu = memo(function SettingsMenu({ session: s, branch }: { sessio
           className="inline-flex h-6 min-w-0 items-center gap-1 rounded-[3px] px-1.5 text-[12px] text-fg-muted hover:bg-hover hover:text-fg aria-expanded:bg-hover aria-expanded:text-fg"
         >
           <span className="truncate">
-            {short} · {s.effort} · {PERMISSION_MODE_LABEL[s.permissionMode].toLowerCase()}
+            {[short, ...extras].join(" · ")}
           </span>
           {pct >= 80 && <span className={cn("tabular shrink-0", pct >= 90 ? "text-st-input-fg" : "text-fg-faint")}>· {pct}%</span>}
           <ChevronDown size={11} className="shrink-0 text-fg-faint" />

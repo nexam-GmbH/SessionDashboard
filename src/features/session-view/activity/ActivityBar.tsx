@@ -21,7 +21,7 @@ import { focusDockRequest, resolveRequest, useChangedFiles, useDockFocus, useTod
 import { TodoList } from "../tools/ToolBodies"
 
 const CHIP =
-  "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[4px] border border-line-subtle px-1.5 text-[12px] text-fg-muted hover:bg-hover hover:text-fg aria-expanded:bg-hover aria-expanded:text-fg"
+  "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[4px] border border-line-subtle px-1.5 text-[12px] text-fg-muted outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring aria-expanded:bg-hover aria-expanded:text-fg"
 
 /** In progress: something is being worked on, or part of it is done. A finished or untouched plan carries no signal. */
 const planInProgress = (todos: readonly { status: string }[]) => {
@@ -37,7 +37,7 @@ function PlanChip({ sessionId }: { sessionId: ID }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className={CHIP} title={current?.content}>
+        <button type="button" className={CHIP} title={current?.content} aria-label={`Plan: ${done} of ${todos.length} done${current ? `, now: ${current.content}` : ""}`}>
           <ListChecks size={13} className="text-fg-faint" />
           <span className="tabular">
             {done}/{todos.length}
@@ -85,7 +85,7 @@ function AgentsChip({ sessionId }: { sessionId: ID }) {
             type="button"
             onClick={() => select({ kind: "subagent", id: s.id })}
             title={`${s.agentType} · ${s.toolCount} tools`}
-            className="flex h-7 min-w-0 items-center gap-2 rounded-[3px] px-1.5 text-left text-[12px] hover:bg-hover"
+            className="flex h-7 min-w-0 items-center gap-2 rounded-[3px] px-1.5 text-left text-[12px] outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-ring"
             style={{ paddingLeft: 6 + (s.spawnDepth - 1) * 14 }}
           >
             <StatusGlyph status={subagentAsStatus(s)} size="xs" />
@@ -123,7 +123,7 @@ function ChildRequest({ req, sessionId, canApprove, more }: { req: PermissionReq
         type="button"
         onClick={() => focusDockRequest(sessionId, req.id)}
         title={`${sub?.agentType ?? "Subagent"} wants ${req.toolName}: ${subject}`}
-        className="flex min-w-0 items-center gap-1.5 text-left"
+        className="flex min-w-0 items-center gap-1.5 rounded-[3px] text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <ShieldAlert size={12} className="shrink-0 text-st-perm" />
         <span className="shrink-0 text-st-perm-fg">{sub?.agentType ?? "subagent"}</span>

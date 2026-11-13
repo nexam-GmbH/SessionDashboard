@@ -40,6 +40,7 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
       ref={ref}
       tone="input"
       label="Plan approval"
+      keyHint={`Enter: approve. 1 to ${Math.min(9, request.options.length)}: pick an option.`}
       icon={<ListChecks size={14} />}
       title={<span className="truncate">Approve plan?</span>}
       pager={pager}

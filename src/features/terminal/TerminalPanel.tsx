@@ -160,5 +160,5 @@ export default function TerminalPanel({ sessionId }: { sessionId: ID | null }) {
     }
   }, [sessionId])
   if (!sessionId) return <EmptyState>No session selected.</EmptyState>
-  return <div ref={ref} className="absolute inset-0 bg-canvas py-1 pl-2" />
+  return <div ref={ref} role="region" aria-label="Terminal replay" className="absolute inset-0 bg-canvas py-1 pl-2" />
 }

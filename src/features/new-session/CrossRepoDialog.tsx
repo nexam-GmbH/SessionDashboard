@@ -93,7 +93,7 @@ export default function CrossRepoDialog() {
                   <FolderGit2 size={13} className="text-fg-faint" />
                   <span className={cn("truncate text-xs", selected.includes(id) ? "text-fg" : "text-fg-muted")}>{repos[id].name}</span>
                   {sug && (
-                    <span className="ml-auto flex shrink-0 items-center text-fg-faint" title={`Linked: ${sug}`} aria-label="Linked">
+                    <span className="ml-auto flex shrink-0 items-center text-fg-faint" title={`Linked: ${sug}`} role="img" aria-label={`Linked: ${sug}`}>
                       <Link2 size={11} />
                     </span>
                   )}
@@ -108,6 +108,7 @@ export default function CrossRepoDialog() {
               onChange={(e) => setTask(e.target.value)}
               rows={7}
               placeholder="What should change everywhere?"
+              aria-label="Task"
               className="w-full flex-1 resize-none rounded-md border border-line bg-canvas px-2.5 py-2 text-[13px] leading-relaxed text-fg outline-none placeholder:text-fg-faint focus:border-line-strong"
             />
             <label className="flex h-7 items-center justify-between gap-3 text-xs" title="The main agent writes a per-repo checklist first and waits for your approval">

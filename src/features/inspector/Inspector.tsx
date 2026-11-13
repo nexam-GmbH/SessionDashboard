@@ -134,13 +134,28 @@ function SessionTabs({ id }: { id: ID }) {
   return (
     <div className="flex min-h-full flex-col">
       {tabs.length > 1 && (
-        <div className="sticky top-0 z-10 flex h-8 shrink-0 items-stretch gap-4 border-b border-line-subtle bg-chrome px-3">
+        <div
+          role="tablist"
+          aria-label="Session details"
+          className="sticky top-0 z-10 flex h-8 shrink-0 items-stretch gap-4 border-b border-line-subtle bg-chrome px-3"
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return
+            const i = tabs.findIndex((t) => t.id === tab)
+            const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length]
+            setTab(next.id)
+            ;(e.currentTarget.querySelector(`[data-tab="${next.id}"]`) as HTMLElement | null)?.focus()
+          }}
+        >
           {tabs.map((t) => (
             <button
               key={t.id}
+              data-tab={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
               className={cn(
-                "relative text-xs transition-colors",
+                "relative text-xs transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
                 tab === t.id ? "text-fg after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-brand" : "text-fg-faint hover:text-fg-muted",
               )}
             >
@@ -167,7 +182,7 @@ function Details({ children, label = "Details" }: { children: ReactNode; label?:
   const [open, setOpen] = useState(false)
   return (
     <section className="border-b border-line-subtle">
-      <button className="flex h-8 w-full items-center gap-1 px-3 text-left" onClick={() => setOpen((v) => !v)}>
+      <button className="flex h-8 w-full items-center gap-1 px-3 text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <ChevronRight size={12} className={cn("text-fg-faint transition-transform", open && "rotate-90")} />
         <span className="section-label">{label}</span>
       </button>

@@ -107,7 +107,8 @@ async function shot(name, desc, fn) {
 async function discover() {
   const fromStore = await page.evaluate(async () => {
     try {
-      const m = await import("/src/store/app.ts")
+      const mod = (path) => performance.getEntriesByType("resource").map((e) => e.name).findLast((n) => new URL(n).pathname === path) ?? path
+      const m = await import(mod("/src/store/app.ts"))
       const s = m.getApp()
       const all = Object.values(s.sessions)
       const has = (t) => all.find((x) => x.title.toLowerCase().includes(t.toLowerCase()))?.id
@@ -206,7 +207,8 @@ await shot("inspector-changes", `Inspector: Changes tab for a selected session (
   await go("#/map")
   const ok = await page
     .evaluate(async (id) => {
-      const a = await import("/src/store/actions.ts")
+      const mod = (path) => performance.getEntriesByType("resource").map((e) => e.name).findLast((n) => new URL(n).pathname === path) ?? path
+      const a = await import(mod("/src/store/actions.ts"))
       a.select({ kind: "session", id })
       return true
     }, ids.review)
@@ -219,7 +221,8 @@ await shot("inspector-changes", `Inspector: Changes tab for a selected session (
 if (want("inspector-changes"))
   await page
     .evaluate(async () => {
-      const a = await import("/src/store/actions.ts")
+      const mod = (path) => performance.getEntriesByType("resource").map((e) => e.name).findLast((n) => new URL(n).pathname === path) ?? path
+      const a = await import(mod("/src/store/actions.ts"))
       a.select(null)
     })
     .catch(() => {})
@@ -442,7 +445,7 @@ await shot("palette-commands", "Command palette in > command mode", async () => 
 // ---------------- notifications ----------------
 await shot("notifications-popover", "Notifications popover (bell)", async () => {
   await go("#/map")
-  await page.click('button[aria-label="Notifications"]')
+  await page.click('button[aria-label^="Notifications"]')
   await wait(400)
 })
 await shot("toast", "Toast stack (Settings → Send test notification)", async () => {
