@@ -161,7 +161,26 @@ const WorktreeTable = memo(function WorktreeTable({ worktrees }: { worktrees: Wo
     // structVersion: sessions added / archived / restored
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoId, structVersion])
-  const rows = worktrees.slice(0, 40)
+  // Calm: show the worktrees that matter (your checkout, live sessions, uncommitted work); finished
+  // branches fold under one line that still says how many have unpushed commits.
+  const [showAll, setShowAll] = useState(false)
+  const relevant = useMemo(
+    () =>
+      worktrees.filter((w) => {
+        if (w.isMain) return true
+        const sid = sessionsByCwd[w.id]
+        const x = sid ? getApp().sessions[sid] : undefined
+        const live = !!x && x.control !== "history" && x.status !== "stopped"
+        return live || w.git.filesChanged > 0
+      }),
+    [worktrees, sessionsByCwd],
+  )
+  const unpushedHidden = useMemo(() => {
+    const keep = new Set(relevant)
+    return worktrees.filter((w) => !keep.has(w) && w.git.unpushed > 0).length
+  }, [worktrees, relevant])
+  const rows = showAll || relevant.length === worktrees.length ? worktrees.slice(0, 40) : relevant
+  const hidden = worktrees.length - relevant.length
   // hide columns that would be empty for every row
   const cols = {
     diff: rows.some((w) => w.git.filesChanged > 0),
@@ -181,9 +200,18 @@ const WorktreeTable = memo(function WorktreeTable({ worktrees }: { worktrees: Wo
       {rows.map((w) => (
         <WorktreeRow key={w.id} w={w} sid={sessionsByCwd[w.id]} cols={cols} template={template} />
       ))}
-      {worktrees.length > rows.length && (
-        <div className="flex h-7 items-center px-3 text-[11px] text-fg-faint">+{worktrees.length - rows.length} more</div>
+      {hidden > 0 && (
+        <button
+          className="flex h-7 w-full items-center gap-1 px-3 text-left text-[11px] text-fg-faint outline-none hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+          onClick={() => setShowAll((v) => !v)}
+          aria-expanded={showAll}
+        >
+          {showAll ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {showAll ? "Show fewer" : `${hidden} finished`}
+          {!showAll && unpushedHidden > 0 && <span className="text-fg-faint"> · {unpushedHidden} unpushed</span>}
+        </button>
       )}
+      {showAll && worktrees.length > 40 && <div className="flex h-7 items-center px-3 text-[11px] text-fg-faint">+{worktrees.length - 40} more</div>}
     </div>
   )
 })
