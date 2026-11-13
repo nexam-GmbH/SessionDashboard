@@ -562,6 +562,33 @@ check("rewind: menu → pick a prompt → transcript truncated, prompt back in c
   await page.keyboard.press("Escape")
 })
 
+check("composer: attachments become chips on the message; a queued message is sent when the turn ends", async () => {
+  await load("#/map")
+  const sid = await app((s) => Object.values(s.sessions).find((x) => !x.archived && x.control === "owned" && x.status === "done_unseen")?.id)
+  expect(sid, "no finished owned session")
+  await go(`#/session/${sid}`)
+  await page.waitForTimeout(600)
+  await page.locator('input[type="file"]').first().setInputFiles(["package.json", "README.md"])
+  await visible("textarea").first().fill("Use these two files")
+  await page.keyboard.press("Enter")
+  const sent = await until(() => app((s, id) => { const t = s.transcripts[id]; const u = t?.order.map((x) => t.items[x]).filter((x) => x.type === "user_message").at(-1); return u?.text === "Use these two files" ? u.attachments ?? [] : null }, sid))
+  expect(Array.isArray(sent) && sent.length === 2, `user message attachments: ${JSON.stringify(sent)}`)
+  expect(!(await app((s, id) => s.transcripts[id].order.map((x) => s.transcripts[id].items[x]).some((x) => x.type === "user_message" && x.text.includes("[attached:")), sid)), "attachments pasted into the text")
+  expect(await page.getByText("package.json", { exact: true }).first().isVisible(), "attachment chip not shown")
+  // now working: Enter queues
+  await visible("textarea").first().fill("And then update the changelog")
+  await page.keyboard.press("Enter")
+  const queued = await until(() => app((s, id) => s.transcripts[id].queued.length, sid))
+  expect(queued === 1, `queue has ${queued}`)
+  // the turn ends → the queued message goes out
+  await page.evaluate(async ({ id, moduleUrl }) => {
+    const e = await import(new Function(`return (${moduleUrl})`)()("/src/mocks/engine.ts"))
+    e.enqueue({ t: "status", sid: id, status: "done_unseen", patch: { activity: undefined } })
+  }, { id: sid, moduleUrl: MODULE_URL })
+  const delivered = await until(() => app((s, id) => { const t = s.transcripts[id]; return t.queued.length === 0 && t.order.some((x) => t.items[x].type === "user_message" && t.items[x].text === "And then update the changelog") && s.sessions[id].status === "working" }, sid))
+  expect(delivered, "queued message not delivered after the turn ended")
+})
+
 check("? opens the keyboard shortcuts overlay (Esc closes it)", async () => {
   await load("#/map")
   await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {})

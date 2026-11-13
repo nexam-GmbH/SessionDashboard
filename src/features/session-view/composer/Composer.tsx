@@ -102,7 +102,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const submit = (how: "queue" | "now") => {
     const value = text.trim()
     if (!value || !caps.send) return
-    sendMessage(sessionId, attachments.length ? `${value}\n\n[attached: ${attachments.join(", ")}]` : value, how)
+    sendMessage(sessionId, value, how, attachments)
     setText("")
     setAttachments([])
     setTrigger(null)

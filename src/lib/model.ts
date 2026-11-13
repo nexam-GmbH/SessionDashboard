@@ -227,7 +227,7 @@ export interface Transcript {
   order: ID[]
   items: Record<ID, Item>
   liveItemId?: ID
-  queued: { id: ID; text: string }[]
+  queued: { id: ID; text: string; attachments?: string[] }[]
   todos: { content: string; status: "pending" | "in_progress" | "completed" }[]
 }
 

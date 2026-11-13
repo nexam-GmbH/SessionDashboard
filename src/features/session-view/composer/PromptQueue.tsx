@@ -3,7 +3,7 @@
 // Changes: lucide icons, our store actions (edit / send now / remove), dense rows; no
 // header line (calm rules §2.5): the clock glyph and its tooltip say "queued".
 import { memo, useState } from "react"
-import { Check, Clock3, CornerDownLeft, Pencil, X } from "lucide-react"
+import { Check, Clock3, CornerDownLeft, Paperclip, Pencil, X } from "lucide-react"
 import type { ID } from "@/lib/model"
 import { removeQueued } from "@/store/actions"
 import { cn } from "@/lib/utils"
@@ -53,10 +53,16 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
                   className="my-1 min-w-0 flex-1 resize-none bg-transparent text-[12.5px] leading-[18px] text-fg outline-none"
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate text-fg-muted" title={`Queued: sent after this turn\n${q.text}`}>
+                <span className="min-w-0 flex-1 truncate text-fg-muted" title={`Queued: sent after this turn\n${q.text}${q.attachments?.length ? `\n${q.attachments.join(", ")}` : ""}`}>
                   {q.text}
                 </span>
               )}
+              {!editing && q.attachments?.length ? (
+                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-fg-faint" aria-label={`${q.attachments.length} attached`}>
+                  <Paperclip size={11} />
+                  <span className="tabular">{q.attachments.length}</span>
+                </span>
+              ) : null}
               <span className={cn("flex shrink-0 items-center gap-0.5", !editing && "opacity-0 group-hover/q:opacity-100 focus-within:opacity-100")}>
                 {editing ? (
                   <>

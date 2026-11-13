@@ -130,7 +130,7 @@ export function sendQueuedNow(sessionId: ID, queuedId: ID) {
   const q = getApp().transcripts[sessionId]?.queued.find((x) => x.id === queuedId)
   if (!q) return
   removeQueued(sessionId, queuedId)
-  sendMessage(sessionId, q.text, "now")
+  sendMessage(sessionId, q.text, "now", q.attachments)
 }
 
 /** Up arrow in an empty composer: pull the last queued message back for editing (Claude Code CLI). */

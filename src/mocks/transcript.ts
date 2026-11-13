@@ -591,7 +591,7 @@ ensureStreamer()
 
 let msgSeq = 0
 /** User sends a message: new turn with the user message and a streaming reply. */
-export function appendUserMessage(sessionId: ID, text: string) {
+export function appendUserMessage(sessionId: ID, text: string, attachments?: string[]) {
   ensureTranscript(sessionId)
   const t = getApp().transcripts[sessionId]
   if (!t) return
@@ -604,7 +604,7 @@ export function appendUserMessage(sessionId: ID, text: string) {
   if (t.liveItemId && items[t.liveItemId]?.type === "agent_message") {
     items[t.liveItemId] = { ...(items[t.liveItemId] as Extract<Item, { type: "agent_message" }>), streaming: false }
   }
-  items[uId] = { type: "user_message", id: uId, turnId, at: now, text }
+  items[uId] = { type: "user_message", id: uId, turnId, at: now, text, ...(attachments?.length ? { attachments } : {}) }
   items[mId] = { type: "agent_message", id: mId, turnId, at: now, text: "On it —", streaming: true }
   const turn: Turn = { id: turnId, sessionId, status: "in_progress", startedAt: now, itemIds: [uId, mId] }
   setApp((s) => ({

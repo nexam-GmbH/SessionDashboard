@@ -1,6 +1,6 @@
 import type { ID, PendingRequest, Session, SessionStatus } from "@/lib/model"
 import { getApp, setApp, useApp } from "@/store/app"
-import { pushNotification } from "@/store/actions"
+import { pushNotification, removeQueued, sendMessage } from "@/store/actions"
 import { Rng } from "./rng"
 
 /**
@@ -116,9 +116,19 @@ function flush() {
   engineStats.applied = appliedTotal
   engineStats.batches++
   engineStats.lastBatch = batch.length
+  // a finished turn delivers the next queued message (as Claude Code does after the turn ends)
+  const delivered = new Set<ID>()
+  for (const ev of batch) {
+    if (ev.t !== "status" || ev.status !== "done_unseen" || delivered.has(ev.sid)) continue
+    const q = getApp().transcripts[ev.sid]?.queued[0]
+    if (!q) continue
+    delivered.add(ev.sid)
+    removeQueued(ev.sid, q.id)
+    sendMessage(ev.sid, q.text, "now", q.attachments)
+  }
   for (const n of notify) {
-    // don't toast for the session the user is looking at
-    if (getApp().activeTab !== `/session/${n.sessionId}`) pushNotification(n)
+    // don't toast for the session the user is looking at, or one that just picked up its queue
+    if (getApp().activeTab !== `/session/${n.sessionId}` && !delivered.has(n.sessionId)) pushNotification(n)
   }
   listeners.forEach((l) => l(batch))
 }

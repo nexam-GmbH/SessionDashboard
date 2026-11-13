@@ -426,7 +426,7 @@ export function answerQuestion(requestId: ID, answers: Record<string, string | s
 }
 
 // ---------- messages ----------
-export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" = "queue") {
+export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" = "queue", attachments?: string[]) {
   const s = getApp().sessions[sessionId]
   if (!s || !text.trim()) return
   pinSessionTab(sessionId)
@@ -435,13 +435,13 @@ export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" =
     setApp((st) => ({
       transcripts: {
         ...st.transcripts,
-        [sessionId]: { ...t, queued: [...t.queued, { id: newId("q"), text }] },
+        [sessionId]: { ...t, queued: [...t.queued, { id: newId("q"), text, ...(attachments?.length ? { attachments } : {}) }] },
       },
     }))
     return
   }
   // engine/transcript module appends the user message and starts a new turn
-  void import("@/mocks/transcript").then((m) => m.appendUserMessage(sessionId, text))
+  void import("@/mocks/transcript").then((m) => m.appendUserMessage(sessionId, text, attachments))
   setStatus(sessionId, "working", { activity: "Thinking…", waitingFor: undefined })
 }
 
