@@ -15,6 +15,7 @@ import { PromptQueue } from "./composer/PromptQueue"
 import { Composer } from "./composer/Composer"
 import { DiffWorkerPool } from "./tools/InlineDiff"
 import { StatusAnnouncer } from "./StatusAnnouncer"
+import { useUiValue } from "./sessionStore"
 
 export default function SessionView({ sessionId, popout }: { sessionId: string; popout?: boolean }) {
   const exists = useApp((s) => !!s.sessions[sessionId])
@@ -40,8 +41,14 @@ const SessionLayout = memo(function SessionLayout({ sessionId, popout }: { sessi
         <ActivityBar sessionId={sessionId} />
         <AttentionDock sessionId={sessionId} />
         <PromptQueue sessionId={sessionId} />
-        <Composer sessionId={sessionId} />
+        <ComposerSlot sessionId={sessionId} />
       </div>
     </div>
   )
 })
+
+/** Rewind sets a new prefill; remounting the composer with it keeps the composer free of sync effects. */
+function ComposerSlot({ sessionId }: { sessionId: ID }) {
+  const prefill = useUiValue<{ n: number } | null>(`prefill:${sessionId}`, null)
+  return <Composer key={prefill?.n ?? 0} sessionId={sessionId} />
+}

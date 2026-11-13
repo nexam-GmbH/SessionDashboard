@@ -52,6 +52,7 @@ export const COMMANDS: Command[] = [
   { id: "interrupt", title: "Interrupt current session", group: "Session", shortcut: ["Esc"], when: () => !!activeSessionId(), run: () => { const id = activeSessionId(); if (id) interrupt(id) } },
   { id: "fork", title: "Fork current session", group: "Session", when: () => !!activeSessionId(), run: () => { const id = activeSessionId(); if (id) forkSession(id) } },
   { id: "archive", title: "Archive current session", group: "Session", keywords: "hide finish done", when: () => !!activeSessionId(), run: () => { const id = activeSessionId(); if (id) archiveWithUndo([id]) } },
+  { id: "rewind", title: "Rewind current session…", group: "Session", keywords: "undo checkpoint restore back", when: () => !!activeSessionId(), run: () => { const id = activeSessionId(); if (id) setTimeout(() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: id })), 0) } },
   { id: "popout", title: "Pop out current session", group: "Session", keywords: "new window detach", when: () => !!activeSessionId(), run: () => void openPopout(getApp().activeTab) },
   { id: "review", title: "Review changes of current session", group: "Session", when: () => !!activeSessionId(), run: () => { const id = activeSessionId(); if (id) navigate(`/review/${id}`) } },
 

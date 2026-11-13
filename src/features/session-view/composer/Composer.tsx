@@ -11,7 +11,7 @@ import { useApp } from "@/store/app"
 import { sendMessage, setSessionSettings } from "@/store/actions"
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
-import { interruptSession, takeLastQueued } from "../sessionStore"
+import { getUiValue, interruptSession, takeLastQueued } from "../sessionStore"
 import { Hint } from "../header/SessionHeader"
 import { caretCoordinates } from "./caret"
 import { ComposerMenu, type MenuItem } from "./ComposerMenu"
@@ -31,7 +31,9 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
     return rid ? (s.repoSpecs[rid]?.files ?? EMPTY_FILES) : EMPTY_FILES
   })
   const fileSet = useMemo(() => new Set(files), [files])
-  const [text, setText] = useState("")
+  // Rewind puts the prompt back here; the session view remounts the composer with a new key
+  const [text, setText] = useState(() => getUiValue<{ text: string } | null>(`prefill:${sessionId}`, null)?.text ?? "")
+  const lastEsc = useRef(0)
   const [attachments, setAttachments] = useState<string[]>([])
   const [trigger, setTrigger] = useState<Trigger | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -210,6 +212,14 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
               if (working && caps.interrupt) {
                 e.preventDefault()
                 interruptSession(sessionId)
+              } else if (caps.changeSettings) {
+                // Esc Esc opens Rewind (Claude Code CLI)
+                const now = performance.now()
+                if (now - lastEsc.current < 500) {
+                  e.preventDefault()
+                  window.dispatchEvent(new CustomEvent("sd:rewind", { detail: sessionId }))
+                  lastEsc.current = 0
+                } else lastEsc.current = now
               }
             } else if (e.key === "ArrowUp" && !text) {
               const prev = takeLastQueued(sessionId)

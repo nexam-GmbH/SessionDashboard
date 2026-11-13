@@ -212,7 +212,9 @@ function buildTurn(ctx: Ctx, turnIndex: number, prompt: string, mode: "complete"
   // activity or prompt wins, so the transcript matches what the map and sidebar say it is doing
   const offset = hashString(session.id)
   const named = [...[session.activity, prompt].join(" ").matchAll(/[\w-]+(?:\/[\w.-]+)+\.\w+/g)].map((m) => m[0]).find((f) => !/\.(test|spec)\./.test(f))
-  const file = turnIndex === 0 && named ? named : files[(turnIndex + offset) % files.length]
+  const words = new Set(`${session.title} ${prompt}`.toLowerCase().split(/[^a-z0-9]+/))
+  const titled = files.find((f) => !/\.(test|spec)\./.test(f) && words.has((f.split("/").pop() ?? "").split(".")[0].toLowerCase()))
+  const file = turnIndex === 0 && (named ?? titled) ? (named ?? titled)! : files[(turnIndex + offset) % files.length]
   const test = files.find((f) => f.includes("test")) ?? files[files.length - 1]
   const symbols = spec?.symbols ?? ["main"]
   const symbol = symbols[(turnIndex + offset) % symbols.length]

@@ -5,7 +5,8 @@
 // for everything else. Layout ideas from Cline session-status.tsx and the Vibe Kanban
 // session header (no code copied). Settings are disabled (never hidden) when the
 // control mode can't change them.
-import { memo, useRef, useState, type ReactNode } from "react"
+import { memo, useEffect, useRef, useState, type ReactNode } from "react"
+import { RewindDialog } from "./RewindDialog"
 import {
   Archive,
   ChevronDown,
@@ -32,6 +33,7 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -246,6 +248,16 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
   const [editing, setEditing] = useState(false)
   // "Rename" from the menu: start editing once the menu has closed and returned focus.
   const renameNext = useRef(false)
+  const rewindNext = useRef(false)
+  const [rewindOpen, setRewindOpen] = useState(false)
+  // Esc Esc in an empty composer and the palette open Rewind for this session
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<ID>).detail === sessionId) setRewindOpen(true)
+    }
+    window.addEventListener("sd:rewind", on)
+    return () => window.removeEventListener("sd:rewind", on)
+  }, [sessionId])
   if (!s) return null
   const worktree = repo?.worktrees.find((w) => w.id === s.worktreeId)
   const branch = worktree?.branch ?? repo?.defaultBranch
@@ -299,6 +311,12 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
             align="end"
             className="w-52"
             onCloseAutoFocus={(e) => {
+              if (rewindNext.current) {
+                rewindNext.current = false
+                e.preventDefault()
+                setRewindOpen(true)
+                return
+              }
               if (!renameNext.current) return
               renameNext.current = false
               e.preventDefault()
@@ -316,8 +334,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
             <DropdownMenuItem className="text-[12px]" onSelect={() => (renameNext.current = true)}>
               <Pencil /> Rename
             </DropdownMenuItem>
-            <DropdownMenuItem className="text-[12px]" disabled title="Needs checkpoints (Phase 2)">
+            <DropdownMenuItem className="text-[12px]" disabled={!caps.changeSettings} onSelect={() => (rewindNext.current = true)}>
               <History /> Rewind…
+              <DropdownMenuShortcut>Esc Esc</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-[12px]" onSelect={() => setBottomTab("terminal")}>
@@ -333,6 +352,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId, popout }: 
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <RewindDialog sessionId={sessionId} open={rewindOpen} onOpenChange={setRewindOpen} />
     </div>
   )
 })

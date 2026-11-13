@@ -89,6 +89,10 @@ export function setUiValue(key: string, value: unknown) {
   listeners.get(key)?.forEach((l) => l())
 }
 
+export function getUiValue<T>(key: string, fallback: T): T {
+  return values.has(key) ? (values.get(key) as T) : fallback
+}
+
 /** Small keyed view state outside React (expanded rows, dock focus), so rows can unmount while scrolled away. */
 export function useUiValue<T>(key: string, fallback: T): T {
   return useSyncExternalStore(
