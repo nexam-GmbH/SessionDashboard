@@ -1,6 +1,6 @@
 // Control-mode banners — UI_PLAN §5.3 / RESEARCH §1.4, calm rules §2.5: one short line
-// with the action. Observed sessions are read-only for approvals here (they happen in
-// the user's terminal; take over = stop there, resume here); history sessions offer
+// with the action. Observed sessions take messages but approvals happen in the user's
+// terminal (take over = stop there, resume here); history sessions offer
 // Resume and Fork.
 import { memo } from "react"
 import { GitFork, History, Play, SquareTerminal } from "lucide-react"
@@ -23,7 +23,7 @@ export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessio
       <div className={BAR}>
         <SquareTerminal size={13} className="shrink-0 text-fg-faint" />
         <span className="min-w-0 flex-1 truncate" title={CONTROL_LABEL.observed}>
-          Read-only <span className="text-fg-faint">· started in your terminal</span>
+          Running in your terminal <span className="text-fg-faint">· approve there</span>
         </span>
         <Popover>
           <PopoverTrigger asChild>

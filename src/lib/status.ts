@@ -117,7 +117,7 @@ export const CONTROL_LABEL: Record<ControlMode, string> = {
   owned: "Started by the app: full control (stream, approvals, interrupt, settings).",
   pty: "Interactive CLI in the app's terminal: approvals via hook, full control.",
   observed:
-    "Started in your terminal: read-only here. You can send messages; approvals happen in that terminal.",
+    "Started in your terminal. You can read it and send messages here; approvals happen in that terminal.",
   history: "Not running. Resume to continue it here, or fork a copy.",
 }
 
