@@ -129,6 +129,17 @@ export function MapCanvas() {
     return layout.nodes.map((n) => (n.type === "repo" || n.type === "main" || revealed?.has(n.id) ? n : hiddenCopy(n)))
   }, [layout, overview, revealed])
 
+  // zoom-out floor follows the map: a bit past "everything fits" (never a 4% speck on a small map),
+  // capped so the groups-only overview tier (< 0.27) stays reachable
+  const vw = useStore((s) => s.width)
+  const vh = useStore((s) => s.height)
+  const minZoom = useMemo(() => {
+    if (!layout || !vw || !vh) return 0.04
+    const b = layout.bounds
+    const fitZoom = Math.min(vw / Math.max(1, b.w), vh / Math.max(1, b.h))
+    return Math.min(0.2, Math.max(0.02, fitZoom * 0.6))
+  }, [layout, vw, vh])
+
   const showLinks = useApp((s) => s.map.showLinks)
   const selectedRepo = useApp((s) => (s.selection?.kind === "repo" ? s.selection.id : null))
   const edges = useMemo(() => {
@@ -461,7 +472,7 @@ export function MapCanvas() {
                 // measured on the stress fixture (445 nodes): culling off-screen cards cuts the cost of an
                 // LOD switch from ~900ms to a few visible cards; small workspaces render everything
                 onlyRenderVisibleElements={culled}
-                minZoom={0.04}
+                minZoom={minZoom}
                 maxZoom={1.5}
                 colorMode="dark"
                 attributionPosition="bottom-left"
