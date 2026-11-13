@@ -98,6 +98,14 @@ export const selectLiveSessionIds = memoKeyed(
 export const useLiveSessionIds = (repoId: ID) => useApp((s) => selectLiveSessionIds(s, repoId))
 
 export type Rollup = { total: number } & Partial<Record<SessionStatus, number>>
+// last rollup per repo: returned again when the counts are unchanged, so subscribers (sidebar
+// repo rows, map groups, inspector) don't re-render on status changes in other repos
+const lastRollup = new Map<ID, Rollup>()
+function sameRollup(a: Rollup, b: Rollup) {
+  const ka = Object.keys(a) as (keyof Rollup)[]
+  if (ka.length !== Object.keys(b).length) return false
+  return ka.every((k) => a[k] === b[k])
+}
 export const selectRepoRollup = memoKeyed(sv, (s, repoId) => {
   const r: Rollup = { total: 0 }
   for (const id of selectLiveSessionIds(s, repoId)) {
@@ -105,6 +113,9 @@ export const selectRepoRollup = memoKeyed(sv, (s, repoId) => {
     r[st] = (r[st] ?? 0) + 1
     r.total++
   }
+  const prev = lastRollup.get(repoId)
+  if (prev && sameRollup(prev, r)) return prev
+  lastRollup.set(repoId, r)
   return r
 })
 export const useRepoRollup = (repoId: ID) => useApp((s) => selectRepoRollup(s, repoId))

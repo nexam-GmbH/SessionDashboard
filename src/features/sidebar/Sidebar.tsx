@@ -1,7 +1,7 @@
 // Sidebar — UI_PLAN §4.2. Needs-you queue + main agent + repo tree in one virtualized
 // flat list. Row model idea: Agent of Empires sidebar/rowModel.ts (MIT); agent rows after
 // Orca SidebarAgentsList.tsx (MIT); tree indentation/guides after Trigger.dev TreeView (Apache-2.0).
-import { memo, useMemo, useRef, useState, useCallback } from "react"
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   Archive,
@@ -15,6 +15,7 @@ import {
   Plus,
   SquarePen,
 } from "lucide-react"
+import { useShallow } from "zustand/react/shallow"
 import { getApp, useApp } from "@/store/app"
 import { useRelTime } from "@/components/common/RelativeTime"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
@@ -50,7 +51,7 @@ import { openPopout } from "@/app/popout"
 import { setSessionsFilter } from "@/features/sessions/sessionsUi"
 import { cn } from "@/lib/utils"
 import type { ID, SessionStatus } from "@/lib/model"
-import { buildRows, rowHeight, type SidebarRow, type SidebarUi } from "./rows"
+import { buildRows, reuseRows, rowHeight, type SidebarRow, type SidebarUi } from "./rows"
 import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
 
 export function Sidebar() {
@@ -61,11 +62,15 @@ export function Sidebar() {
   const groupBy = useApp((s) => s.sidebarGroupBy)
   const archivedCount = useApp(selectArchivedCount)
   // rows recompute only on structure/status/expansion changes, not on every engine tick
+  const prevRows = useRef(new Map<string, SidebarRow>())
   const rows = useMemo(
-    () => buildRows(getApp(), ui),
+    () => reuseRows(prevRows.current, buildRows(getApp(), ui)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [structVersion, statusVersion, expanded, groupBy, ui],
   )
+  useEffect(() => {
+    prevRows.current = new Map(rows.map((r) => [r.key, r]))
+  }, [rows])
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -322,20 +327,26 @@ function AttentionRow({
 }) {
   const { entry } = row
   const sessionId = entry.kind === "session" ? entry.id : entry.sessionId
-  const session = useApp((s) => s.sessions[sessionId])
+  // only the shown fields: usage/cost/diff ticks on the session must not re-render the row
+  const session = useApp(
+    useShallow((s) => {
+      const x = s.sessions[sessionId]
+      return x ? { title: x.title, status: x.status, repoId: x.repoId, errorMessage: x.errorMessage, waiting: x.waitingFor?.summary } : null
+    }),
+  )
   const repoName = useApp((s) => (session?.repoId ? s.repos[session.repoId]?.name : "main"))
-  const sub = useApp((s) => (entry.kind === "subagent" ? s.subagents[entry.id] : undefined))
+  const agentType = useApp((s) => (entry.kind === "subagent" ? s.subagents[entry.id]?.agentType : undefined))
   const active = useApp((s) => s.activeTab === `/session/${sessionId}`)
   const age = useRelTime(entry.at)
   if (!session) return null
   const summary =
     entry.kind === "subagent"
-      ? `${sub?.agentType}: needs permission`
+      ? `${agentType}: needs permission`
       : session.status === "done_unseen"
         ? `Done · ${session.title}`
         : session.status === "error"
           ? (session.errorMessage ?? session.title)
-          : (session.waitingFor?.summary ?? session.title)
+          : (session.waiting ?? session.title)
   return (
     <div
       className={cn(rowBase, "pl-[22px]", active && "bg-selected", focused && "ring-1 ring-ring/60 ring-inset")}
@@ -361,7 +372,15 @@ function SessionRow({
   focused: boolean
   onActivate: (r: SidebarRow) => void
 }) {
-  const session = useApp((s) => s.sessions[row.id])
+  // only the shown fields: usage/cost/diff ticks on the session must not re-render the row
+  const session = useApp(
+    useShallow((s) => {
+      const x = s.sessions[row.id]
+      return x
+        ? { title: x.title, status: x.status, role: x.role, pinned: x.pinned, updatedAt: x.updatedAt, waitingFor: x.waitingFor, errorMessage: x.errorMessage, activity: x.activity }
+        : null
+    }),
+  )
   const active = useApp((s) => s.activeTab === `/session/${row.id}`)
   const selected = useApp((s) => s.selection?.kind === "session" && s.selection.id === row.id)
   const age = useRelTime(session?.updatedAt)

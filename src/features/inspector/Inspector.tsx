@@ -561,12 +561,13 @@ function Overview() {
 }
 
 function AttentionMini({ sessionId }: { sessionId: ID }) {
-  const s = useApp((st) => st.sessions[sessionId])
-  if (!s) return null
+  const status = useApp((st) => st.sessions[sessionId]?.status)
+  const title = useApp((st) => st.sessions[sessionId]?.title)
+  if (!status) return null
   return (
     <button className="flex h-7 items-center gap-1.5 rounded-sm px-1 text-left text-xs hover:bg-hover" onClick={() => select({ kind: "session", id: sessionId })}>
-      <StatusGlyph status={s.status} size="xs" />
-      <span className="truncate text-fg-muted">{s.title}</span>
+      <StatusGlyph status={status} size="xs" />
+      <span className="truncate text-fg-muted">{title}</span>
     </button>
   )
 }

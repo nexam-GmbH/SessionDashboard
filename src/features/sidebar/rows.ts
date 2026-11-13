@@ -144,3 +144,29 @@ function pushSession(s: AppState, rows: SidebarRow[], sid: ID, depth: number) {
     }
   }
 }
+
+/** Shallow row equality (attention rows compare the entry's fields, not the object). */
+function sameRow(a: SidebarRow, b: SidebarRow): boolean {
+  if (a.type !== b.type) return false
+  if (a.type === "attention" && b.type === "attention") {
+    const x = a.entry
+    const y = b.entry
+    return a.index === b.index && x.kind === y.kind && x.id === y.id && x.status === y.status && x.at === y.at
+  }
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  for (const k in ra) if (ra[k] !== rb[k]) return false
+  for (const k in rb) if (!(k in ra)) return false
+  return true
+}
+
+/**
+ * Keep the previous row object when a row didn't change, so memoized rows skip re-rendering on
+ * status changes elsewhere in the tree (≈400 row renders per 4 s under engine load before).
+ */
+export function reuseRows(prev: Map<string, SidebarRow>, next: SidebarRow[]): SidebarRow[] {
+  return next.map((r) => {
+    const p = prev.get(r.key)
+    return p && sameRow(p, r) ? p : r
+  })
+}
