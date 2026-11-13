@@ -1,0 +1,261 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource-variable/jetbrains-mono";
+@import "./styles/tokens.css";
+
+@source "../node_modules/streamdown/dist";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system: Radix Colors slateDark + status scales (MIT), mapped onto
+ * shadcn's semantic variables so every copied component inherits the same
+ * tokens. See UI_PLAN.md §2. Dark only in Phase 1.
+ */
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-heading: var(--font-ui);
+  --font-mono: var(--font-code);
+
+  /* Dense type scale (UI_PLAN §2.4): 13px UI, 12px meta, 11px micro. */
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.75rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 0.875rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.125rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+
+  /* Surfaces, borders, text (slateDark steps) */
+  --color-canvas: var(--bg-canvas);
+  --color-chrome: var(--bg-chrome);
+  --color-elevated: var(--bg-elevated);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+  --color-line-subtle: var(--border-subtle);
+  --color-line: var(--border-default);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-link: var(--link);
+  --color-brand: var(--brand);
+
+  /* Status: dot (9) / text (11) / tint (3) */
+  --color-st-working: var(--st-working);
+  --color-st-working-fg: var(--st-working-fg);
+  --color-st-working-tint: var(--st-working-tint);
+  --color-st-input: var(--st-input);
+  --color-st-input-fg: var(--st-input-fg);
+  --color-st-input-tint: var(--st-input-tint);
+  --color-st-perm: var(--st-perm);
+  --color-st-perm-fg: var(--st-perm-fg);
+  --color-st-perm-tint: var(--st-perm-tint);
+  --color-st-error: var(--st-error);
+  --color-st-error-fg: var(--st-error-fg);
+  --color-st-error-tint: var(--st-error-tint);
+  --color-st-done: var(--st-done);
+  --color-st-done-fg: var(--st-done-fg);
+  --color-st-done-tint: var(--st-done-tint);
+  --color-st-idle: var(--st-idle);
+  --color-st-idle-fg: var(--st-idle-fg);
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+  --color-diff-add-tint: var(--diff-add-tint);
+  --color-diff-del-tint: var(--diff-del-tint);
+
+  /* shadcn semantic colors */
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-sidebar: var(--bg-chrome);
+  --color-sidebar-foreground: var(--fg);
+  --color-sidebar-border: var(--border-subtle);
+  --color-sidebar-accent: var(--bg-hover);
+  --color-sidebar-accent-foreground: var(--fg);
+  --color-sidebar-primary: var(--brand);
+  --color-sidebar-primary-foreground: #fff;
+  --color-sidebar-ring: var(--ring);
+
+  /* Small radii (UI_PLAN §2.1): 4px controls, 6px popovers. */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+  --radius-2xl: 8px;
+  --radius-3xl: 8px;
+  --radius-4xl: 8px;
+
+  --animate-spin-slow: spin 1.4s linear infinite;
+  --animate-flash: status-flash 600ms ease-out 1;
+}
+
+@keyframes status-flash {
+  from {
+    background-color: var(--flash-color, var(--bg-hover));
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+:root {
+  --background: var(--bg-canvas);
+  --foreground: var(--fg);
+  --card: var(--bg-elevated);
+  --card-foreground: var(--fg);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--fg);
+  --primary: var(--brand);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--fg);
+  --muted: var(--bg-hover);
+  --muted-foreground: var(--fg-muted);
+  --accent: var(--bg-hover);
+  --accent-foreground: var(--fg);
+  --destructive: var(--st-error);
+  --border: var(--border-subtle);
+  --input: var(--border-default);
+  --ring: var(--brand);
+  --radius: 4px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/60;
+  }
+  html {
+    @apply font-sans;
+    color-scheme: dark;
+    font-size: 16px;
+  }
+  body {
+    @apply bg-canvas text-fg;
+    font-size: var(--text-ui);
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv05" 1;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-code);
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--brand) 35%, transparent);
+  }
+}
+
+/* Thin IDE scrollbars (WebKitGTK and Chromium both honor these). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--border-default) 70%, transparent);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-strong);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Desktop shell defaults from create-tauri-ui. */
+html,
+body {
+  height: 100%;
+}
+body {
+  overflow: hidden;
+}
+[data-ui-scroll-container] {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+#root {
+  height: 100%;
+}
+
+@layer base {
+  body {
+    @apply select-none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  pre,
+  code {
+    @apply select-text;
+  }
+}
+
+@utility ui-selectable {
+  user-select: text;
+}
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+@utility contain-strict {
+  contain: strict;
+}
+@utility contain-content {
+  contain: content;
+}
+/* VS Code style section header: 11px, semibold, muted, uppercase. */
+@utility section-label {
+  font-size: var(--text-micro);
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

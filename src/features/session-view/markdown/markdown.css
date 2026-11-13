@@ -1,0 +1,194 @@
+/*
+ * Adapted from cline/cline@72b3d71:sdk/packages/ui/components/markdown.css (Apache-2.0).
+ * Modified for session-dashboard: our tokens (UI_PLAN §2.2), 13px IDE scale,
+ * 4px radii, bordered single-box code blocks, no mermaid block styles.
+ * Unlayered on purpose so it wins over streamdown's Tailwind utilities.
+ */
+.sd-markdown {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.sd-markdown > :not(:last-child) {
+  margin-block-end: 0.6rem;
+}
+
+.sd-markdown p {
+  margin: 0;
+}
+
+.sd-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 0.9rem 0.35rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--fg);
+}
+.sd-markdown > :first-child {
+  margin-block-start: 0;
+}
+.sd-markdown h1 {
+  font-size: 15px;
+}
+.sd-markdown h2 {
+  font-size: 14px;
+}
+.sd-markdown :is(h3, h4, h5, h6) {
+  font-size: 13px;
+}
+
+.sd-markdown strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.sd-markdown hr {
+  margin-block: 0.75rem;
+  border-color: var(--border-subtle);
+}
+
+/* Outside markers so wrapped list lines align with their first line. */
+.sd-markdown :is(ul, ol) {
+  list-style-position: outside;
+  padding-inline-start: 1.25rem;
+  margin: 0;
+}
+.sd-markdown ul {
+  list-style-type: disc;
+}
+.sd-markdown ol {
+  list-style-type: decimal;
+}
+.sd-markdown li {
+  padding-block: 0.05rem;
+}
+.sd-markdown li::marker {
+  color: var(--fg-faint);
+}
+
+.sd-markdown [data-streamdown="link"],
+.sd-markdown a {
+  color: var(--link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentcolor 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+.sd-markdown [data-streamdown="inline-code"] {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  border: 0;
+  background: var(--bg-hover);
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  color: var(--fg);
+}
+
+/* Code blocks: collapse streamdown's double box into one quiet bordered block. */
+.sd-markdown [data-streamdown="code-block"] {
+  margin-block: 0.6rem;
+  padding: 0;
+  gap: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  max-width: 100%;
+}
+.sd-markdown [data-streamdown="code-block-header"] {
+  display: none;
+}
+.sd-markdown [data-streamdown="code-block-body"] {
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-chrome);
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.sd-markdown [data-streamdown="code-block-body"] pre {
+  background: transparent !important;
+}
+.sd-markdown [data-streamdown="code-block"] :is(pre, code) {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+/* Stack Shiki line spans when line numbers are off (Cline fix). */
+.sd-markdown [data-streamdown="code-block-body"] code > span {
+  display: block;
+}
+.sd-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
+  margin-block: 0 -2rem;
+  padding: 0.25rem 0.25rem 0 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sd-markdown [data-streamdown="code-block-actions"] {
+  pointer-events: none;
+}
+.sd-markdown [data-streamdown="code-block"]:hover > div:has(> [data-streamdown="code-block-actions"]),
+.sd-markdown [data-streamdown="code-block"] > div:focus-within:has(> [data-streamdown="code-block-actions"]) {
+  opacity: 1;
+}
+.sd-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+.sd-markdown [data-streamdown="code-block"] > div:focus-within [data-streamdown="code-block-actions"] {
+  pointer-events: auto;
+}
+
+.sd-markdown [data-streamdown="table-wrapper"] {
+  margin-block: 0.6rem;
+  padding: 0;
+  gap: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
+}
+.sd-markdown [data-streamdown="table"] {
+  min-width: 100%;
+  font-size: 12px;
+}
+.sd-markdown [data-streamdown="table"] :is(th, td) {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+.sd-markdown [data-streamdown="table"] th {
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-chrome);
+}
+
+.sd-markdown blockquote {
+  margin: 0;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--border-default);
+  color: var(--fg-muted);
+}
+
+/* Muted variant for thoughts and secondary prose. */
+.sd-markdown.sd-markdown-muted {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+/*
+ * Streaming caret inline at the end of the text. Streamdown puts it on the last
+ * block wrapper, which is `display: contents` around a <p>, so it would wrap to
+ * its own line; move it onto the last paragraph / heading / list item instead.
+ */
+.sd-markdown[style*="--streamdown-caret"] > :last-child::after {
+  content: none !important;
+}
+.sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(ul, ol):last-child > li:last-child::after {
+  content: var(--streamdown-caret);
+  color: var(--fg-muted);
+  margin-left: 1px;
+}

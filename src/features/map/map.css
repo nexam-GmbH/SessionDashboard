@@ -1,0 +1,93 @@
+/*
+ * React Flow 12 (MIT) base styles, imported into Tailwind's `base` layer so our utilities
+ * (layer `utilities`) always win over them, then restyled with our tokens (UI_PLAN §2.2).
+ * Only base.css is loaded: style.css's default node/controls theme is not used.
+ */
+@import "@xyflow/react/dist/base.css" layer(base);
+
+@layer components {
+  .sd-map .react-flow {
+    --xy-background-color: var(--bg-canvas);
+    --xy-edge-stroke: var(--border-default);
+    --xy-edge-stroke-selected: var(--fg-muted);
+    --xy-minimap-background-color: var(--bg-chrome);
+    --xy-minimap-mask-background-color: rgb(17 17 19 / 0.7);
+    --xy-minimap-mask-stroke-color: var(--border-strong);
+    --xy-minimap-mask-stroke-width: 1;
+    --xy-minimap-node-background-color: var(--bg-hover);
+    --xy-attribution-background-color: transparent;
+    --xy-selection-background-color: rgb(0 144 255 / 0.06);
+    --xy-selection-border: 1px solid rgb(0 144 255 / 0.4);
+    background: var(--bg-canvas);
+    font-family: var(--font-ui);
+  }
+
+  .sd-map .react-flow__pane {
+    cursor: default;
+  }
+  .sd-map .react-flow__pane.dragging {
+    cursor: grabbing;
+  }
+  .sd-map .react-flow__node {
+    cursor: default;
+  }
+  /* our selection lives in the app store; React Flow never draws its own focus outline */
+  .sd-map .react-flow__node:focus,
+  .sd-map .react-flow__node:focus-visible {
+    outline: none;
+  }
+
+  /* routed edges have no handles to show */
+  .sd-map .map-handle {
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  /* delegated edge while the child is working: dashes flow toward the child */
+  .sd-map .map-edge-flow {
+    animation: sd-map-dash 0.9s linear infinite;
+  }
+
+  .sd-map .react-flow__attribution {
+    background: transparent;
+    margin: 4px 6px;
+    font-size: 10px;
+  }
+  .sd-map .react-flow__attribution a {
+    color: var(--fg-faint);
+    opacity: 0.6;
+  }
+
+  .sd-map .react-flow__minimap {
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .sd-map .react-flow__node-toolbar {
+    z-index: 20;
+  }
+
+  /* the map canvas owns keyboard focus; the focus ring sits on the toolbar instead */
+  .sd-map-canvas:focus-visible {
+    outline: none;
+  }
+}
+
+@keyframes sd-map-dash {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-map .map-edge-flow {
+    animation: none;
+  }
+}

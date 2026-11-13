@@ -1,0 +1,74 @@
+/*
+ * Design tokens — UI_PLAN.md §2.2.
+ * Neutral + status values: Radix Colors dark scales (slateDark, blueDark,
+ * amberDark, orangeDark, redDark, greenDark), MIT © WorkOS.
+ * Diff gutter colors: VS Code "Dark Modern" theme, MIT © Microsoft.
+ */
+:root {
+  /* surfaces */
+  --bg-canvas: #111113; /* slate1: map, graph, transcript */
+  --bg-chrome: #18191b; /* slate2: titlebar, sidebar, inspector, status bar */
+  --bg-elevated: #212225; /* slate3: inputs, active tab, cards, popovers */
+  --bg-hover: #272a2d; /* slate4 */
+  --bg-selected: #2e3135; /* slate5 */
+
+  /* borders */
+  --border-subtle: #2b2e32; /* between slate5 and slate6: dividers */
+  --border-default: #363a3f; /* slate6 */
+  --border-strong: #43484e; /* slate7 */
+  --border-focus: #5a6169; /* slate8 */
+
+  /* text */
+  --fg: #edeef0; /* slate12 */
+  --fg-muted: #b0b4ba; /* slate11 */
+  --fg-faint: #7d828a; /* slate10 (nudged for contrast on slate2) */
+
+  /* accent (focus ring, primary action only) */
+  --brand: #0090ff; /* blue9 */
+  --link: #70b8ff; /* blue11 */
+
+  /* status: dot (step 9) / text (step 11) / tint (step 3) */
+  --st-working: #0090ff;
+  --st-working-fg: #70b8ff;
+  --st-working-tint: #0d2847;
+  --st-input: #ffc53d;
+  --st-input-fg: #ffca16;
+  --st-input-tint: #302008;
+  --st-perm: #f76b15;
+  --st-perm-fg: #ffa057;
+  --st-perm-tint: #331e0b;
+  --st-error: #e5484d;
+  --st-error-fg: #ff9592;
+  --st-error-tint: #3b1219;
+  --st-done: #30a46c;
+  --st-done-fg: #3dd68c;
+  --st-done-tint: #132d21;
+  --st-idle: #696e77;
+  --st-idle-fg: #b0b4ba;
+
+  /* diff */
+  --diff-add: #2ea043;
+  --diff-del: #f85149;
+  --diff-add-tint: #12261a;
+  --diff-del-tint: #2d1517;
+
+  /* type */
+  --font-ui: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
+  --font-code: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --text-ui: 13px;
+  --text-meta: 12px;
+  --text-micro: 11px;
+  --text-mono: 12px;
+
+  /* density (compact; .density-comfortable bumps rows by 4px) */
+  --row-tree: 24px;
+  --row-table: 28px;
+  --tab-h: 32px;
+  --titlebar-h: 36px;
+  --statusbar-h: 22px;
+}
+
+.density-comfortable {
+  --row-tree: 28px;
+  --row-table: 32px;
+}

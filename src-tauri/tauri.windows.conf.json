@@ -1,0 +1,19 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Session Dashboard",
+        "width": 1440,
+        "height": 920,
+        "center": true,
+        "visible": false,
+        "label": "main",
+        "minWidth": 1024,
+        "minHeight": 640,
+        "dragDropEnabled": false,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  }
+}
