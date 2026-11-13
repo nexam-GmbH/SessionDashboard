@@ -560,7 +560,7 @@ function Overview() {
   )
 }
 
-function AttentionMini({ sessionId }: { sessionId: ID }) {
+const AttentionMini = memo(function AttentionMini({ sessionId }: { sessionId: ID }) {
   const status = useApp((st) => st.sessions[sessionId]?.status)
   const title = useApp((st) => st.sessions[sessionId]?.title)
   if (!status) return null
@@ -570,4 +570,4 @@ function AttentionMini({ sessionId }: { sessionId: ID }) {
       <span className="truncate text-fg-muted">{title}</span>
     </button>
   )
-}
+})

@@ -159,7 +159,8 @@ export function Shell() {
           >
             <div className="h-full" inert={!panels.inspector}>
               <ErrorBoundary label="Inspector">
-                <Inspector />
+                {/* nothing to keep alive in a closed inspector; skip its subscriptions entirely */}
+                {panels.inspector && <Inspector />}
               </ErrorBoundary>
             </div>
           </ResizablePanel>
