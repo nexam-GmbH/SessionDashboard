@@ -714,7 +714,11 @@ export default function CodeGraphView({ scope }: { scope: string }) {
               >
                 {layoutRunning ? <Pause /> : <Play />} {layoutRunning ? "Pause layout" : "Re-run layout"}
               </DropdownMenuItem>
-              <DropdownMenuCheckboxItem className="text-xs" checked={showReport} onCheckedChange={(v) => setShowReport(!!v)}>
+              <DropdownMenuCheckboxItem className="text-xs" checked={showReport} onCheckedChange={(v) => {
+                  setShowReport(!!v)
+                  // the report shares the right panel with the node inspector: showing it must be visible
+                  if (v) applySelection(null)
+                }}>
                 Report
               </DropdownMenuCheckboxItem>
               {data && (
