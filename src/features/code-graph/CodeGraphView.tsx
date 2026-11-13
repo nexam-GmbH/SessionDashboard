@@ -9,7 +9,10 @@
 import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { setNewSessionPrefill } from "@/features/new-session/prefill"
 import { clearGraphIntent, peekGraphIntent, useGraphIntent } from "./graphIntent"
-import type Graph from "graphology"
+import Graph from "graphology"
+import type { Attributes } from "graphology-types"
+import type forceAtlas2 from "graphology-layout-forceatlas2"
+import type FA2LayoutSupervisor from "graphology-layout-forceatlas2/worker"
 import type { Sigma as SigmaType } from "sigma"
 import {
   ArrowLeft,
@@ -53,6 +56,23 @@ const AGGREGATE_ABOVE = 5000
 const RELATIONS: GLink["relation"][] = ["calls", "uses", "contains", "method", "inherits", "imports_from"]
 const CONFIDENCE: GLink["confidence"][] = ["EXTRACTED", "INFERRED", "AMBIGUOUS"]
 const positionCache = new Map<string, Map<string, { x: number; y: number }>>()
+type IForceAtlas2Layout = typeof forceAtlas2
+/** label size in the node graph; the community graph's labels are one size larger */
+const NODE_LABEL_SIZE = 11
+const COMMUNITY_LABEL = { labelSize: 12 }
+/** sigma settings that differ between the community overview and the node graph */
+const MODE_SETTINGS = {
+  communities: { labelRenderedSizeThreshold: 0, labelDensity: 1, stagePadding: 48 },
+  nodes: { labelRenderedSizeThreshold: 6, labelDensity: 0.6, stagePadding: 30 },
+} as const
+/** main-thread time per frame for adding nodes/edges to the renderer's graph */
+const POPULATE_SLICE_MS = 8
+/** printable ASCII plus the separators our labels use, rasterized when a renderer is set up */
+const GLYPHS = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join("") + "·…"
+const GLYPH_SLICE = 12
+const GLYPH_PROBE = "__glyphs"
+/** renderers killed by an effect cleanup (a stale state value must never be built into) */
+const deadRenderers = new WeakSet<object>()
 
 type Mode = "nodes" | "communities"
 
@@ -185,12 +205,32 @@ export default function CodeGraphView({ scope }: { scope: string }) {
     setMode("nodes")
   }
 
-  // build sigma
+  // ---------- sigma: one renderer per mounted view ----------
+  // A renderer's fixed cost (WebGL program compilation, canvases, label glyphs) is paid once per
+  // mounted view, in its own task. Every graph the view shows afterwards (communities, a drilled-in
+  // community, community filters) is written into that renderer's one graph (mixed type: the
+  // community graph is undirected, the node graph directed), cleared and refilled a time slice per
+  // frame, so no single task processes thousands of nodes. (sigma 4.0.6's `setGraph` keeps its
+  // parallel-edge index on the old graph, so the graph object itself is kept.) The reducers and
+  // handlers are installed once and read the current mode, filters, focus and actions through refs.
+  const [renderer, setRenderer] = useState<SigmaType | null>(null)
+  const libsRef = useRef<{ fa2: IForceAtlas2Layout; Supervisor: typeof FA2LayoutSupervisor } | null>(null)
+  const modeRef = useRef<Mode>(effMode)
+  /** `${mode}:${subset}` of the graph in the renderer (or being populated) */
+  const builtKeyRef = useRef("")
+  /** stops the label glyph warm-up of a new renderer (the first build takes over the graph) */
+  const stopWarmRef = useRef<(() => void) | null>(null)
+  const actionsRef = useRef({ drill, applySelection })
+  useLayoutEffect(() => {
+    actionsRef.current = { drill, applySelection }
+  })
+
   useEffect(() => {
-    if (!data || !containerRef.current) return
-    let killed = false
-    let renderer: SigmaType | null = null
     const container = containerRef.current
+    if (!container) return
+    let killed = false
+    let r: SigmaType | null = null
+    let warmRaf = 0
     void (async () => {
       const [{ Sigma, DEFAULT_STYLES }, fa2mod, workerMod] = await Promise.all([
         import("sigma"),
@@ -198,32 +238,17 @@ export default function CodeGraphView({ scope }: { scope: string }) {
         import("graphology-layout-forceatlas2/worker"),
       ])
       if (killed) return
+      libsRef.current = { fa2: fa2mod.default, Supervisor: workerMod.default }
       const t = graphTheme()
-      const fa2 = fa2mod.default
-      let g: Graph
-      if (effMode === "communities") {
-        g = toCommunityGraph(data, fa2)
-      } else if (subsetKey !== "all") {
-        const keep = new Set(subsetKey.split(",").map(Number))
-        const nodes = data.nodes.filter((n) => keep.has(n.community))
-        const ids = new Set(nodes.map((n) => n.id))
-        g = toGraphology({ ...data, nodes, links: data.links.filter((l) => ids.has(l.source) && ids.has(l.target)) })
-      } else {
-        g = toGraphology(data)
-      }
-      const cacheKey = `${scope}:${effMode}:${big}:${subsetKey}`
-      const cached = positionCache.get(cacheKey)
-      if (cached) g.forEachNode((n) => { const p = cached.get(n); if (p) g.mergeNodeAttributes(n, p) })
-      graphRef.current = g
       const dimNode = { color: t.dimNode, labelVisibility: "hidden" as const, zIndex: 0 }
       const hidden = { visibility: "hidden" as const }
-      renderer = new Sigma(g, container, {
+      const renderer = new Sigma(new Graph(), container, {
         styles: {
           ...DEFAULT_STYLES,
           nodes: {
             ...DEFAULT_STYLES.nodes,
             labelColor: t.label,
-            labelSize: effMode === "communities" ? 12 : 11,
+            labelSize: NODE_LABEL_SIZE,
             labelFont: '"IBM Plex Sans Variable", "IBM Plex Sans", sans-serif',
             backdropColor: t.backdrop,
             backdropBorderColor: t.backdropBorder,
@@ -238,36 +263,35 @@ export default function CodeGraphView({ scope }: { scope: string }) {
           hideEdgesOnMove: true,
           hideLabelsOnMove: false,
           renderEdgeLabels: false,
-          labelRenderedSizeThreshold: effMode === "communities" ? 0 : 6,
-          labelDensity: effMode === "communities" ? 1 : 0.6,
           zoomingRatio: 1.4,
           enableNodeDrag: false,
-          stagePadding: effMode === "communities" ? 48 : 30,
           // sigma v4 defaults to sizes in graph units, which made the 24-node community graph
           // render 3x larger than the node graph; screen px keep both views consistent.
           itemSizesReference: "screen",
+          ...MODE_SETTINGS.nodes,
         },
-        // Reducers return small partials (sigma v4 merges them); nothing is allocated for the
-        // common case of no focus and no filters, which matters at 5k nodes / 15k edges.
+        // Reducers return small partials (sigma v4 merges them). The community graph's labels are
+        // one size larger than the node graph's (the styles are fixed per renderer).
         nodeReducer: (key, d, attrs) => {
           const f = filtersRef.current
           if (f.hiddenComms.size && f.hiddenComms.has(attrs.community as number)) return hidden
           const focus = hoveredRef.current ?? selectedRef.current
-          if (!focus) return d
-          if (key === focus) return { zIndex: 2, labelVisibility: "visible", labelColor: t.labelFocus, size: d.size * 1.4 }
-          if (neighborsRef.current.has(key)) return { zIndex: 1, labelVisibility: "visible" }
+          const comm = modeRef.current === "communities"
+          if (!focus) return comm ? COMMUNITY_LABEL : d
+          if (key === focus) return { zIndex: 2, labelVisibility: "visible", labelColor: t.labelFocus, size: d.size * 1.4, ...(comm ? COMMUNITY_LABEL : null) }
+          if (neighborsRef.current.has(key)) return comm ? { zIndex: 1, labelVisibility: "visible", ...COMMUNITY_LABEL } : { zIndex: 1, labelVisibility: "visible" }
           return dimNode
         },
-        edgeReducer: (key, d, attrs) => {
+        edgeReducer: (key, d, attrs, _state, _graphState, graph) => {
           const f = filtersRef.current
           if (attrs.relation && f.relations.size < RELATIONS.length && !f.relations.has(attrs.relation as string)) return hidden
           if (attrs.confidence && f.confidence.size < CONFIDENCE.length && !f.confidence.has(attrs.confidence as string)) return hidden
           const focus = hoveredRef.current ?? selectedRef.current
           if (!f.hiddenComms.size && !focus) return d
-          const [s, tg] = g.extremities(key)
+          const [s, tg] = graph.extremities(key)
           if (f.hiddenComms.size) {
-            const sc = g.getNodeAttribute(s, "community") as number
-            const tc = g.getNodeAttribute(tg, "community") as number
+            const sc = graph.getNodeAttribute(s, "community") as number
+            const tc = graph.getNodeAttribute(tg, "community") as number
             if (f.hiddenComms.has(sc) || f.hiddenComms.has(tc)) return hidden
           }
           if (focus) {
@@ -277,68 +301,54 @@ export default function CodeGraphView({ scope }: { scope: string }) {
           return d
         },
       })
-      sigmaRef.current = renderer
-      // dev/QA hook (scripts/perf-stress.mjs reads render stats from it)
-      if (import.meta.env.DEV) (window as unknown as { __codeGraph?: unknown }).__codeGraph = { sigma: renderer, graph: g, mode: effMode }
+      r = renderer
       const setFocusNeighbors = (node: string | null) => {
-        neighborsRef.current = node ? new Set(g.neighbors(node)) : new Set()
+        const g = graphRef.current
+        neighborsRef.current = node && g?.hasNode(node) ? new Set(g.neighbors(node)) : new Set()
       }
       renderer.on("enterNode" as never, (({ node }: { node: string }) => {
         hoveredRef.current = node
         setFocusNeighbors(node)
-        renderer?.refresh({ skipIndexation: true })
+        renderer.refresh({ skipIndexation: true })
       }) as never)
       renderer.on("leaveNode" as never, (() => {
         hoveredRef.current = null
         setFocusNeighbors(selectedRef.current)
-        renderer?.refresh({ skipIndexation: true })
+        renderer.refresh({ skipIndexation: true })
       }) as never)
       renderer.on("clickNode" as never, (({ node }: { node: string }) => {
-        const attrs = g.getNodeAttributes(node)
+        const attrs = graphRef.current?.getNodeAttributes(node)
+        if (!attrs) return
         if (attrs.isCommunity) {
-          drill(attrs.community as number)
+          actionsRef.current.drill(attrs.community as number)
           return
         }
         hoveredRef.current = null
-        applySelection(node)
+        actionsRef.current.applySelection(node)
       }) as never)
-      renderer.on("clickStage" as never, (() => applySelection(null)) as never)
-
-      const pending = pendingFocusRef.current
-      const finish = () => {
-        if (pending && pendingFocusRef.current === pending && g.hasNode(pending)) {
-          pendingFocusRef.current = null
-          focusNode(pending)
-        }
+      renderer.on("clickStage" as never, (() => actionsRef.current.applySelection(null)) as never)
+      sigmaRef.current = renderer
+      // Label glyphs are rasterized on first use: 50-70 ms inside the first frame of the first
+      // graph. While the graph data is still loading, rasterize the printable set a slice per
+      // frame through a probe label on the hidden canvas; the first build stops this (it never
+      // waits for it) and shows the canvas when its graph is complete.
+      container.style.visibility = "hidden"
+      const probe = renderer.getGraph()
+      let at = 0
+      const warm = () => {
+        if (killed || at >= GLYPHS.length) return
+        probe.clear()
+        probe.addNode(GLYPH_PROBE, { x: 0, y: 0, size: 20, label: GLYPHS.slice(at, at + GLYPH_SLICE) })
+        at += GLYPH_SLICE
+        renderer.refresh()
+        warmRaf = requestAnimationFrame(warm)
       }
-      if (pending && g.hasNode(pending)) applySelection(pending)
-      else if (selectedRef.current && !g.hasNode(selectedRef.current)) applySelection(null)
-
-      // ForceAtlas2 in a worker with a time budget (LightRAG GraphControl)
-      const Supervisor = workerMod.default
-      let budgetTimer = 0
-      const runLayout = (then?: () => void) => {
-        if (killed) return
-        if (!layoutRef.current) {
-          layoutRef.current = new Supervisor(g, { settings: { ...fa2.inferSettings(g.order), linLogMode: true, outboundAttractionDistribution: true, scalingRatio: 24, gravity: 0.8, adjustSizes: false } })
-        }
-        const layout = layoutRef.current
-        layout.start()
-        setLayoutRunning(true)
-        window.clearTimeout(budgetTimer)
-        budgetTimer = window.setTimeout(() => {
-          if (killed) return
-          layout.stop()
-          setLayoutRunning(false)
-          const pos = new Map<string, { x: number; y: number }>()
-          g.forEachNode((n, a) => pos.set(n, { x: a.x, y: a.y }))
-          positionCache.set(cacheKey, pos)
-          then?.()
-        }, Math.min(6000, 1500 + g.order * 0.6))
+      warmRaf = requestAnimationFrame(warm)
+      stopWarmRef.current = () => {
+        cancelAnimationFrame(warmRaf)
+        stopWarmRef.current = null
       }
-      startLayoutRef.current = effMode === "nodes" ? () => runLayout() : null
-      if (!cached && effMode === "nodes") runLayout(finish)
-      else requestAnimationFrame(finish)
+      setRenderer(renderer)
     })()
     // resize() clears the WebGL canvases; refresh() repaints (else the graph goes blank when a side panel closes)
     const ro = new ResizeObserver(() => {
@@ -350,23 +360,161 @@ export default function CodeGraphView({ scope }: { scope: string }) {
     ro.observe(container)
     return () => {
       killed = true
+      cancelAnimationFrame(warmRaf)
+      container.style.visibility = ""
       ro.disconnect()
-      layoutRef.current?.kill()
-      layoutRef.current = null
-      startLayoutRef.current = null
-      setLayoutRunning(false)
-      renderer?.kill()
+      if (r) {
+        deadRenderers.add(r)
+        r.kill()
+      }
       sigmaRef.current = null
       graphRef.current = null
       hoveredRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, effMode, subsetKey, scope, big])
+  }, [])
 
-  // reducers read filters from a ref; sync it and re-render on filter changes
+  // ---------- build the graph for the current mode into the renderer ----------
+  useEffect(() => {
+    const r = renderer
+    const libs = libsRef.current
+    const container = containerRef.current
+    if (!data || !r || deadRenderers.has(r) || !libs || !container) return
+    let cancelled = false
+    let raf = 0
+    let budgetTimer = 0
+    const { fa2, Supervisor } = libs
+    const cacheKey = `${scope}:${effMode}:${big}:${subsetKey}`
+    const cached = positionCache.get(cacheKey)
+
+    // the old graph leaves the screen at once (as a new renderer used to); the new one stays hidden
+    // until complete, so no half-built frame shows. Camera and settings as a new renderer had them.
+    stopWarmRef.current?.()
+    const g = r.getGraph()
+    builtKeyRef.current = `${effMode}:${subsetKey}`
+    modeRef.current = effMode
+    hoveredRef.current = null
+    graphRef.current = g
+    container.style.visibility = "hidden"
+    // clear first: a settings change re-evaluates every node of the graph in the renderer
+    g.clear()
+    r.getCamera().cancelAnimation()
+    r.getCamera().setState({ x: 0.5, y: 0.5, angle: 0, ratio: 1 })
+    r.setSettings(MODE_SETTINGS[effMode])
+
+    const pending = pendingFocusRef.current
+    const finish = () => {
+      if (pending && pendingFocusRef.current === pending && g.hasNode(pending)) {
+        pendingFocusRef.current = null
+        focusNode(pending)
+      }
+    }
+
+    // ForceAtlas2 in a worker with a time budget (LightRAG GraphControl)
+    const runLayout = (then?: () => void) => {
+      if (cancelled) return
+      if (!layoutRef.current) {
+        layoutRef.current = new Supervisor(g, { settings: { ...fa2.inferSettings(g.order), linLogMode: true, outboundAttractionDistribution: true, scalingRatio: 24, gravity: 0.8, adjustSizes: false } })
+      }
+      const layout = layoutRef.current
+      layout.start()
+      setLayoutRunning(true)
+      window.clearTimeout(budgetTimer)
+      budgetTimer = window.setTimeout(() => {
+        if (cancelled) return
+        layout.stop()
+        setLayoutRunning(false)
+        const pos = new Map<string, { x: number; y: number }>()
+        g.forEachNode((n, a) => pos.set(n, { x: a.x, y: a.y }))
+        positionCache.set(cacheKey, pos)
+        then?.()
+      }, Math.min(6000, 1500 + g.order * 0.6))
+    }
+
+    const complete = () => {
+      container.style.visibility = ""
+      // dev/QA hook (scripts/perf-stress.mjs reads render stats from it)
+      if (import.meta.env.DEV) (window as unknown as { __codeGraph?: unknown }).__codeGraph = { sigma: r, graph: g, mode: effMode }
+      if (pending && g.hasNode(pending)) applySelection(pending)
+      else if (selectedRef.current && !g.hasNode(selectedRef.current)) applySelection(null)
+      startLayoutRef.current = effMode === "nodes" ? () => runLayout() : null
+      if (!cached && effMode === "nodes") runLayout(finish)
+      else requestAnimationFrame(finish)
+    }
+
+    // Next frame: build this mode's graph (communities, a drilled-in subset, or everything), off the
+    // task of the click that asked for it, then populate the renderer's graph a time slice per
+    // frame (sigma evaluates each added item right away and renders the batch on its next frame).
+    let nodes: [string, Attributes][] = []
+    let edges: [string, string, Attributes][] = []
+    let undirected = false
+    const build = () => {
+      if (cancelled) return
+      let full: Graph
+      if (effMode === "communities") {
+        full = toCommunityGraph(data, fa2)
+      } else if (subsetKey !== "all") {
+        const keep = new Set(subsetKey.split(",").map(Number))
+        const subset = data.nodes.filter((n) => keep.has(n.community))
+        const ids = new Set(subset.map((n) => n.id))
+        full = toGraphology({ ...data, nodes: subset, links: data.links.filter((l) => ids.has(l.source) && ids.has(l.target)) })
+      } else {
+        full = toGraphology(data)
+      }
+      full.forEachNode((n, a) => {
+        const p = cached?.get(n)
+        nodes.push([n, p ? Object.assign(a, p) : a])
+      })
+      full.forEachEdge((_, a, s, t) => {
+        edges.push([s, t, a])
+      })
+      undirected = full.type === "undirected"
+      raf = requestAnimationFrame(step)
+    }
+    let ni = 0
+    let ei = 0
+    const step = () => {
+      if (cancelled) return
+      const t0 = performance.now()
+      while (ni < nodes.length && performance.now() - t0 < POPULATE_SLICE_MS) {
+        for (const end = Math.min(nodes.length, ni + 64); ni < end; ni++) g.addNode(nodes[ni][0], nodes[ni][1])
+      }
+      while (ni === nodes.length && ei < edges.length && performance.now() - t0 < POPULATE_SLICE_MS) {
+        for (const end = Math.min(edges.length, ei + 128); ei < end; ei++) {
+          const [a, b, attrs] = edges[ei]
+          if (undirected) g.addUndirectedEdge(a, b, attrs)
+          else g.addDirectedEdge(a, b, attrs)
+        }
+      }
+      if (ni < nodes.length || ei < edges.length) raf = requestAnimationFrame(step)
+      else {
+        nodes = []
+        edges = []
+        complete()
+      }
+    }
+    raf = requestAnimationFrame(build)
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      window.clearTimeout(budgetTimer)
+      container.style.visibility = ""
+      layoutRef.current?.kill()
+      layoutRef.current = null
+      startLayoutRef.current = null
+      setLayoutRunning(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, effMode, subsetKey, scope, big, renderer])
+
+  // reducers read filters from a ref; sync it and re-render on filter changes, unless the same
+  // change also selects another graph (drill in, back to all communities): the rebuild applies the
+  // filters anyway, and re-evaluating the outgoing graph's thousands of nodes first was wasted
+  const buildKey = `${effMode}:${subsetKey}`
   useLayoutEffect(() => {
     filtersRef.current = { hiddenComms, relations, confidence }
-    sigmaRef.current?.refresh({ skipIndexation: true })
+    if (builtKeyRef.current === buildKey) sigmaRef.current?.refresh({ skipIndexation: true, schedule: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenComms, relations, confidence])
 
   const deferredQuery = useDeferredValue(query)

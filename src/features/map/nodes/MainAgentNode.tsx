@@ -4,6 +4,7 @@
 // selection toolbar and the context menu; control mode, age details and scope in the inspector.
 import { memo } from "react"
 import { NodeToolbar, Position, type NodeProps } from "@xyflow/react"
+import { useShallow } from "zustand/react/shallow"
 import { useApp, type AppState } from "@/store/app"
 import { useSession } from "@/store/selectors"
 import { openSession, select } from "@/store/actions"
@@ -118,7 +119,11 @@ export const MainAgentNode = memo(function MainAgentNode({ id }: NodeProps<MapNo
 
 /** A delegated task as a compact row: glyph + repo name (the task title is in the tooltip). */
 function DelegatedRow({ id }: { id: ID }) {
-  const s = useSession(id)
+  // only what the row shows: usage and diff ticks of the delegated session don't re-render it
+  const s = useApp(useShallow((st) => {
+    const x = st.sessions[id]
+    return x ? { status: x.status, title: x.title, repoId: x.repoId } : undefined
+  }))
   const repoName = useApp((st) => (s?.repoId ? st.repos[s.repoId]?.name : undefined))
   const selected = useIsSelected("session", id)
   if (!s) return null

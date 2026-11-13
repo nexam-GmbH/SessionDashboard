@@ -10,9 +10,10 @@
 // (Dagster's groups-only mode, dagster-io/dagster@56029e3 CollapsedGroupNode.tsx, Apache-2.0).
 import { memo } from "react"
 import type { NodeProps } from "@xyflow/react"
+import { useShallow } from "zustand/react/shallow"
 import { ArrowUpRight, ChevronDown, ChevronRight, GitBranch, Plus, Waypoints } from "lucide-react"
 import { useApp } from "@/store/app"
-import { useRepo, useRepoRollup, type Rollup } from "@/store/selectors"
+import { useRepo, selectRepoRollup, type Rollup } from "@/store/selectors"
 import { openNewSession, openRepo, toggleRepoCollapsed } from "@/store/actions"
 import { GroupNode } from "@/components/flow/labeled-group-node"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
@@ -47,7 +48,8 @@ function rollupTitle(rollup: Rollup) {
 export const RepoGroupNode = memo(function RepoGroupNode({ id, width, height }: NodeProps<MapNode>) {
   const tier = useLodTier()
   const repo = useRepo(id)
-  const rollup = useRepoRollup(id)
+  // the roll-up is recomputed (a new object) for every repo on any status change; compare counts
+  const rollup = useApp(useShallow((s) => selectRepoRollup(s, id)))
   const selected = useIsSelected("repo", id)
   const collapsed = useApp((s) => !!s.map.collapsedRepos[id])
   const hasStack = useMapLocal((s) => !!s.stacks[id])

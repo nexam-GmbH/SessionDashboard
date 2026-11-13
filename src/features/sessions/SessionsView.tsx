@@ -7,15 +7,14 @@ import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMem
 import {
   flexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type SortingState,
   type RowSelectionState,
   type VisibilityState,
-  type Row as TableRow,
 } from "@tanstack/react-table"
 import { useVirtualizer } from "@tanstack/react-virtual"
+import { useShallow } from "zustand/react/shallow"
 import {
   Archive,
   ArchiveRestore,
@@ -33,7 +32,7 @@ import {
   X,
 } from "lucide-react"
 import { getApp, useApp } from "@/store/app"
-import { useStatusCounts, selectAttention, selectWaitingCount, EMPTY } from "@/store/selectors"
+import { selectAttention, selectStatusCounts, selectWaitingCount, EMPTY } from "@/store/selectors"
 import type { AppState } from "@/store/app"
 import { openSession, pinSession, resumeSession, select, patchSettings } from "@/store/actions"
 import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
@@ -99,7 +98,23 @@ function inView(s: Session, view: SessionsViewName, now: number, subWaiting: Set
   }
 }
 
-type Row = { kind: "session"; s: Session; repo: string } | { kind: "group"; repoId: ID; repo: string; count: number }
+type Item = { kind: "session"; s: Session; repo: string }
+type Row = Item | { kind: "group"; repoId: ID; repo: string; count: number }
+/** TanStack only holds column state (sizes, visibility, sort state, resizing); rows are plain arrays */
+const NO_ROWS: Item[] = []
+/**
+ * One row item per session record (records are replaced on every change): a list recomputed on a
+ * status tick hands unchanged sessions the same item, so their rows skip re-rendering.
+ */
+const itemCache = new WeakMap<Session, Item>()
+function itemFor(s: Session, repo: string): Item {
+  let it = itemCache.get(s)
+  if (!it || it.repo !== repo) {
+    it = { kind: "session", s, repo }
+    itemCache.set(s, it)
+  }
+  return it
+}
 
 /** Archive / history counts only change on structural updates; don't rescan 5k sessions per tick. */
 let countsCache: { v: number; archived: number; history: number } | null = null
@@ -134,9 +149,14 @@ const OPTIONAL_COLUMNS: { id: string; label: string }[] = [
 export default function SessionsView() {
   const ui = useSessionsUi()
   const structVersion = useApp((s) => s.structVersion)
-  const statusVersion = useApp((s) => s.statusVersion)
+  // status ticks only matter for views whose membership or order depends on status (history and
+  // archive rows never change), so those views don't even re-render on a tick
+  const statusDep = useApp((s) => (ui.view === "history" || ui.view === "archived" ? 0 : s.statusVersion))
   const density = useApp((s) => s.settings.density)
-  const counts = useStatusCounts()
+  const activeCount = useApp((s) => {
+    const c = selectStatusCounts(s)
+    return c.working + c.waiting_input + c.waiting_permission + c.idle + c.done_unseen + c.error + c.starting
+  })
   const archivedCount = useApp((s) => selectViewCounts(s).archived)
   const historyCount = useApp((s) => selectViewCounts(s).history)
   const attentionCount = useApp(selectWaitingCount)
@@ -164,10 +184,8 @@ export default function SessionsView() {
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  // Search runs on a deferred copy so typing stays responsive over 5k rows; status ticks only
-  // matter for views whose membership depends on status (history/archive rows never change).
+  // Search runs on a deferred copy so typing stays responsive over 5k rows.
   const query = useDeferredValue(ui.query)
-  const statusDep = ui.view === "history" || ui.view === "archived" ? 0 : statusVersion
   const { data, matchCounts } = useMemo(() => {
     const st = getApp()
     const now = Date.now()
@@ -199,109 +217,38 @@ export default function SessionsView() {
     else if (ui.view === "history" || ui.view === "archived" || ui.view === "recent")
       out.sort((a, b) => cmpIso(b.s.archivedAt ?? b.s.updatedAt, a.s.archivedAt ?? a.s.updatedAt))
     else out.sort((a, b) => tierOf(a.s, subWaiting) - tierOf(b.s, subWaiting) || compareAttentionFast(a.s, b.s, STATUS_TIER))
-    return { data: out.map(({ s, repo }) => ({ s, repo })), matchCounts: q ? counts : null }
+    return { data: out.map(({ s, repo }) => itemFor(s, repo)), matchCounts: q ? counts : null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ui.view, query, ui.status, ui.repos, ui.control, ui.model, structVersion, statusDep])
 
-  const columns = useMemo<ColumnDef<{ s: Session; repo: string }>[]>(
+  // Column state only (sizes, visibility, sort, resizing): cells render from CELLS, rows from plain
+  // arrays. `sortDescFirst` is explicit on every sortable column because TanStack would otherwise
+  // pick the first direction from the first row's value type (numbers desc, text asc), and the
+  // table holds no rows.
+  const columns = useMemo<ColumnDef<Item>[]>(
     () => [
-      {
-        id: "select",
-        size: 30,
-        enableSorting: false,
-        enableResizing: false,
-        header: ({ table }) => (
-          <Checkbox
-            checked={table.getIsAllRowsSelected() ? true : table.getIsSomeRowsSelected() ? "indeterminate" : false}
-            onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
-            aria-label="Select all"
-            className="size-3.5"
-          />
-        ),
-        // rendered by SessionRow from its `selected` prop (see there)
-        cell: () => null,
-      },
+      // the select-all checkbox is rendered by the header row (it needs the view's rows)
+      { id: "select", size: 30, enableSorting: false, enableResizing: false, header: () => null },
       {
         id: "status",
         size: 28,
         enableResizing: false,
         accessorFn: (r) => STATUS_TIER[r.s.status],
         sortingFn: "basic",
+        sortDescFirst: true,
         header: () => <span className="sr-only">Status</span>,
-        cell: ({ row }) => <LiveStatus id={row.original.s.id} />,
       },
-      {
-        id: "title",
-        size: 260,
-        accessorFn: (r) => r.s.title,
-        sortingFn: "text",
-        header: "Title",
-        cell: ({ row }) => <TitleCell s={row.original.s} />,
-      },
-      { id: "repo", size: 124, accessorFn: (r) => r.repo, sortingFn: "text", header: "Repo", cell: ({ row }) => <span className="truncate text-fg-muted">{row.original.repo}</span> },
-      {
-        id: "activity",
-        size: 230,
-        enableSorting: false,
-        header: "Activity",
-        cell: ({ row }) => <LiveActivity id={row.original.s.id} />,
-      },
-      {
-        id: "updated",
-        size: 64,
-        accessorFn: (r) => r.s.updatedAt,
-        sortingFn: "basic",
-        sortDescFirst: true,
-        header: "Last",
-        cell: ({ row }) => <LiveAge id={row.original.s.id} />,
-      },
-      {
-        id: "branch",
-        size: 140,
-        accessorFn: (r) => r.s.cwd,
-        sortingFn: "text",
-        header: "Branch",
-        cell: ({ row }) => <BranchCell s={row.original.s} />,
-      },
-      {
-        id: "diff",
-        size: 92,
-        accessorFn: (r) => r.s.diff.linesAdded + r.s.diff.linesRemoved,
-        sortingFn: "basic",
-        sortDescFirst: true,
-        header: "Changes",
-        cell: ({ row }) => <LiveDiff id={row.original.s.id} />,
-      },
-      {
-        id: "unpushed",
-        size: 40,
-        accessorFn: (r) => r.s.diff.unpushed,
-        sortingFn: "basic",
-        sortDescFirst: true,
-        header: "↑",
-        cell: ({ row }) =>
-          row.original.s.diff.unpushed ? <span className="tabular text-[11px] text-fg-faint">{row.original.s.diff.unpushed}</span> : null,
-      },
-      {
-        id: "ctx",
-        size: 52,
-        accessorFn: (r) => r.s.usage.contextPct,
-        sortingFn: "basic",
-        sortDescFirst: true,
-        header: "Ctx",
-        cell: ({ row }) => <LiveCtx id={row.original.s.id} />,
-      },
-      {
-        id: "cost",
-        size: 62,
-        accessorFn: (r) => r.s.usage.costUsd,
-        sortingFn: "basic",
-        sortDescFirst: true,
-        header: "Cost",
-        cell: ({ row }) => <LiveCost id={row.original.s.id} />,
-      },
-      { id: "model", size: 64, accessorFn: (r) => modelShort(r.s.model), sortingFn: "text", header: "Model", cell: ({ getValue }) => <span className="text-fg-muted">{getValue() as string}</span> },
-      { id: "control", size: 52, accessorFn: (r) => r.s.control, sortingFn: "text", header: "Mode", cell: ({ row }) => <ControlTag mode={row.original.s.control} /> },
+      { id: "title", size: 260, accessorFn: (r) => r.s.title, sortingFn: "text", sortDescFirst: false, header: "Title" },
+      { id: "repo", size: 124, accessorFn: (r) => r.repo, sortingFn: "text", sortDescFirst: false, header: "Repo" },
+      { id: "activity", size: 230, enableSorting: false, header: "Activity" },
+      { id: "updated", size: 64, accessorFn: (r) => r.s.updatedAt, sortingFn: "basic", sortDescFirst: true, header: "Last" },
+      { id: "branch", size: 140, accessorFn: (r) => r.s.cwd, sortingFn: "text", sortDescFirst: false, header: "Branch" },
+      { id: "diff", size: 92, accessorFn: (r) => r.s.diff.linesAdded + r.s.diff.linesRemoved, sortingFn: "basic", sortDescFirst: true, header: "Changes" },
+      { id: "unpushed", size: 40, accessorFn: (r) => r.s.diff.unpushed, sortingFn: "basic", sortDescFirst: true, header: "↑" },
+      { id: "ctx", size: 52, accessorFn: (r) => r.s.usage.contextPct, sortingFn: "basic", sortDescFirst: true, header: "Ctx" },
+      { id: "cost", size: 62, accessorFn: (r) => r.s.usage.costUsd, sortingFn: "basic", sortDescFirst: true, header: "Cost" },
+      { id: "model", size: 64, accessorFn: (r) => modelShort(r.s.model), sortingFn: "text", sortDescFirst: false, header: "Model" },
+      { id: "control", size: 52, accessorFn: (r) => r.s.control, sortingFn: "text", sortDescFirst: false, header: "Mode" },
     ],
     [],
   )
@@ -326,7 +273,7 @@ export default function SessionsView() {
     // an Activity column with nothing in it is noise (e.g. History): hide it until a row has signal
     if (!hasActivity) vis.activity = false
     if (!viewportW) return vis
-    const width = (c: ColumnDef<{ s: Session; repo: string }>) => columnSizing[c.id!] ?? c.size ?? 100
+    const width = (c: ColumnDef<Item>) => columnSizing[c.id!] ?? c.size ?? 100
     let total = columns.reduce((n, c) => n + (vis[c.id!] === false ? 0 : width(c)), 0)
     for (const id of DROP_ORDER) {
       if (total <= viewportW) break
@@ -338,18 +285,16 @@ export default function SessionsView() {
   }, [ui.hiddenColumns, ui.groupByRepo, viewportW, columns, columnSizing, hasActivity])
 
   const table = useReactTable({
-    data,
+    data: NO_ROWS,
     columns,
-    state: { sorting, rowSelection, columnVisibility, columnSizing },
+    state: { sorting, columnVisibility, columnSizing },
     onColumnSizingChange: setColumnSizing,
-    getRowId: (r) => r.s.id,
     onSortingChange: setSorting,
-    onRowSelectionChange: setRowSelection,
-    enableRowSelection: true,
+    manualSorting: true,
     columnResizeMode: "onChange",
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   })
+  const sorted = useMemo(() => sortItems(data, sorting, columns), [data, sorting, columns])
 
   // column widths as CSS variables, recomputed only while sizing changes (Langfuse pattern)
   const colVars = useMemo(() => {
@@ -360,15 +305,15 @@ export default function SessionsView() {
   }, [columnSizing, columns, columnVisibility])
   const headers = table.getHeaderGroups()[0]?.headers ?? []
   const colKey = headers.map((h) => h.id).join(",")
+  const colIds = useMemo(() => colKey.split(","), [colKey])
 
-  const sortedRows = table.getRowModel().rows
   const rows: Row[] = useMemo(() => {
-    if (!ui.groupByRepo) return sortedRows.map((r) => ({ kind: "session" as const, s: r.original.s, repo: r.original.repo }))
+    if (!ui.groupByRepo) return sorted
     const groups = new Map<string, { repoId: ID; repo: string; items: Row[] }>()
-    for (const r of sortedRows) {
-      const key = r.original.s.repoId ?? "main"
-      const g = groups.get(key) ?? { repoId: key, repo: r.original.repo, items: [] }
-      g.items.push({ kind: "session", s: r.original.s, repo: r.original.repo })
+    for (const r of sorted) {
+      const key = r.s.repoId ?? "main"
+      const g = groups.get(key) ?? { repoId: key, repo: r.repo, items: [] }
+      g.items.push(r)
       groups.set(key, g)
     }
     const out: Row[] = []
@@ -377,7 +322,7 @@ export default function SessionsView() {
       out.push(...g.items)
     }
     return out
-  }, [sortedRows, ui.groupByRepo])
+  }, [sorted, ui.groupByRepo])
 
   const rowH = density === "comfortable" ? 32 : 28
   // Stable callbacks: the virtualizer re-measures every item whenever these change identity,
@@ -401,11 +346,33 @@ export default function SessionsView() {
   const [focus, setFocus] = useState(-1)
   const selectedIds = Object.keys(rowSelection).filter((k) => rowSelection[k])
   const totalWidth = table.getTotalSize()
+  // row selection on plain ids, same rules as TanStack's row selection (all = every row of the view)
+  const toggleRow = useCallback(
+    (id: ID) =>
+      setRowSelection((sel) => {
+        const next = { ...sel }
+        if (sel[id]) delete next[id]
+        else next[id] = true
+        return next
+      }),
+    [],
+  )
+  const selectedKeys = Object.keys(rowSelection).length
+  const allSelected = selectedKeys > 0 && data.length > 0 && data.every((r) => rowSelection[r.s.id])
+  const toggleAll = (on: boolean) =>
+    setRowSelection((sel) => {
+      const next = { ...sel }
+      for (const r of data) {
+        if (on) next[r.s.id] = true
+        else delete next[r.s.id]
+      }
+      return next
+    })
 
   const filtered = !!ui.query.trim() || ui.repos.length > 0 || ui.status.length > 0 || ui.control.length > 0
   const viewCount: Record<SessionsViewName, number | undefined> = {
     attention: attentionCount,
-    active: counts.working + counts.waiting_input + counts.waiting_permission + counts.idle + counts.done_unseen + counts.error + counts.starting,
+    active: activeCount,
     recent: undefined,
     history: historyCount,
     archived: archivedCount,
@@ -459,6 +426,7 @@ export default function SessionsView() {
             <button
               key={v.id}
               onClick={() => setSessionsFilter({ view: v.id })}
+              aria-pressed={ui.view === v.id}
               title={`${v.hint}${viewCount[v.id] !== undefined ? ` (${viewCount[v.id]})` : ""}`}
               className={cn(
                 "flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap transition-colors",
@@ -502,6 +470,7 @@ export default function SessionsView() {
               }
             }}
             placeholder="Search"
+            aria-label="Search sessions"
             title="Title, prompt, branch or repo"
             className="h-full w-full rounded-md border border-line-subtle bg-chrome pr-6 pl-7 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong"
           />
@@ -549,7 +518,13 @@ export default function SessionsView() {
       )}
 
       {/* table */}
-      <div ref={scrollRef} data-qa="sessions-table" className="relative min-h-0 flex-1 overflow-auto outline-none contain-strict" tabIndex={0} style={colVars as React.CSSProperties}>
+      <div
+        ref={scrollRef}
+        data-qa="sessions-table"
+        className="relative min-h-0 flex-1 overflow-auto outline-none contain-strict focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        tabIndex={0}
+        style={colVars as React.CSSProperties}
+      >
         {data.length === 0 ? (
           <EmptyState
             action={
@@ -571,19 +546,44 @@ export default function SessionsView() {
             <div className="sticky top-0 z-10 flex h-7 items-stretch border-b border-line-subtle bg-chrome text-[11px] text-fg-faint">
               {headers.map((h) => {
                 const sorted = h.column.getIsSorted()
+                const sortable = h.column.getCanSort()
+                const label = h.id === "select" ? (
+                  <Checkbox
+                    checked={allSelected ? true : selectedKeys > 0 && selectedKeys < data.length ? "indeterminate" : false}
+                    onCheckedChange={(v) => toggleAll(!!v)}
+                    aria-label="Select all"
+                    className="size-3.5"
+                  />
+                ) : (
+                  flexRender(h.column.columnDef.header, h.getContext())
+                )
+                const arrow = sorted === "desc" ? <ArrowDown size={11} /> : sorted === "asc" ? <ArrowUp size={11} /> : null
                 return (
                   <div
                     key={h.id}
+                    role="columnheader"
+                    aria-sort={sortable ? (sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none") : undefined}
                     className={cn(
                       "group/th relative flex shrink-0 items-center gap-1 px-2 select-none first:pl-3",
-                      h.column.getCanSort() && "cursor-pointer hover:text-fg-muted",
+                      sortable && "cursor-pointer hover:text-fg-muted",
                       h.id === "title" && "grow",
                     )}
                     style={{ width: `var(--col-${h.id})`, minWidth: `var(--col-${h.id})` }}
                     onClick={h.column.getToggleSortingHandler()}
                   >
-                    <span className="truncate">{flexRender(h.column.columnDef.header, h.getContext())}</span>
-                    {sorted === "desc" ? <ArrowDown size={11} /> : sorted === "asc" ? <ArrowUp size={11} /> : null}
+                    {sortable ? (
+                      // keyboard + screen reader handle on the label; Enter/Space click it and the
+                      // click reaches the cell's sort handler, like a mouse click anywhere in the cell
+                      <button type="button" className="flex min-w-0 items-center gap-1 rounded-sm text-left [cursor:inherit] outline-none focus-visible:ring-1 focus-visible:ring-ring/60">
+                        <span className="truncate">{label}</span>
+                        {arrow}
+                      </button>
+                    ) : (
+                      <>
+                        <span className="truncate">{label}</span>
+                        {arrow}
+                      </>
+                    )}
                     {h.column.getCanResize() && (
                       <div
                         onMouseDown={h.getResizeHandler()}
@@ -614,15 +614,16 @@ export default function SessionsView() {
                 return (
                   <SessionRow
                     key={vi.key}
-                    row={table.getRow(r.s.id)}
+                    item={r}
                     index={vi.index}
                     top={vi.start}
                     height={vi.size}
                     focused={vi.index === focus}
                     selected={!!rowSelection[r.s.id]}
                     someSelected={selectedIds.length > 0}
-                    colKey={colKey}
+                    colIds={colIds}
                     onFocusRow={setFocus}
+                    onToggleRow={toggleRow}
                   />
                 )
               })}
@@ -634,7 +635,57 @@ export default function SessionsView() {
   )
 }
 
-type TRow = TableRow<{ s: Session; repo: string }>
+/**
+ * TanStack's sorted row model on plain arrays (react-table v8 `getSortedRowModel` semantics: the
+ * `basic` and `text` (lowercased) comparators, desc inversion, multi-sort in order, original order
+ * as the tie-break), but each sort key is computed once per row instead of per comparison and no
+ * row objects are built or copied. On History (~4.7k rows) building TanStack's row models was most
+ * of the cost of a view switch or a sort.
+ */
+function sortItems(data: Item[], sorting: SortingState, columns: ColumnDef<Item>[]): Item[] {
+  if (!data.length || !sorting.length) return data
+  const keys: { values: (string | number)[]; desc: boolean }[] = []
+  for (const sort of sorting) {
+    const col = columns.find((c) => c.id === sort.id)
+    if (!col || !("accessorFn" in col) || !col.accessorFn || col.enableSorting === false) continue
+    const get = col.accessorFn
+    const text = col.sortingFn === "text"
+    keys.push({ values: data.map((r, i) => (text ? textKey(get(r, i)) : (get(r, i) as string | number))), desc: !!sort.desc })
+  }
+  if (!keys.length) return data
+  const order = data.map((_, i) => i)
+  order.sort((a, b) => {
+    for (const k of keys) {
+      const x = k.values[a]
+      const y = k.values[b]
+      if (x !== y) return (x > y ? 1 : -1) * (k.desc ? -1 : 1)
+    }
+    return a - b
+  })
+  return order.map((i) => data[i])
+}
+
+/** TanStack's `text` sort key: numbers as strings (NaN/±Infinity empty), other non-strings empty. */
+function textKey(v: unknown): string {
+  if (typeof v === "number") return Number.isFinite(v) ? String(v).toLowerCase() : ""
+  return typeof v === "string" ? v.toLowerCase() : ""
+}
+
+/** Cell content per column id (the select column is drawn by RowCells from its props). */
+const CELLS: Record<string, (s: Session, repo: string) => React.ReactNode> = {
+  status: (s) => <LiveStatus id={s.id} />,
+  title: (s) => <TitleCell s={s} />,
+  repo: (_, repo) => <span className="truncate text-fg-muted">{repo}</span>,
+  activity: (s) => <LiveActivity id={s.id} />,
+  updated: (s) => <LiveAge id={s.id} />,
+  branch: (s) => <BranchCell s={s} />,
+  diff: (s) => <LiveDiff id={s.id} />,
+  unpushed: (s) => (s.diff.unpushed ? <span className="tabular text-[11px] text-fg-faint">{s.diff.unpushed}</span> : null),
+  ctx: (s) => <LiveCtx id={s.id} />,
+  cost: (s) => <LiveCost id={s.id} />,
+  model: (s) => <span className="text-fg-muted">{modelShort(s.model)}</span>,
+  control: (s) => <ControlTag mode={s.control} />,
+}
 
 /**
  * Row checkbox with the same look as ui/checkbox but without Radix (Provider, Presence,
@@ -663,32 +714,36 @@ function RowCheck({ checked, onToggle, hidden }: { checked: boolean; onToggle: (
 }
 
 /**
- * One table row. Memoized on primitive props + the TanStack row object (stable until the data
- * or sort changes), so scrolling only renders rows entering the viewport.
+ * One table row: the positioned shell. Its cells are a separate memo keyed on the session record,
+ * so a re-sort or a status tick elsewhere only moves rows (new `top`/`index`), and scrolling only
+ * renders rows entering the viewport.
  */
 const SessionRow = memo(function SessionRow({
-  row,
+  item,
   index,
   top,
   height,
   focused,
   selected,
   someSelected,
+  colIds,
   onFocusRow,
+  onToggleRow,
 }: {
-  row: TRow
+  item: Item
   index: number
   top: number
   height: number
   focused: boolean
   selected: boolean
-  /** any row selected: checkboxes stay visible (keeps memo honest when selection changes) */
+  /** any row selected: checkboxes stay visible */
   someSelected: boolean
-  /** visible column ids; changes re-render the row */
-  colKey: string
+  /** visible column ids, in order */
+  colIds: string[]
   onFocusRow: (index: number) => void
+  onToggleRow: (id: ID) => void
 }) {
-  const id = row.id
+  const id = item.s.id
   const inspected = useApp((s) => s.selection?.kind === "session" && s.selection.id === id)
   return (
     <div
@@ -704,24 +759,36 @@ const SessionRow = memo(function SessionRow({
       }}
       onDoubleClick={() => openSession(id)}
     >
-      {row.getVisibleCells().map((cell) => (
-        <div
-          key={cell.id}
-          className={cn("flex min-w-0 shrink-0 items-center px-2 first:pl-3", cell.column.id === "title" && "grow")}
-          style={{ width: `var(--col-${cell.column.id})`, minWidth: `var(--col-${cell.column.id})` }}
-        >
-          {/* the checkbox reads `selected` / `someSelected` props: the TanStack row object keeps its
-              identity when only the selection changes, so a memoized cell would show stale state */}
-          {cell.column.id === "select" ? (
-            <RowCheck checked={selected} onToggle={() => row.toggleSelected()} hidden={!selected && !someSelected} />
-          ) : (
-            flexRender(cell.column.columnDef.cell, cell.getContext())
-          )}
-        </div>
-      ))}
+      <RowCells s={item.s} repo={item.repo} colIds={colIds} selected={selected} someSelected={someSelected} onToggleRow={onToggleRow} />
       <RowActions id={id} />
     </div>
   )
+})
+
+const RowCells = memo(function RowCells({
+  s,
+  repo,
+  colIds,
+  selected,
+  someSelected,
+  onToggleRow,
+}: {
+  s: Session
+  repo: string
+  colIds: string[]
+  selected: boolean
+  someSelected: boolean
+  onToggleRow: (id: ID) => void
+}) {
+  return colIds.map((cid) => (
+    <div
+      key={cid}
+      className={cn("flex min-w-0 shrink-0 items-center px-2 first:pl-3", cid === "title" && "grow")}
+      style={{ width: `var(--col-${cid})`, minWidth: `var(--col-${cid})` }}
+    >
+      {cid === "select" ? <RowCheck checked={selected} onToggle={() => onToggleRow(s.id)} hidden={!selected && !someSelected} /> : CELLS[cid]?.(s, repo)}
+    </div>
+  ))
 })
 
 function TitleCell({ s }: { s: Session }) {
@@ -763,7 +830,13 @@ function LiveAge({ id }: { id: ID }) {
   return <span className="tabular text-[11px] text-fg-faint">{t}</span>
 }
 function LiveActivity({ id }: { id: ID }) {
-  const s = useApp((st) => st.sessions[id])
+  // only the fields shown: usage, cost and diff ticks don't re-render the cell
+  const s = useApp(
+    useShallow((st) => {
+      const x = st.sessions[id]
+      return x ? { status: x.status, errorMessage: x.errorMessage, waitingFor: x.waitingFor, activity: x.activity } : undefined
+    }),
+  )
   const subId = useWaitingSubagent(id)
   const subType = useApp((st) => (subId ? st.subagents[subId]?.agentType : undefined))
   if (!s) return null
@@ -813,7 +886,12 @@ function LiveCost({ id }: { id: ID }) {
  * taking a column, so narrow windows keep their data columns.
  */
 function RowActions({ id }: { id: ID }) {
-  const s = useApp((st) => st.sessions[id])
+  const s = useApp(
+    useShallow((st) => {
+      const x = st.sessions[id]
+      return x ? { id: x.id, control: x.control, archived: x.archived, role: x.role } : undefined
+    }),
+  )
   if (!s) return null
   const btn = "flex h-5 items-center gap-1 rounded-sm px-1.5 text-[11px] text-fg-muted hover:bg-selected hover:text-fg"
   return (

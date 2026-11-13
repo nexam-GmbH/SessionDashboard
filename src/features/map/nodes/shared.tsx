@@ -1,7 +1,7 @@
 // Adapted from argoproj/argo-cd@ae2e784:ui/src/app/applications/components/application-resource-tree/node-update-animation.tsx (Apache-2.0). Modified for session-dashboard.
 // Shared bits for map nodes: invisible handles, selection, the status-change flash, spinner gating.
 import { memo, useCallback, useState } from "react"
-import { Handle, Position, useStore, type ReactFlowState } from "@xyflow/react"
+import { useStore, type ReactFlowState } from "@xyflow/react"
 import { Circle, CircleCheck, CircleDashed, CircleSlash, LoaderCircle, MessageCircleQuestion, OctagonX, ShieldAlert, type LucideIcon } from "lucide-react"
 import { useApp } from "@/store/app"
 import type { ID, SessionStatus } from "@/lib/model"
@@ -10,16 +10,19 @@ import { nodeOnScreen, type LodTier } from "../lod"
 
 /**
  * React Flow needs a handle on each end of an edge; our edges are routed by the layout, so the
- * handles are invisible anchors (Headlamp does the same with `opacity: 0` handles).
+ * handles are invisible anchors (Headlamp does the same with `opacity: 0` handles). Plain elements
+ * with the classes `<Handle isConnectable={false}>` renders: React Flow only measures the `.source`
+ * / `.target` elements of a node (position from `data-handlepos`), while each `<Handle>` adds two
+ * store subscriptions that run on every pan and zoom frame, four per card.
  */
-export const MapHandles = memo(function MapHandles() {
+export function MapHandles() {
   return (
     <>
-      <Handle type="target" position={Position.Top} isConnectable={false} className="map-handle" />
-      <Handle type="source" position={Position.Bottom} isConnectable={false} className="map-handle" />
+      <div data-handlepos="top" className="react-flow__handle react-flow__handle-top nodrag nopan map-handle target connectablestart connectableend" />
+      <div data-handlepos="bottom" className="react-flow__handle react-flow__handle-bottom nodrag nopan map-handle source connectablestart connectableend" />
     </>
   )
-})
+}
 
 export function useIsSelected(kind: "session" | "repo" | "subagent", id: ID) {
   return useApp((s) => s.selection?.kind === kind && s.selection.id === id)

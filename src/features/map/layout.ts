@@ -14,7 +14,7 @@
 // - Results are cached by a structure hash (Headlamp resource map, Apache-2.0: djb2 framed hash in
 //   kubernetes-sigs/headlamp@e16a575:frontend/src/components/resourceMap/graph/graphLayout.tsx
 //   `hashString`/`getGraphCacheKey`, plus its small bounded layout cache).
-import { MarkerType, type Edge, type Node } from "@xyflow/react"
+import { MarkerType, Position, type Edge, type Node, type NodeHandle } from "@xyflow/react"
 import type { ID, RepoLink, Session } from "@/lib/model"
 import type { AppState, HistoryRange } from "@/store/app"
 import { isVisibleLive } from "@/store/selectors"
@@ -127,6 +127,29 @@ export function titleLines(title: string): 1 | 2 {
     return lines
   }
   return title.length * 7 <= TITLE_W ? 1 : 2
+}
+
+// ---------- handle anchors ----------
+/**
+ * Static handle anchors on every node (React Flow `node.handles`), the same 1px points React Flow
+ * measures from the invisible `MapHandles` (centered on the top and bottom edges). Without them a
+ * node object React Flow hasn't measured yet has no handle bounds, and `getNodesInside` then
+ * force-renders it even off-screen just to measure it. Every new node object resets that: each
+ * layout change and, above all, every card un-hidden when zooming in from the overview tier, so
+ * crossing the threshold mounted all ~400 cards of the stress fixture at once (then culled them).
+ */
+const anchorCache = new Map<string, NodeHandle[]>()
+export function anchors(w: number, h: number): NodeHandle[] {
+  const key = `${w}x${h}`
+  let a = anchorCache.get(key)
+  if (!a) {
+    a = [
+      { type: "target", position: Position.Top, x: w / 2 - 0.5, y: -0.5, width: 1, height: 1 },
+      { type: "source", position: Position.Bottom, x: w / 2 - 0.5, y: h - 0.5, width: 1, height: 1 },
+    ]
+    anchorCache.set(key, a)
+  }
+  return a
 }
 
 // ---------- types ----------
@@ -389,7 +412,7 @@ function place(
   const nodeRepo = new Map<ID, { repoId: ID; col: number }>()
   const topIds: ID[] = [mainId]
 
-  nodes.push({ id: mainId, type: "main", position: { x: mainX, y: 0 }, width: MAIN_W, height: MAIN_H, data: { id: mainId } })
+  nodes.push({ id: mainId, type: "main", position: { x: mainX, y: 0 }, width: MAIN_W, height: MAIN_H, handles: anchors(MAIN_W, MAIN_H), data: { id: mainId } })
   rects.set(mainId, { x: mainX, y: 0, w: MAIN_W, h: MAIN_H, type: "main" })
   abs.set(mainId, { x: mainX, y: 0, w: MAIN_W, h: MAIN_H })
 
@@ -405,7 +428,7 @@ function place(
     let y = HEADER_H + GROUP_PAD
 
     const addChild = (id: ID, type: MapNodeType, x: number, h: number, w: number) => {
-      children.push({ id, type, parentId: plan.repoId, position: { x, y }, width: w, height: h, data: { id: type === "stack" ? plan.repoId : id } })
+      children.push({ id, type, parentId: plan.repoId, position: { x, y }, width: w, height: h, handles: anchors(w, h), data: { id: type === "stack" ? plan.repoId : id } })
       const r = { x: gx + x, y: gy + y, w, h }
       abs.set(id, r)
       rects.set(id, { ...r, type, repoId: plan.repoId })
@@ -451,6 +474,7 @@ function place(
       position: { x: gx, y: gy },
       width: GROUP_W,
       height: h,
+      handles: anchors(GROUP_W, h),
       data: { id: plan.repoId },
     })
     nodes.push(...children)

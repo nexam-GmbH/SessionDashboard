@@ -78,6 +78,12 @@ const RELATIONS: GLink["relation"][] = ["calls", "uses", "contains", "method", "
 
 const cache = new Map<string, GraphJson>()
 
+/**
+ * Yield to the event loop: generating a synthetic graph (~45 ms for 20k nodes) then runs as its own
+ * task instead of extending the task that mounted the view (UI_PLAN §8: no task > 50 ms).
+ */
+const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
 export async function loadGraph(scope: string, big = 0): Promise<GraphJson> {
   const key = `${scope}:${big}`
   const hit = cache.get(key)
@@ -95,19 +101,22 @@ export async function loadGraph(scope: string, big = 0): Promise<GraphJson> {
       source: "graphify-fixture",
     }
   } else if (scope === "global") {
-    g = globalGraph()
+    await nextTask()
+    g = await globalGraph()
   } else {
+    await nextTask()
     const st = getApp()
     const repo = st.repos[scope]
     const spec = st.repoSpecs[scope]
     const n = big || Math.min(repo?.graphify?.nodes ?? 800, st.fixture === "stress" ? 20_000 : 2600)
-    g = synthetic(scope, spec, n, Math.min(repo?.graphify?.communities ?? 12, 24))
+    g = await synthetic(scope, spec, n, Math.min(repo?.graphify?.communities ?? 12, 24), "", n > 5000)
   }
   cache.set(key, g)
   return g
 }
 
-function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, communities: number, prefix = ""): GraphJson {
+/** `split`: yield between the node and the link pass (a 20k-node graph takes ~25 ms for each). */
+async function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, communities: number, prefix = "", split = false): Promise<GraphJson> {
   const rng = new Rng(seed)
   const files = spec?.files ?? ["src/index.ts"]
   const symbols = spec?.symbols ?? ["main"]
@@ -144,6 +153,7 @@ function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, 
     })
     members[c].push(id)
   }
+  if (split) await nextTask()
   const links: GLink[] = []
   const seen = new Set<string>()
   const add = (a: string, b: string, relation: GLink["relation"], confidence: GLink["confidence"] = "EXTRACTED") => {
@@ -178,17 +188,20 @@ function synthetic(seed: string, spec: RepoSpec | undefined, nodeCount: number, 
   }
 }
 
-function globalGraph(): GraphJson {
+async function globalGraph(): Promise<GraphJson> {
   const st = getApp()
   const nodes: GNode[] = []
   const links: GLink[] = []
   const repos = st.repoOrder.filter((id) => st.repos[id].graphify?.state !== "none").slice(0, 24)
-  repos.forEach((repoId, ri) => {
-    const sub = synthetic(repoId, st.repoSpecs[repoId], st.fixture === "stress" ? 600 : 160, 4, `${ri}_`)
+  for (let ri = 0; ri < repos.length; ri++) {
+    const repoId = repos[ri]
+    // a few repos per task (the stress fixture's 24 × 600 nodes would take ~40 ms in one)
+    if (ri > 0 && ri % 8 === 0) await nextTask()
+    const sub = await synthetic(repoId, st.repoSpecs[repoId], st.fixture === "stress" ? 600 : 160, 4, `${ri}_`)
     const name = st.repos[repoId].name
     for (const n of sub.nodes) nodes.push({ ...n, community: ri, community_name: name, repo: name })
     links.push(...sub.links)
-  })
+  }
   const rng = new Rng("global")
   for (const l of st.links) {
     const a = repos.indexOf(l.from)

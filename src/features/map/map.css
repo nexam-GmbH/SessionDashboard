@@ -74,10 +74,7 @@
     z-index: 20;
   }
 
-  /* the map canvas owns keyboard focus; the focus ring sits on the toolbar instead */
-  .sd-map-canvas:focus-visible {
-    outline: none;
-  }
+  /* the map canvas owns keyboard focus; its focus-visible outline is a utility in MapCanvas.tsx */
 }
 
 @keyframes sd-map-dash {

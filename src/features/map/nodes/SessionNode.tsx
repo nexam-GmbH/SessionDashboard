@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { plural, usd } from "@/lib/format"
 import { capabilities, modelShort, PERMISSION_MODE_LABEL } from "@/lib/status"
-import type { Session } from "@/lib/model"
+import type { ID, Session } from "@/lib/model"
 import { useLodTier } from "../lod"
 import { CARD_W, hasContextLine, SESSION_MIN_H, sessionVariant, type MapNode } from "../layout"
 import { SessionToolbar } from "../NodeActions"
@@ -42,19 +42,68 @@ export const SessionNode = memo(function SessionNode({ id, height }: NodeProps<M
   return (
     <>
       <MapHandles />
-      {selected && (
-        // right-aligned: it then covers the (usually empty) bottom-right corner of the card above
-        // instead of the start of its title or context line
-        <NodeToolbar isVisible position={Position.Top} align="end" offset={4}>
-          <SessionToolbar id={id} />
-        </NodeToolbar>
-      )}
+      {selected && <CardToolbar id={id} h={h} answers={tier === "full" && answersInTitleRow(s, h)} />}
       {tier === "full" ? <FullCard s={s} selected={selected} spin={spin} h={h} /> : <CompactCard s={s} selected={selected} h={h} />}
     </>
   )
 })
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+
+/** on-screen height of the floating toolbar (xs buttons + padding + border) plus a 4px inset each side */
+const TOOLBAR_FIT = 30 + 8
+
+/**
+ * The selected card's toolbar sits inside the card, so it never covers a neighbouring card (it
+ * used to float above the card, over the bottom of the card above). It keeps a constant on-screen
+ * size: in the top-right corner (the end of the title row; the context line with its inline
+ * answers stays free) while the card is tall enough on screen, otherwise vertically centered on the
+ * card's right edge, where it overhangs the card by a few px at most at full LOD, never a whole gap.
+ */
+function CardToolbar({ id, h, answers }: { id: ID; h: number; answers: boolean }) {
+  const fits = useStore((st) => st.transform[2] * h >= TOOLBAR_FIT)
+  return fits ? (
+    <NodeToolbar isVisible position={Position.Top} align="end" offset={0}>
+      <SessionToolbar id={id} answers={answers} className="-translate-x-1 translate-y-[calc(100%+4px)]" />
+    </NodeToolbar>
+  ) : (
+    <NodeToolbar isVisible position={Position.Right} offset={0}>
+      <SessionToolbar id={id} answers={answers} className="translate-x-[calc(-100%-4px)]" />
+    </NodeToolbar>
+  )
+}
+
+/**
+ * A one-line card frozen without a context row shows a waiting request's answers at the end of its
+ * title row (FullCard `inlineOnly`), right under the toolbar: the toolbar then carries them.
+ */
+function answersInTitleRow(s: Session, h: number) {
+  const v = sessionVariant(h)
+  return s.control !== "history" && !!s.waitingFor && hasContextLine(s) && !v.ctx && v.lines === 1
+}
+
+/**
+ * Whether two snapshots of a session look the same on a card (full or compact, with its context
+ * line and inline request). Usage, cost and diff ticks, most of the engine's events, replace the
+ * session record without changing any of these, so they skip the card subtree. Keep in sync with
+ * the fields FullCard, CompactCard, ContextLine and RequestLine read.
+ */
+function sameCard(a: Session, b: Session) {
+  return (
+    a === b ||
+    (a.id === b.id &&
+      a.status === b.status &&
+      a.title === b.title &&
+      a.control === b.control &&
+      a.statusObservedAt === b.statusObservedAt &&
+      a.waitingFor === b.waitingFor &&
+      a.activity === b.activity &&
+      a.errorMessage === b.errorMessage &&
+      a.backgroundTasks === b.backgroundTasks &&
+      // history cards show their last update; live cards show when their status changed
+      (a.control !== "history" || a.updatedAt === b.updatedAt))
+  )
+}
 
 /**
  * The calm card. Content is vertically centered, so a card whose status changed since the layout
@@ -100,7 +149,7 @@ export const FullCard = memo(function FullCard({ s, selected, spin, h }: { s: Se
       </NodeStatusIndicator>
     </BaseNode>
   )
-})
+}, (a, b) => a.selected === b.selected && a.spin === b.spin && a.h === b.h && sameCard(a.s, b.s))
 
 /** The one context line: waiting request, error, current activity, or a running background shell. */
 export function ContextLine({ s }: { s: Session }) {
@@ -207,7 +256,7 @@ function RequestLine({ s, buttonsOnly }: { s: Session; buttonsOnly?: boolean }) 
 }
 
 /** Compact LOD: the minimal card (Dagster `AssetNodeMinimal` idea): status bar, glyph, title in large type. */
-function CompactCard({ s, selected, h }: { s: Session; selected: boolean; h: number }) {
+const CompactCard = memo(function CompactCard({ s, selected, h }: { s: Session; selected: boolean; h: number }) {
   const history = s.control === "history"
   return (
     <BaseNode data-selected={selected || undefined} className={cn("flex h-full w-full items-center gap-4 overflow-hidden pr-4 pl-5", history && "bg-chrome")}>
@@ -222,7 +271,7 @@ function CompactCard({ s, selected, h }: { s: Session; selected: boolean; h: num
       </NodeStatusIndicator>
     </BaseNode>
   )
-}
+}, (a, b) => a.selected === b.selected && a.h === b.h && sameCard(a.s, b.s))
 
 function useBranch(s: Session) {
   return useApp((st) => {
@@ -289,17 +338,11 @@ export const SessionMeta = memo(function SessionMeta({ s }: { s: Session }) {
 /**
  * Hover glance (UI_PLAN §5.1, Headlamp's 450ms glance): one shared floating layer for the hovered
  * session, rendered by the canvas, so cards carry no tooltip state. At full LOD it is the details
- * line under the card; at compact LOD it is the readable card plus those details.
+ * line beside the card; at compact LOD it is the readable card plus those details. `left`: the
+ * canvas picks the side with room inside the map viewport, so it is never clipped.
  */
-export const SessionGlance = memo(function SessionGlance({ id, mode }: { id: string; mode: "meta" | "card" }) {
+export const SessionGlance = memo(function SessionGlance({ id, mode, left }: { id: string; mode: "meta" | "card"; left: boolean }) {
   const s = useSession(id)
-  // the compact glance opens toward the roomier side of the canvas so it is never clipped
-  const left = useStore((st) => {
-    const n = st.nodeLookup.get(id)
-    if (!n) return false
-    const sx = n.internals.positionAbsolute.x * st.transform[2] + st.transform[0]
-    return sx > st.width / 2
-  })
   if (!s) return null
   if (mode === "meta") {
     return (

@@ -81,6 +81,7 @@ export function NodeSearch<T extends { id: string }>({
             }
           }}
           placeholder={placeholder}
+          aria-label="Find on map"
           className="h-full w-full rounded-md border border-line-subtle bg-chrome pr-6 pl-7 text-xs text-fg outline-none placeholder:text-fg-faint focus:border-line-strong"
         />
         {query && (

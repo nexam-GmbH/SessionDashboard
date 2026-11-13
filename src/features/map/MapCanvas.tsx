@@ -24,10 +24,11 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { ZoomSlider } from "@/components/flow/zoom-slider"
 import type { ID } from "@/lib/model"
 import { STATUS_COLOR } from "@/lib/status"
-import { columnsFor, computeLayout, initialView, TITLE_FONT, titleFontReady, type LayoutResult, type MapEdge, type MapNode, type NavRect } from "./layout"
+import { CARD_W, columnsFor, computeLayout, initialView, TITLE_FONT, titleFontReady, type LayoutResult, type MapEdge, type MapNode, type NavRect } from "./layout"
 import { COMPACT_ZOOM, tierSelector } from "./lod"
 import { getMapLocal, requestFocus, revealOnMap, seedMapDefaults, setMapLocal, useMapLocal } from "./mapStore"
 import { nextAttention, pickInDirection, type Dir } from "./nav"
+import { useProgressiveReveal } from "./reveal"
 import { MapContextMenu, type MapTarget } from "./NodeActions"
 import { MapToolbar, type SearchItem } from "./MapToolbar"
 import { SessionGlance } from "./nodes/SessionNode"
@@ -35,6 +36,21 @@ import { GLANCE_DELAY } from "@/components/flow/node-tooltip"
 import { edgeTypes, nodeTypes } from "./registry"
 
 const EMPTY_NODES: MapNode[] = []
+/** node count above which off-screen nodes are culled (and cards are revealed progressively) */
+const CULL_ABOVE = 200
+/**
+ * One stable hidden copy per layout node, so React Flow skips unchanged nodes between reveal steps.
+ * Without handle anchors, so edges into a hidden card aren't drawn (React Flow doesn't hide them).
+ */
+const hiddenCopies = new WeakMap<MapNode, MapNode>()
+function hiddenCopy(n: MapNode): MapNode {
+  let h = hiddenCopies.get(n)
+  if (!h) {
+    h = { ...n, hidden: true, handles: undefined }
+    hiddenCopies.set(n, h)
+  }
+  return h
+}
 const EMPTY_EDGES: MapEdge[] = []
 const ARROWS: Record<string, Dir> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }
 
@@ -104,11 +120,14 @@ export function MapCanvas() {
 
   // ---------- LOD: hide cards at overview (Dagster groups-only) ----------
   const overview = useStore(tierSelector) === "overview"
+  // large maps: zooming back in from overview un-hides the cards in view a few per frame (reveal.ts)
+  const culled = (layout?.nodes.length ?? 0) > CULL_ABOVE
+  const revealed = useProgressiveReveal(layout, overview, culled, getStoreState)
   const nodes = useMemo(() => {
     if (!layout) return EMPTY_NODES
-    if (!overview) return layout.nodes
-    return layout.nodes.map((n) => (n.type === "repo" || n.type === "main" ? n : { ...n, hidden: true }))
-  }, [layout, overview])
+    if (!overview && !revealed) return layout.nodes
+    return layout.nodes.map((n) => (n.type === "repo" || n.type === "main" || revealed?.has(n.id) ? n : hiddenCopy(n)))
+  }, [layout, overview, revealed])
 
   const showLinks = useApp((s) => s.map.showLinks)
   const selectedRepo = useApp((s) => (s.selection?.kind === "repo" ? s.selection.id : null))
@@ -181,6 +200,69 @@ export function MapCanvas() {
   }, [])
 
   const fit = useCallback(() => void rf.fitView({ padding: 0.06, duration: 250 }), [rf])
+
+  // Selecting something opens the inspector beside the canvas, which narrows it and can leave the
+  // selected card under the new edge. When the canvas size settles, pan by the minimum that brings
+  // the selected node (or keyboard cursor) fully back into view, at the same zoom; only if it was
+  // in view before the resize (a node the user panned away from stays away).
+  useEffect(() => {
+    let timer = 0
+    let before: { width: number; height: number } | null = null
+    const unsub = storeApi.subscribe((st, prev) => {
+      if (st.width === prev.width && st.height === prev.height) return
+      if (!prev.width || !prev.height) return
+      before ??= { width: prev.width, height: prev.height }
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const was = before!
+        before = null
+        const id = currentId()
+        const r = id ? layoutRef.current?.rects.get(id) : undefined
+        if (!r) return
+        const { transform, width, height } = getStoreState()
+        const [tx, ty, k] = transform
+        const sx = r.x * k + tx
+        const sy = r.y * k + ty
+        const sw = r.w * k
+        const sh = Math.min(r.h, 400) * k
+        if (sx > was.width || sx + sw < 0 || sy > was.height || sy + sh < 0) return
+        const M = 12
+        const dx = sx + sw > width - M ? Math.max(M - sx, width - M - (sx + sw)) : sx < M ? M - sx : 0
+        const dy = sy + sh > height - M ? Math.max(M - sy, height - M - (sy + sh)) : sy < M ? M - sy : 0
+        if (dx || dy) void rf.setViewport({ x: tx + dx, y: ty + dy, zoom: k }, { duration: 200 })
+      }, 120)
+    })
+    return () => {
+      unsub()
+      window.clearTimeout(timer)
+    }
+  }, [storeApi, getStoreState, currentId, rf])
+
+  // Tab can move focus into a card button that is off the canvas (cards outside the viewport stay
+  // mounted near its edges): undo the browser's scroll-into-view of the overflow-hidden flow and
+  // pan the focused card into view instead.
+  const onFocusCapture = useCallback((e: React.FocusEvent) => {
+    const t = e.target as HTMLElement
+    const el = t.closest(".react-flow__node")
+    const wrap = wrapRef.current
+    if (!el || !wrap || t === wrap) return
+    for (let p: HTMLElement | null = t; p && p !== wrap; p = p.parentElement) {
+      if (p.scrollTop) p.scrollTop = 0
+      if (p.scrollLeft) p.scrollLeft = 0
+    }
+    const id = el.getAttribute("data-id")
+    const n = id ? getStoreState().nodeLookup.get(id) : undefined
+    if (!n) return
+    const { transform, width, height } = getStoreState()
+    const [tx, ty, k] = transform
+    const { x, y } = n.internals.positionAbsolute
+    const w = (n.width ?? n.measured.width ?? 0) * k
+    const h = Math.min(n.height ?? n.measured.height ?? 0, 400) * k
+    const sx = x * k + tx
+    const sy = y * k + ty
+    if (sx >= 0 && sy >= 0 && sx + w <= width && sy + h <= height) return
+    void rf.setCenter(x + w / k / 2, y + h / k / 2, { zoom: k, duration: 200 })
+  }, [getStoreState, rf])
 
   const toggleAt = useCallback((id: ID) => {
     const l = layoutRef.current
@@ -280,20 +362,33 @@ export function MapCanvas() {
 
   // one shared hover glance: the details line under a card at full LOD (Calm UI: details on
   // demand), the readable card plus details at compact LOD
-  const [glance, setGlance] = useState<{ id: ID; mode: "meta" | "card" } | null>(null)
+  // No glance opens in the middle of a pan or zoom gesture (its mode follows the zoom tier at the
+  // moment it opens, and the gesture carries the card away from it).
+  const [glance, setGlance] = useState<{ id: ID; mode: "meta" | "card"; left: boolean } | null>(null)
   const glanceTimer = useRef<number | undefined>(undefined)
+  const moving = useRef(false)
   const onNodeMouseEnter: NodeMouseHandler<MapNode> = useCallback((_, node) => {
     window.clearTimeout(glanceTimer.current)
     if (node.type !== "session" && node.type !== "main") return
     glanceTimer.current = window.setTimeout(() => {
-      const tier = tierSelector(getStoreState() as unknown as ReactFlowState)
-      if (tier === "full") setGlance({ id: node.id, mode: "meta" })
-      else if (tier === "compact" && node.type === "session") setGlance({ id: node.id, mode: "card" })
+      if (moving.current) return
+      const st = getStoreState()
+      const tier = tierSelector(st as unknown as ReactFlowState)
+      const mode = tier === "full" ? "meta" : tier === "compact" && node.type === "session" ? "card" : null
+      if (!mode) return
+      setGlance({ id: node.id, mode, left: glanceOnLeft(st, node.id, wrapRef.current) })
     }, GLANCE_DELAY)
   }, [getStoreState])
   const hideGlance = useCallback(() => {
     window.clearTimeout(glanceTimer.current)
     setGlance(null)
+  }, [])
+  const onMoveStart = useCallback(() => {
+    moving.current = true
+    hideGlance()
+  }, [hideGlance])
+  const onMoveEnd = useCallback(() => {
+    moving.current = false
   }, [])
 
   // overview labels size themselves from --map-zoom; only written while zoomed far out
@@ -328,7 +423,10 @@ export function MapCanvas() {
           <div
             ref={wrapRef}
             tabIndex={0}
-            className="sd-map-canvas relative min-h-0 flex-1 outline-none"
+            aria-label="Agent map. Arrow keys move between cards, Enter opens, Space expands or collapses, F fits, N goes to the next waiting card, L shows repo links"
+            // outline, not an inset ring: the flow's opaque background covers an inset box-shadow
+            className="sd-map-canvas relative min-h-0 flex-1 outline-none focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-solid focus-visible:outline-ring/60"
+            onFocusCapture={onFocusCapture}
             onContextMenuCapture={onContextMenuCapture}
             onContextMenu={(e) => {
               if (!ctxRef.current) e.preventDefault()
@@ -345,7 +443,8 @@ export function MapCanvas() {
                 onNodeDoubleClick={onNodeDoubleClick}
                 onNodeMouseEnter={onNodeMouseEnter}
                 onNodeMouseLeave={hideGlance}
-                onMoveStart={hideGlance}
+                onMoveStart={onMoveStart}
+                onMoveEnd={onMoveEnd}
                 onPaneClick={onPaneClick}
                 onMove={onMove}
                 nodesDraggable={false}
@@ -361,7 +460,7 @@ export function MapCanvas() {
                 zoomActivationKeyCode={null}
                 // measured on the stress fixture (445 nodes): culling off-screen cards cuts the cost of an
                 // LOD switch from ~900ms to a few visible cards; small workspaces render everything
-                onlyRenderVisibleElements={nodes.length > 200}
+                onlyRenderVisibleElements={culled}
                 minZoom={0.04}
                 maxZoom={1.5}
                 colorMode="dark"
@@ -369,7 +468,7 @@ export function MapCanvas() {
               >
                 <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border-default)" />
                 <ZoomSlider position="bottom-right" onFit={fit} slider={false} />
-                {glance && <SessionGlance id={glance.id} mode={glance.mode} />}
+                {glance && <SessionGlance id={glance.id} mode={glance.mode} left={glance.left} />}
                 {minimap && (
                   <MiniMap<MapNode>
                     position="bottom-right"
@@ -389,6 +488,24 @@ export function MapCanvas() {
       </ContextMenu>
     </div>
   )
+}
+
+/** width of the hover glance (SessionGlance) and its gap to the card */
+const GLANCE_W = CARD_W + 10
+
+/**
+ * Which side of a card the hover glance opens on: the side with room for it inside the canvas
+ * (the inspector narrows the canvas on the right), else the roomier one.
+ */
+function glanceOnLeft(st: ReactFlowState<MapNode, MapEdge>, id: ID, canvas: HTMLElement | null) {
+  const n = st.nodeLookup.get(id)
+  if (!n) return false
+  const [tx, , k] = st.transform
+  const width = canvas?.getBoundingClientRect().width ?? st.width
+  const sx = n.internals.positionAbsolute.x * k + tx
+  const right = width - (sx + (n.width ?? n.measured.width ?? 0) * k)
+  if (right >= GLANCE_W) return false
+  return sx >= GLANCE_W || sx > right
 }
 
 function minimapColor(n: Node) {

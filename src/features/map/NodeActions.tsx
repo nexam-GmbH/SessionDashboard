@@ -47,6 +47,7 @@ import {
   toggleSubagents,
 } from "@/store/actions"
 import { capabilities } from "@/lib/status"
+import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import type { ID, PermissionOption, PermissionRequest, Session } from "@/lib/model"
 import { getDelegatedCount, interruptSession, resolveRequest } from "@/features/session-view/sessionStore"
@@ -114,18 +115,19 @@ export function openFolder(path: string) {
   else void navigator.clipboard?.writeText(path)
 }
 
-/** Floating toolbar above the selected card (React Flow NodeToolbar): Open + icon actions. */
-export const SessionToolbar = memo(function SessionToolbar({ id }: { id: ID }) {
+/** Floating toolbar on the selected card (React Flow NodeToolbar): Open + icon actions. */
+export const SessionToolbar = memo(function SessionToolbar({ id, className, answers }: { id: ID; className?: string; answers?: boolean }) {
   const s = useApp((st) => st.sessions[id])
   const agents = useApp((st) => st.subagentIdsBySession[id]?.length ?? 0)
   const agentsOpen = useApp((st) => !!st.map.expandedSubagents[id])
   if (!s) return null
   // ≤ 5 controls (§2.5 rule 7): Review stays in the menu for normal cards; the main agent swaps
   // Fork (rare) for its Review + Cross-repo task
-  const actions = sessionActions(s).filter((a) => !INLINE_ON_CARD.has(a.id) && (s.role === "main" ? a.id !== "fork" : a.id !== "review"))
+  // `answers`: the card's own inline answers are hidden under the toolbar, so it carries them
+  const actions = sessionActions(s).filter((a) => (answers || !INLINE_ON_CARD.has(a.id)) && (s.role === "main" ? a.id !== "fork" : a.id !== "review"))
   return (
     <div
-      className="nodrag nopan flex items-center gap-0.5 rounded-md border border-line bg-elevated p-0.5 shadow-md"
+      className={cn("nodrag nopan flex items-center gap-0.5 rounded-md border border-line bg-elevated p-0.5 shadow-md", className)}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
