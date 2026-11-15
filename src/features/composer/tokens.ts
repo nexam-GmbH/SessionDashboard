@@ -9,7 +9,7 @@ export interface SlashCommand {
   description: string
 }
 
-/** Claude Code built-in commands that make sense from the app (RESEARCH §1.6). */
+/** Claude Code built-in commands that make sense from the app. */
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "compact", description: "Summarize the conversation to free context" },
   { name: "review", description: "Review the changes on this branch" },

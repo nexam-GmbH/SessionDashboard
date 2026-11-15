@@ -1,4 +1,4 @@
-// Finished-message markdown, rendered once (UI_PLAN §8.5 "markdown for finished items
+// Finished-message markdown, rendered once ("markdown for finished items
 // rendered once and LRU-cached by (itemId, version)").
 // - First mount: a cheap plain-text paragraph placeholder paints immediately; the real
 //   streamdown tree renders in a transition, so React time-slices it while scrolling.

@@ -1,6 +1,6 @@
 // Adapted from cline/cline@72b3d71:apps/examples/desktop-app/webview/components/views/chat/changes-panel.tsx (Apache-2.0). Modified for session-dashboard.
 // Adapted from pingdotgg/t3code@be5f805:apps/web/src/components/DiffPanel.tsx (MIT). Modified for session-dashboard.
-// Review changes — UI_PLAN §5.4 (M4). Everything a session (or, for the main agent,
+// Review changes. Everything a session (or, for the main agent,
 // a whole cross-repo task) changed: a one-row header (title · "N files +a −r" · Keep
 // all / Reject all · Send comments when there are some · "⋯" with layout, turn filter
 // and open session, after Zed's edits bar and T3 Code's DiffPanel header), file list
@@ -110,7 +110,7 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
     [sessionId]
   )
 
-  // j/k and ↑/↓ move between files (single-key shortcuts are off while typing; UI_PLAN §7).
+  // j/k and ↑/↓ move between files (single-key shortcuts are off while typing).
   const rootRef = useRef<HTMLDivElement>(null)
   const files = model?.files
   useEffect(() => {

@@ -1,4 +1,4 @@
-// Overview — the owner's sketch (PRODUCT.md): main agent on top, one node per repo on a shared
+// Overview — the owner's sketch: main agent on top, one node per repo on a shared
 // rail, each repo's sessions hanging below it, running subagents below their session. Calm at
 // rest: a card is status glyph + title + one line saying where the session is; only what needs
 // the owner is coloured, and a permission can be answered right on its card (once options only).

@@ -2,7 +2,7 @@ import type { Session } from "@/lib/model"
 import { chunkScore } from "@/lib/match"
 
 /**
- * Session search (UI_PLAN §5.2, §5.9). Whitespace-separated tokens must all match.
+ * Session search. Whitespace-separated tokens must all match.
  * A token matches as a substring of the title (best), at a word start in the repo /
  * branch / first prompt, or as word-start chunks of the title only (see chunkScore). Subsequence matching over
  * the long prompt text made "auth" match nearly every session; plain substrings there made
@@ -65,7 +65,7 @@ export function cmpIso(a: string, b: string) {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-/** Attention order (UI_PLAN §2.3) without localeCompare (lib/status.compareAttention uses it). */
+/** Attention order without localeCompare (lib/status.compareAttention uses it). */
 export function compareAttentionFast(a: Session, b: Session, tier: Record<string, number>) {
   return tier[a.status] - tier[b.status] || cmpIso(b.statusObservedAt, a.statusObservedAt)
 }

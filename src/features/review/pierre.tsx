@@ -1,6 +1,6 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-chat/tool-diff.tsx (Apache-2.0). Modified for session-dashboard.
 // Adapted from pingdotgg/t3code@be5f805:apps/web/src/components/DiffWorkerPoolProvider.tsx (MIT). Modified for session-dashboard.
-// Our @pierre/diffs setup for the Review screen (UI_PLAN §2.2, §8.5): one shared
+// Our @pierre/diffs setup for the Review screen: one shared
 // Shiki worker pool (pierre's singleton; options shared with the session view in
 // session-view/tools/diffPool.ts), a readiness gate before the first highlighted render (T3
 // Code's DiffWorkerReady), and the Shadow DOM theme set from our tokens through

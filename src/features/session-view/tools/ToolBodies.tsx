@@ -3,7 +3,7 @@
 // BloopAI/vibe-kanban@5f06193:packages/ui/src/components/{ChatTodoList,ChatFileEntry}.tsx (Apache-2.0).
 // Changes: one body per Claude Code tool family over our ToolCall model; command
 // output shows head/tail with a hidden-lines toggle instead of a scroll log; calm copy
-// (§2.5): descriptions in tooltips, exit code only when non-zero, no "waiting" prose
+//: descriptions in tooltips, exit code only when non-zero, no "waiting" prose
 // (the attention dock says it).
 import { memo, useState, type ReactNode } from "react"
 import { Pictures } from "../transcript/Media"
@@ -144,7 +144,7 @@ export const SearchBody = memo(function SearchBody({ call }: { call: ToolCall })
   )
 })
 
-/** Graphify MCP query result (RESEARCH §5): callers, cross-repo edges, god nodes. */
+/** Graphify MCP query result: callers, cross-repo edges, god nodes. */
 export const GraphBody = memo(function GraphBody({ call }: { call: ToolCall }) {
   const inp = input(call)
   const lines = (call.output ?? "").split("\n")

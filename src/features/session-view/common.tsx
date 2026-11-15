@@ -1,8 +1,8 @@
 // Adapted from BloopAI/vibe-kanban@5f06193:packages/ui/src/components/ToolStatusDot.tsx (Apache-2.0). Modified for session-dashboard.
-// Changes: our ToolCall.display states and status tokens (UI_PLAN §2.3); a 10px
+// Changes: our ToolCall.display states and status tokens; a 10px
 // spinner for running tools instead of a ping; shape differs per state so the
 // state never relies on color alone; finished tools are a neutral dot (calm color
-// budget §2.5: color only for attention and the working spinner).
+// budget: color only for attention and the working spinner).
 import { memo, type ReactNode } from "react"
 import { ChevronRight, LoaderCircle } from "lucide-react"
 import type { ToolCall } from "@/lib/model"

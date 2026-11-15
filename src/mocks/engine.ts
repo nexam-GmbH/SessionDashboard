@@ -4,10 +4,10 @@ import { addDiscoveredSession, pushNotification, removeQueued, sendMessage } fro
 import { Rng } from "./rng"
 
 /**
- * Mock engine (UI_PLAN §3): simulates what the Phase 2 backend will deliver.
+ * Mock engine: simulates what the Phase 2 backend will deliver.
  * Events are queued and applied once per animation frame in a single store
  * update — the same batching path the real Tauri Channel handler will use
- * (UI_PLAN §8.2). Rate = events per second across all sessions.
+ *. Rate = events per second across all sessions.
  */
 
 export type EngineEvent =

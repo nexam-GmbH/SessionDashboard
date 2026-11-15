@@ -26,12 +26,19 @@ const TUI = new Set([
 
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
 
+/** What the installed claude itself reports as bound to its terminal UI (system/init of a session the app runs). */
+let reported: Set<string> | null = null
+export function setTerminalCommands(list: string[] | undefined) {
+  // leaving claude makes no sense for a session the app runs: /exit stays a no-op there
+  if (list?.length) reported = new Set(list.map((c) => c.replace(/^\//, "")).filter((c) => c !== "exit" && c !== "quit"))
+}
+
 /** The shell command for a slash command that needs the terminal, or null when the session can run it. */
 export function terminalCommandFor(text: string): { run: string; mcp?: boolean } | null {
   const m = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/.exec(text.trim())
   if (!m) return null
   const [, cmd, rest = ""] = m
-  if (!TUI.has(cmd)) return null
+  if (!TUI.has(cmd) && !reported?.has(cmd)) return null
   const args = rest.trim()
   switch (cmd) {
     case "mcp":

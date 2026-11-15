@@ -1,8 +1,8 @@
 // Adapted from agent-of-empires/agent-of-empires@d134cfd:web/src/components/acp/AskUserQuestionCard.tsx (MIT). Modified for session-dashboard.
 // Also adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-ask-question.tsx (Apache-2.0): letter keys, options.
-// Changes: AskUserQuestion shape (RESEARCH §1.6): one tab per question header, 2–4
+// Changes: AskUserQuestion shape: one tab per question header, 2–4
 // options with descriptions and optional preview, multi-select, "Other…" free text;
-// answers go to answerQuestion. Calm chrome (§2.5): the question is the title, tabs
+// answers go to answerQuestion. Calm chrome: the question is the title, tabs
 // sit in the title line, one line per option, key hints in tooltips.
 import { memo, useEffect, useRef, useState } from "react"
 import { Check, MessageCircleQuestion } from "lucide-react"

@@ -2,7 +2,7 @@ import type { ControlMode, PermissionMode, Session, SessionStatus, Subagent } fr
 import { REAL } from "@/backend/mode"
 
 /**
- * Status system — UI_PLAN.md §2.3.
+ * Status system.
  * Attention tiers follow Agent of Empires `attention_tier` (MIT): waiting first,
  * then errors, then finished-unseen; within tier 0 most-recently-waiting first
  * (agent-deck, MIT).
@@ -106,7 +106,7 @@ export const SUBAGENT_STATUS_AS_SESSION: Record<Subagent["status"], SessionStatu
   stopped: "stopped",
 }
 
-// ---------- control modes (RESEARCH §1.4) ----------
+// ---------- control modes ----------
 export const CONTROL_TAG: Record<ControlMode, string> = {
   owned: "OWN",
   pty: "PTY",

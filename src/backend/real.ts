@@ -2,7 +2,7 @@
 // world. Discovery polls the Rust side (pid files every 2 s, `claude agents --json` every 15 s for
 // background sessions, the transcript index every 5 s); open chats tail their JSONL; sessions the
 // app starts stream their events (`claude-event`) and get their permission prompts answered here.
-// The store and its actions stay the API (UI_PLAN §0): components don't know which backend runs.
+// The store and its actions stay the API: components don't know which backend runs.
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { getApp, setApp, useApp } from "@/store/app"
@@ -1484,6 +1484,8 @@ function onEvent({ key, event, exit }: EventPayload) {
     case "system": {
       // exact state (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS): a turn's result can come while
       // background subagents or shells still work; "idle" is when it is really done
+      // the commands that need Claude Code's own terminal UI, as this claude reports them
+      if (event.subtype === "init") void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
       if (event.subtype === "session_state_changed") {
         const state = event.state as "idle" | "running" | "requires_action" | undefined
         const was = own.state

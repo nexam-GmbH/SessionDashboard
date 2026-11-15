@@ -269,7 +269,7 @@ const homeAlias = (p: string) => p.replace(/^\/home\/[^/]+/, "~")
 
 /**
  * A Claude Code session started outside the app (`claude` in a terminal) shows up on its own
- * (Phase 2: `claude agents --json`, hooks and the JSONL scan; RESEARCH §1.3). Its folder becomes a
+ * (Phase 2: `claude agents --json`, hooks and the JSONL scan). Its folder becomes a
  * project if it isn't one yet. It is "observed": you can read it and message it; approvals happen
  * in that terminal until you take it over.
  */
@@ -592,7 +592,7 @@ export function toggleSidebar() {
 // ---------- notifications ----------
 /**
  * Record a notification (coalesced per session and kind). No in-app pop-up: the top bar's
- * "need you" count and the coloured cards already say it (PRODUCT.md: nothing stacked on top).
+ * "need you" count and the coloured cards already say it.
  * Phase 2 sends these as OS notifications while the window is in the background.
  */
 export function pushNotification(n: Omit<AppNotification, "id" | "count" | "groupKey"> & { groupKey?: string }) {

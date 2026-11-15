@@ -1,5 +1,5 @@
 //! Session discovery: live sessions from `claude agents --json` (the documented way to read session
-//! state from outside Claude Code, RESEARCH §1.3) and every past session from
+//! state from outside Claude Code) and every past session from
 //! `~/.claude/projects/<slug>/<session>.jsonl`. Transcripts can be tens of MB, so the list only
 //! reads the head and the tail of each file and caches the result by (size, mtime).
 
@@ -449,7 +449,7 @@ pub struct SessionMeta {
 
 /// Live interactive sessions from `~/.claude/sessions/<pid>.json`, cheap enough to poll every few
 /// seconds. An entry counts only while its process is alive and is the same process (pid reuse is
-/// checked against the recorded start time, RESEARCH §1.3).
+/// checked against the recorded start time).
 pub fn pid_sessions() -> Vec<Value> {
     let dir = claude_dir().join("sessions");
     let mut out = Vec::new();

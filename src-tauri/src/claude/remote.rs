@@ -233,7 +233,7 @@ pub fn stop_tunnels(t: &Tunnels) {
 
 #[cfg(test)]
 mod tests {
-    // SD_SSH points at a fake ssh that runs the command locally (see HANDOFF: testing machines)
+    // SD_SSH points at a fake ssh that runs the command locally
     #[test]
     #[ignore]
     fn over_fake_ssh() {

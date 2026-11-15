@@ -1,5 +1,5 @@
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/GitDiffModal.tsx (Apache-2.0). Modified for session-dashboard.
-// Review state — UI_PLAN §5.4, mock-only in Phase 1: per-file Keep/Reject marks
+// Review state: per-file Keep/Reject marks
 // (Zed's keep/reject idea), pending line comments and the one open draft. Comment
 // model, per-file annotation maps with stable empty references and the comment
 // formatting for "send to session" follow Jean's GitDiffModal; here they live in a

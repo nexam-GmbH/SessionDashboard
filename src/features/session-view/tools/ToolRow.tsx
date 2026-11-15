@@ -2,7 +2,7 @@
 // Also adapted from BloopAI/vibe-kanban@5f06193:packages/ui/src/components/ChatToolSummary.tsx (Apache-2.0).
 // Changes: Cline's ToolActivity/ToolActivityTrigger/ToolActivityContent become one 24px
 // row = status dot · tool name column · one-line summary; meta, ± and duration show on
-// hover (calm rules §2.5, errors stay visible). Every row starts collapsed; a click
+// hover (calm rules, errors stay visible). Every row starts collapsed; a click
 // opens the per-tool body on a rail. Selects only its own item from the store;
 // disclosure state survives virtualization.
 import { memo } from "react"

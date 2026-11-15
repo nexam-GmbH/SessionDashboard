@@ -5,7 +5,7 @@ export type WhereTone = "perm" | "input" | "error" | "done" | "muted" | "faint"
 
 /**
  * "Where is this session?" in one short line: what it asks, the error, what it is doing, or how it
- * ended. The owner's main orientation question (PRODUCT.md); shown on overview cards and in the
+ * ended. The owner's main orientation question; shown on overview cards and in the
  * session list's hover card. `childWaiting`: a subagent of this session waits for a permission.
  */
 export function whereItIs(s: Session, req?: PendingRequest, childWaiting?: Subagent): { text: string; tone: WhereTone; mono?: boolean } {

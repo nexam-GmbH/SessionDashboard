@@ -16,7 +16,7 @@ import { openPicker } from "@/features/composer/options"
 import { toggleTerminal } from "@/features/terminal/terminals"
 
 /**
- * Global keyboard map (tinykeys, MIT), terminal-tab speed (RESEARCH §10):
+ * Global keyboard map (tinykeys, MIT), terminal-tab speed:
  *   Ctrl+Tab        previous session (hold Ctrl for the recent list; handled by app/Switcher)
  *   Ctrl+J          next session that needs you (tmux M-n, Codex ⌘⌥A, zellij Ctrl o n)
  *   Ctrl+1–9        session by position in the list, Ctrl+0 the overview (hints while Ctrl is held)

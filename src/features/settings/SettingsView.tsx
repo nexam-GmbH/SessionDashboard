@@ -44,7 +44,7 @@ function Code({ children }: { children: ReactNode }) {
   return <code className="rounded-sm bg-muted px-1 py-px font-mono text-xs text-muted-foreground">{children}</code>
 }
 
-/** Page heading. Long explanations live in the tooltip, not on screen (§2.5 copy budget). */
+/** Page heading. Long explanations live in the tooltip, not on screen. */
 function PageTitle({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="mb-2 flex h-7 items-center gap-3">
@@ -71,7 +71,7 @@ function SettingsSection({ title, description, children }: { title?: string; des
 
 /**
  * Yaak SettingRow: label left, control right. One line at rest; the explanation is a hover card
- * on the label (§2.5: no explanatory sentences on screen). `hint` = 1–3 words when it matters.
+ * on the label. `hint` = 1–3 words when it matters.
  */
 /** Id of the enclosing SettingRow's title: its switch / select is named by it (aria-labelledby). */
 const RowLabel = createContext<string | undefined>(undefined)

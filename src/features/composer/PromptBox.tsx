@@ -1,5 +1,5 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-composer.tsx (AgentComposer; Apache-2.0). Modified for session-dashboard.
-// The prompt box, shaped like the Claude Code desktop app (RESEARCH §11): an auto-growing box with
+// The prompt box, shaped like the Claude Code desktop app: an auto-growing box with
 // "+" (files or photos, add folder, mention a file, slash commands) at the bottom left, dictation
 // and send / stop at the bottom right, and the settings row (mode, model, effort, context) passed
 // in as `footer` and drawn under the box. Shared by the chat and the New session screen; the

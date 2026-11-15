@@ -2,7 +2,7 @@
 // Shared chrome for attention cards (permission, question, plan): one bordered block with
 // a tinted title line (icon · title · meta · aside · pager), an optional body and the
 // action row. Changes: status tokens (perm orange / input amber), a compact "1/2" pager,
-// calm copy (§2.5): short option labels with the full ACP name as tooltip, keyboard
+// calm copy: short option labels with the full ACP name as tooltip, keyboard
 // hints only while the card has focus.
 import { forwardRef, useId, type KeyboardEvent, type ReactNode } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"

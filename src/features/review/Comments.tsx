@@ -1,10 +1,10 @@
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/GitDiffModal.tsx (CommentInputBar; Apache-2.0). Modified for session-dashboard.
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/MemoizedFileDiff.tsx (renderAnnotation; Apache-2.0). Modified for session-dashboard.
-// Line comments (UI_PLAN §5.4): an inline draft box rendered as a pierre annotation
+// Line comments: an inline draft box rendered as a pierre annotation
 // under the selected line(s), saved comments as compact cards, and the pending list
 // in the left column. Jean's isolated input (typing never re-renders the diff) and
 // Enter-to-add / Escape-to-cancel; here the text lives in the review store so a
-// draft survives the file scrolling out of the virtualized window. Calm copy (§2.5):
+// draft survives the file scrolling out of the virtualized window. Calm copy:
 // key hints in tooltips, no instruction text when there are no comments.
 import { memo, useEffect, useRef } from "react"
 import { MessageSquare, Pencil, Trash2, X } from "lucide-react"

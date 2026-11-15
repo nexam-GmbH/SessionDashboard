@@ -20,7 +20,7 @@ import {
 } from "./catalog"
 import { Rng } from "./rng"
 
-/** The owner's real scale: 5–6 repos, 2–4 live sessions each (PRODUCT.md). */
+/** The owner's real scale: 5–6 repos, 2–4 live sessions each. */
 const REPOS = ["api-gateway", "web-app", "ticketing", "llm-router", "infra"]
 
 export interface World {

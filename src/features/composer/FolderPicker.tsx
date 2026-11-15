@@ -1,4 +1,4 @@
-// Folder control on New session (Claude Code desktop: "Recent / Open folder…", RESEARCH §11.2).
+// Folder control on New session (Claude Code desktop: "Recent / Open folder…").
 // One searchable list: recent projects first, then any folder by path, then each VPS machine
 // (Settings → Machines) with its folders and a typed path there. Picking a folder that is not a
 // project yet adds it as one, so a session can start in any directory, here or on a machine.

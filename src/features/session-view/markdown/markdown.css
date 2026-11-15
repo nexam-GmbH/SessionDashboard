@@ -1,6 +1,6 @@
 /*
  * Adapted from cline/cline@72b3d71:sdk/packages/ui/components/markdown.css (Apache-2.0).
- * Modified for session-dashboard: our tokens (UI_PLAN §2.2), 13px IDE scale,
+ * Modified for session-dashboard: our tokens, 13px IDE scale,
  * 4px radii, bordered single-box code blocks, no mermaid block styles.
  * Unlayered on purpose so it wins over streamdown's Tailwind utilities.
  */

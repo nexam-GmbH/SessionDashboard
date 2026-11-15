@@ -1,5 +1,5 @@
 // Context ring at the right end of the row under the prompt box. Claude Code desktop moved context
-// % into a side panel and users asked for it back next to the composer (RESEARCH §11.5), so it
+// % into a side panel and users asked for it back next to the composer, so it
 // stays here: a small ring that turns amber at 80% and red at 90%, details and "Compact now" on click.
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"

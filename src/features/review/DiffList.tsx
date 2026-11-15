@@ -1,10 +1,10 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-changes.tsx (AgentChangedFile; Apache-2.0). Modified for session-dashboard.
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/MemoizedFileDiff.tsx (Apache-2.0). Modified for session-dashboard.
 // Adapted from pingdotgg/t3code@be5f805:apps/web/src/components/DiffPanel.tsx and DiffPanelShell.tsx (MIT). Modified for session-dashboard.
-// Right column of the Review screen (UI_PLAN §5.4, §8): one MultiFileDiff per file
+// Right column of the Review screen: one MultiFileDiff per file
 // inside pierre's Virtualizer, highlighted by the shared worker pool. Each file has
 // a sticky custom header (Cline's AgentChangedFile row: chevron, path, ±, actions)
-// with Keep / Reject shown on hover or once set (calm rules §2.5); line-number
+// with Keep / Reject shown on hover or once set; line-number
 // clicks or drags open an inline comment (Jean's
 // line selection → annotation flow). Options objects are memoized per file so a
 // mark, comment or style change re-renders only the files it touches; files out

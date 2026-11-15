@@ -1,7 +1,7 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-chat/tool-diff.tsx (Apache-2.0). Modified for session-dashboard.
 // Also adapted from BloopAI/vibe-kanban@5f06193:packages/ui/src/components/PierreConversationDiff.tsx (Apache-2.0):
 // unsafeCSS overrides, classic indicators, hunk separators dropped for chat rows.
-// Changes: themed from our tokens (UI_PLAN §2.2), clamped height with an expand
+// Changes: themed from our tokens, clamped height with an expand
 // control, highlighting through a shared @pierre/diffs worker pool; token overrides
 // on `:host` (pierre never sets data-theme-type, so the old selector was ignored).
 import { memo, useMemo, useState, type CSSProperties, type ReactNode } from "react"

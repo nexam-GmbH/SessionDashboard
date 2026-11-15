@@ -45,7 +45,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
     {
-        // single-instance must be registered first (RESEARCH §6.8)
+        // single-instance must be registered first
         builder = builder
             .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
                 use tauri::Manager;

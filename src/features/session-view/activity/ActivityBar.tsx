@@ -1,6 +1,6 @@
 // Adapted from BloopAI/vibe-kanban@5f06193:packages/ui/src/components/TodoProgressPopup.tsx (Apache-2.0). Modified for session-dashboard.
-// Activity bar above the composer (UI_PLAN §5.3, Zed render_activity_bar as an idea only).
-// Calm rules (§2.5): small chips, only for things that carry signal — a plan that is in
+// Activity bar above the composer.
+// Calm rules: small chips, only for things that carry signal — a plan that is in
 // progress, running subagents, changed files (opens Review) and permission requests
 // raised by subagents (with once-options). Hidden when there is nothing to show.
 import { memo } from "react"

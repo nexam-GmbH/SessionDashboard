@@ -1,4 +1,4 @@
-// Attention dock — UI_PLAN §5.3: one pending request at a time with a "1/2"
+// one pending request at a time with a "1/2"
 // pager. Main-session requests come first, then requests from subagents (their
 // card is labelled with the subagent type). Cards live in src/features/requests.
 import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react"

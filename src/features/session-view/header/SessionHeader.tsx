@@ -1,7 +1,7 @@
 // The session's part of the window header (app/SiteHeader): status glyph, title (click to rename),
 // project and branch; on the right the changes as "+N −M" (opens Review) and a "⋯" menu (Rename,
 // Fork, Rewind, Copy resume command, Archive). Model, effort, permission mode and Stop live in the prompt box, as in
-// the Claude Code desktop app (RESEARCH §11). Layout ideas from Cline session-status.tsx and the
+// the Claude Code desktop app. Layout ideas from Cline session-status.tsx and the
 // Vibe Kanban session header (no code copied).
 import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { RewindDialog } from "./RewindDialog"

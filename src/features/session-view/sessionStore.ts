@@ -6,7 +6,7 @@ import { getApp, setApp, useApp } from "@/store/app"
 import { answerQuestion, interrupt, removeQueued, resolvePermission, sendMessage, setSessionSettings } from "@/store/actions"
 
 /**
- * Session-view store helpers (UI_PLAN §5.3, §8). Everything here selects the
+ * Session-view store helpers. Everything here selects the
  * smallest possible slice: rows select one item by id, the transcript shell
  * selects only `order`/`turns`/`liveItemId`, which keep their identity while
  * the live item streams (the mock streamer replaces only `items[liveId]`).

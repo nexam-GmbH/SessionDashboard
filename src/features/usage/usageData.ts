@@ -86,13 +86,14 @@ export const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-
 /** UTC hour key "2026-11-15T13" → its start as a Date */
 export const hourDate = (k: string) => new Date(`${k}:00:00Z`)
 
-export type Range = "today" | "week" | "month" | "year" | "all"
-export const RANGES: { id: Range; label: string }[] = [
-  { id: "today", label: "Today" },
-  { id: "week", label: "7 days" },
-  { id: "month", label: "30 days" },
-  { id: "year", label: "Year" },
-  { id: "all", label: "All time" },
+export type Range = "today" | "week" | "month" | "quarter" | "year" | "all"
+export const RANGES: { id: Range; label: string; long: string }[] = [
+  { id: "today", label: "Today", long: "today" },
+  { id: "week", label: "7 days", long: "the last 7 days" },
+  { id: "month", label: "30 days", long: "the last 30 days" },
+  { id: "quarter", label: "90 days", long: "the last 3 months" },
+  { id: "year", label: "Year", long: "the last 12 months" },
+  { id: "all", label: "All time", long: "all time" },
 ]
 
 export function rangeStart(r: Range, now = new Date()): number {
@@ -101,8 +102,52 @@ export function rangeStart(r: Range, now = new Date()): number {
   if (r === "today") return d.getTime()
   if (r === "week") return d.getTime() - 6 * 864e5
   if (r === "month") return d.getTime() - 29 * 864e5
+  if (r === "quarter") return d.getTime() - 89 * 864e5
   if (r === "year") return d.getTime() - 364 * 864e5
   return 0
+}
+
+/** The period just before a range, the same length (the trend badges compare with it). */
+export function previousRange(r: Range, now = new Date()): [number, number] | null {
+  if (r === "all") return null
+  const from = rangeStart(r, now)
+  const len = r === "today" ? 864e5 : now.getTime() - from
+  return [from - len, from]
+}
+
+/** Per bucket (hour / day / week / month) the tokens of each model family, for the area chart. */
+export function series(l: Ledger, r: Range, now = new Date()) {
+  return buckets(l, r, now).map((b) => {
+    const row: Record<string, number | string> = { label: b.label, start: b.start, cost: b.cost }
+    for (const f of FAMILIES) row[f] = 0
+    for (const [k, h] of Object.entries(l.hours)) {
+      const t = hourDate(k).getTime()
+      if (t < b.start || t >= b.end) continue
+      for (const [m, x] of Object.entries(h.m)) row[familyOf(m)] = (row[familyOf(m)] as number) + totalTokens(x)
+    }
+    return row
+  })
+}
+
+/** One row per local day, newest first, like `ccusage daily`. */
+export function dailyRows(l: Ledger, from: number) {
+  const days = new Map<string, { date: string; models: Set<string>; i: number; o: number; w: number; r: number; cost: number }>()
+  for (const [k, h] of Object.entries(l.hours)) {
+    const d0 = hourDate(k)
+    if (d0.getTime() < from) continue
+    const key = dayKey(d0)
+    const e = days.get(key) ?? { date: key, models: new Set<string>(), i: 0, o: 0, w: 0, r: 0, cost: 0 }
+    for (const [m, x] of Object.entries(h.m)) {
+      e.models.add(modelName(m))
+      e.i += x.i
+      e.o += x.o
+      e.w += x.w5 + x.w1
+      e.r += x.r
+      e.cost += costOf(m, x)
+    }
+    days.set(key, e)
+  }
+  return [...days.values()].sort((a, b) => (a.date < b.date ? 1 : -1))
 }
 
 export interface Totals {
@@ -170,10 +215,10 @@ export function perDay(l: Ledger) {
 
 /** Buckets for the range's bar chart: hours today, days for a week or month, weeks for a year, months for all time. */
 export function buckets(l: Ledger, r: Range, now = new Date()) {
-  const out: { key: string; label: string; start: number; tokens: number; cost: number }[] = []
+  const out: { key: string; label: string; start: number; end: number; tokens: number; cost: number }[] = []
   const add = (start: Date, end: Date, label: string) => {
     const t = totals(l, start.getTime(), end.getTime())
-    out.push({ key: start.toISOString(), label, start: start.getTime(), tokens: t.tokens, cost: t.cost })
+    out.push({ key: start.toISOString(), label, start: start.getTime(), end: end.getTime(), tokens: t.tokens, cost: t.cost })
   }
   const day0 = new Date(now)
   day0.setHours(0, 0, 0, 0)
@@ -185,8 +230,8 @@ export function buckets(l: Ledger, r: Range, now = new Date()) {
       e.setHours(h + 1)
       add(s, e, `${pad(h)}:00`)
     }
-  } else if (r === "week" || r === "month") {
-    const n = r === "week" ? 7 : 30
+  } else if (r === "week" || r === "month" || r === "quarter") {
+    const n = r === "week" ? 7 : r === "month" ? 30 : 90
     for (let i = n - 1; i >= 0; i--) {
       const s = new Date(day0)
       s.setDate(s.getDate() - i)

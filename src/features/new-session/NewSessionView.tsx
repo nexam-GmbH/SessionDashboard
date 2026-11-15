@@ -1,8 +1,8 @@
-// New session as a screen, like the Claude Code desktop app (RESEARCH §11.2): the prompt box is the
+// New session as a screen, like the Claude Code desktop app: the prompt box is the
 // main element; the row under it picks the folder (recent projects or any folder), worktree, mode,
 // model and effort. More options (title, agent, MCP servers, instructions, background, the
 // equivalent CLI command) fold away; past sessions of the folder can be resumed right below.
-// Field set mirrors the claude flags (RESEARCH §1.5), after coollabsio/jean@1d53d3c session
+// Field set mirrors the claude flags, after coollabsio/jean@1d53d3c session
 // settings (Apache-2.0, ideas).
 import { useMemo, useState } from "react"
 import { ChevronDown, ChevronRight, Copy, GitBranch, History, Play, Search } from "lucide-react"

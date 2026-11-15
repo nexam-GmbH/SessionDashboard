@@ -1,5 +1,5 @@
 // Adapted from stablyai/orca@3bb91aa:src/renderer/src/components/AgentStateDot.tsx (MIT).
-// Modified for session-dashboard: our SessionStatus set (UI_PLAN §2.3), glyph + color
+// Modified for session-dashboard: our SessionStatus set, glyph + color
 // per status, native title instead of a Radix tooltip (cheap in long lists).
 import { memo } from "react"
 import {
@@ -18,7 +18,7 @@ import type { SessionStatus } from "@/lib/model"
 import { STATUS_COLOR, STATUS_LABEL } from "@/lib/status"
 
 /**
- * The one status glyph set (UI_PLAN §2.3), shared with the map's CompactGlyph. `inset` draws the
+ * The one status glyph set, shared with the map's CompactGlyph. `inset` draws the
  * quiet round glyphs (idle, stopped) a little smaller so they don't outweigh the attention ones.
  */
 export const STATUS_GLYPH: Record<SessionStatus, { icon: LucideIcon; stroke: number; inset?: number }> = {

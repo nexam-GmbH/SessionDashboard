@@ -1,7 +1,7 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-prompt-queue.tsx (Apache-2.0). Modified for session-dashboard.
 // Also adapted from vercel/ai-elements@ca8be60:packages/elements/src/queue.tsx (Apache-2.0): hover-revealed item actions.
 // Changes: lucide icons, our store actions (edit / send now / remove), dense rows; no
-// header line (calm rules §2.5): the clock glyph and its tooltip say "queued".
+// header line: the clock glyph and its tooltip say "queued".
 import { memo, useState } from "react"
 import { Check, Clock3, CornerDownLeft, Paperclip, Pencil, X } from "lucide-react"
 import type { ID } from "@/lib/model"

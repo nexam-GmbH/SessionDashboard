@@ -1,7 +1,7 @@
 // Adapted from BloopAI/vibe-kanban@5f06193:packages/ui/src/components/ChatSubagentEntry.tsx (Apache-2.0). Modified for session-dashboard.
 // Also adapted from vercel/ai-elements@ca8be60:packages/elements/src/plan.tsx (Apache-2.0); subagent card fields after
 // agent-of-empires/agent-of-empires@d134cfd:web/src/components/acp/subagents/model.ts (MIT): type, description, status, tool count, last tool.
-// Changes: both render as one 24px row like the other tools (calm rules §2.5). The
+// Changes: both render as one 24px row like the other tools. The
 // subagent row links to the live Subagent record (select → inspector); type, tool
 // count and time show on hover, a waiting permission or failure stays visible. The
 // plan row expands to the plan's markdown; approval itself lives in the attention dock.

@@ -4,7 +4,7 @@
 // Changes: the request's ACP options are rendered as data (allow_once / allow_always /
 // reject_once …) with short labels; Enter takes the first allow_once, 1–9 pick an
 // option, Esc or "Deny" opens an inline feedback field (Cmd/Ctrl+Enter submits). Calm
-// rules (§2.5): the title is the question itself ("Allow `npm test -- retry`?"); cwd and
+// rules: the title is the question itself ("Allow `npm test -- retry`?"); cwd and
 // description sit behind a details toggle; edits show their pending diff.
 import { memo, useEffect, useRef, useState } from "react"
 import { ShieldAlert } from "lucide-react"

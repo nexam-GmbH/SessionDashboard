@@ -1,10 +1,10 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-chat/index.tsx (ThinkingBlock, WorkActivity, Apache-2.0). Modified for session-dashboard.
 // Also adapted from cline/cline@72b3d71:apps/examples/desktop-app/webview/components/views/chat/messages/{work-block,reasoning-block,turn-receipt}.tsx
 // (Apache-2.0) and BloopAI/vibe-kanban@5f06193:packages/ui/src/components/{ChatAggregatedToolEntries,ChatCollapsedThinking}.tsx (Apache-2.0).
-// Changes: each row is memoized and selects only its own item by id (UI_PLAN §8), so
+// Changes: each row is memoized and selects only its own item by id, so
 // only the live agent message re-renders while streaming; "Worked for 2m 14s · 9 tools"
 // groups start collapsed and keep the last tool visible while the turn runs; calm
-// rules (§2.5): user messages are label-less bubbles with the time on hover, receipts
+// rules: user messages are label-less bubbles with the time on hover, receipts
 // show only while hovering their turn, diff stats on hover; notices carry a retry.
 import { memo, useState } from "react"
 import { Check, Copy, FileDiff, History, OctagonX, Paperclip, TriangleAlert } from "lucide-react"

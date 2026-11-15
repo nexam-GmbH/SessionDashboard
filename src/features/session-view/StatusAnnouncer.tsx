@@ -1,4 +1,4 @@
-// Screen reader announcements for one session (UI_PLAN §5.3, a11y): a visually hidden polite
+// Screen reader announcements for one session: a visually hidden polite
 // status line that speaks state *changes* — Claude started working, finished, failed, the
 // permission mode changed (Shift+Tab in the composer) — instead of every streamed token. Pending
 // requests are announced by the attention dock's own live region, so waiting states are skipped.

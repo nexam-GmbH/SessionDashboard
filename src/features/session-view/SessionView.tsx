@@ -1,4 +1,4 @@
-// Session view — UI_PLAN §5.3: full control of one session, like the Claude Code app.
+// full control of one session, like the Claude Code app.
 // (Its header lives in the window header, app/SiteHeader.) Control banner · virtualized transcript with a live tail · activity bar ·
 // attention dock · queue · composer. Each region subscribes to its own slice.
 import { memo, useEffect } from "react"

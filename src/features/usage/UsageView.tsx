@@ -1,112 +1,78 @@
-// Usage: the plan's limits now and over time (5-hour and weekly, shared with claude.ai), an activity
-// heatmap, and totals for today, a week, a month, a year or all time — tokens, API-price value,
-// prompts, sessions, tool calls, per model — from the permanent ledger (usageData.ts).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { RefreshCw } from "lucide-react"
+// Usage, laid out like the create-tauri-ui starter dashboard (section cards with trend badges, the
+// interactive area chart, a data table): plan limits now and over time (5-hour and weekly, shared
+// with claude.ai), tokens by model, value at API prices, prompts, sessions, an activity heatmap and
+// a daily table like `ccusage daily`. Data: the permanent ledger (usageData.ts).
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { RefreshCw, TrendingDown, TrendingUp } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/utils"
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useNow } from "@/components/common/RelativeTime"
+import { cn } from "@/lib/utils"
+import { Meter, until } from "./Meter"
 import {
   FAMILIES,
   RANGES,
-  buckets,
   compactTokens,
+  dailyRows,
   dayKey,
   familyOf,
   modelName,
   perDay,
+  previousRange,
   rangeStart,
   refreshUsage,
+  series,
   streaks,
   totals,
   usdFmt,
   useUsage,
-  type Limit,
   type LimitSample,
   type Range,
 } from "./usageData"
 
-// validated categorical steps for the dark surface (dataviz reference palette): fixed order
-const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500"]
-// one hue (blue), brighter = more (dark surface)
-const HEAT = ["#104281", "#1c5cab", "#2a78d6", "#5598e7", "#9ec5f4"]
+// the starter dashboard's monochrome chart palette (stock --chart-1…5), lightest first
+const FAMILY_COLOR: Record<string, string> = { Opus: "var(--chart-1)", Sonnet: "var(--chart-2)", Haiku: "var(--chart-3)", Fable: "var(--chart-4)" }
+const HEAT = ["oklch(0.34 0 0)", "oklch(0.46 0 0)", "oklch(0.6 0 0)", "oklch(0.76 0 0)", "oklch(0.92 0 0)"]
 
 export default function UsageView() {
   const ledger = useUsage((s) => s.ledger)
-  const limits = useUsage((s) => s.limits)
   const scanning = useUsage((s) => s.scanning)
   const [range, setRange] = useState<Range>("month")
   useEffect(() => void refreshUsage(), [])
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-6">
-        <div className="flex items-center gap-3">
+    <div className="@container/main h-full overflow-y-auto">
+      <div className="flex flex-col gap-4 px-4 py-4 md:gap-6 md:py-6 lg:px-6">
+        <div className="flex flex-wrap items-center gap-3">
           <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-            Everything Claude Code ran on this computer since{" "}
-            {ledger ? firstDay(ledger) : "…"}, kept even after Claude Code
-            deletes old transcripts. Limits count claude.ai too.
+            Claude Code on this computer since {ledger ? firstDay(ledger) : "…"}, kept even after Claude Code deletes old transcripts (the same numbers as{" "}
+            <code className="font-mono text-xs">ccusage</code>). Plan limits count claude.ai too.
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={scanning}
-            onClick={() => void refreshUsage()}
-          >
-            <RefreshCw className={cn(scanning && "animate-spin")} />{" "}
-            {scanning ? "Reading…" : "Refresh"}
+          <ToggleGroup type="single" variant="outline" value={range} onValueChange={(v) => v && setRange(v as Range)} aria-label="Range">
+            {RANGES.map((r) => (
+              <ToggleGroupItem key={r.id} value={r.id} className="px-3">
+                {r.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <Button size="sm" variant="outline" disabled={scanning} onClick={() => void refreshUsage()}>
+            <RefreshCw className={cn(scanning && "animate-spin")} /> {scanning ? "Reading…" : "Refresh"}
           </Button>
         </div>
-
-        <LimitsCard limits={limits?.limits} plan={limits?.plan} />
-
         {!ledger ? (
-          <div
-            className="flex flex-col gap-3"
-            aria-busy="true"
-            aria-label="Reading your usage"
-          >
-            <Skeleton className="h-24 w-full rounded-xl" />
-            <Skeleton className="h-56 w-full rounded-xl" />
-            <p className="text-xs text-muted-foreground">
-              Reading every transcript once; after that only new lines are read.
-            </p>
+          <div className="grid gap-4 @xl/main:grid-cols-2 @5xl/main:grid-cols-4" aria-busy="true" aria-label="Reading your usage">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-36 rounded-xl" />
+            ))}
+            <Skeleton className="h-80 rounded-xl @xl/main:col-span-2 @5xl/main:col-span-4" />
           </div>
         ) : (
-          <>
-            <div
-              className="flex items-center gap-1"
-              role="tablist"
-              aria-label="Range"
-            >
-              {RANGES.map((r) => (
-                <button
-                  key={r.id}
-                  role="tab"
-                  aria-selected={range === r.id}
-                  onClick={() => setRange(r.id)}
-                  className={cn(
-                    "h-8 rounded-lg px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                    range === r.id
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                  )}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-            <RangeSection range={range} />
-            <Card title="Activity" note="Tokens per day, last 12 months">
-              <Heatmap />
-            </Card>
-            <Card
-              title="Limits over time"
-              note="Sampled every 5 minutes while the app runs"
-            >
-              <LimitsOverTime samples={limits?.samples ?? []} />
-            </Card>
-          </>
+          <Dashboard range={range} />
         )}
       </div>
     </div>
@@ -115,416 +81,278 @@ export default function UsageView() {
 
 function firstDay(l: { hours: Record<string, unknown> }) {
   const k = Object.keys(l.hours).sort()[0]
-  return k
-    ? new Date(`${k}:00:00Z`).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
-    : "today"
+  return k ? new Date(`${k}:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "today"
 }
 
-function Card({
-  title,
-  note,
-  children,
-  className,
-}: {
-  title: string
-  note?: string
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <section
-      className={cn(
-        "rounded-xl bg-card p-4 ring-1 ring-foreground/10",
-        className
-      )}
-    >
-      <header className="mb-3 flex items-baseline gap-2">
-        <h2 className="text-sm font-medium">{title}</h2>
-        {note && <span className="text-xs text-muted-foreground">{note}</span>}
-      </header>
-      {children}
-    </section>
-  )
-}
-
-// ---------- limits now ----------
-function until(iso?: string | null) {
-  if (!iso) return ""
-  const ms = Date.parse(iso) - Date.now()
-  if (ms <= 0) return "resets now"
-  const h = Math.floor(ms / 3600e3)
-  const m = Math.round((ms % 3600e3) / 60e3)
-  return h >= 24
-    ? `resets in ${Math.floor(h / 24)}d ${h % 24}h`
-    : h
-      ? `resets in ${h}h ${m}m`
-      : `resets in ${m}m`
-}
-
-function LimitsCard({ limits, plan }: { limits?: Limit[]; plan?: string }) {
-  const rows = (limits ?? []).filter(
-    (l) => l.group === "session" || l.group === "weekly"
-  )
-  return (
-    <Card
-      title="Plan limits"
-      note={
-        plan
-          ? `${plan} plan · claude.ai and Claude Code together`
-          : "claude.ai and Claude Code together"
-      }
-    >
-      {!limits ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Skeleton className="h-12 rounded-lg" />
-          <Skeleton className="h-12 rounded-lg" />
-        </div>
-      ) : !rows.length ? (
-        <p className="text-sm text-muted-foreground">
-          Your plan reports no limits here.
-        </p>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {rows.map((l, i) => (
-            <Meter
-              key={i}
-              label={
-                l.kind === "session"
-                  ? "Current session (5 hours)"
-                  : l.scope?.model?.display_name
-                    ? `This week · ${l.scope.model.display_name}`
-                    : "This week"
-              }
-              percent={l.percent}
-              sub={until(l.resets_at)}
-            />
-          ))}
-        </div>
-      )}
-    </Card>
-  )
-}
-
-export function Meter({
-  label,
-  percent,
-  sub,
-}: {
-  label: string
-  percent: number
-  sub?: string
-}) {
-  const p = Math.max(0, Math.min(100, percent))
-  // status colours only for "close to the limit", with the number always shown
-  const fill =
-    p >= 90 ? "bg-st-error" : p >= 75 ? "bg-st-input" : "bg-foreground/80"
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline gap-2 text-sm">
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="font-medium tabular">{Math.round(p)}%</span>
-      </div>
-      <div
-        className="h-2 overflow-hidden rounded-full bg-muted"
-        role="meter"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(p)}
-        aria-label={label}
-      >
-        <div
-          className={cn("h-full rounded-full", fill)}
-          style={{ width: `${p}%` }}
-        />
-      </div>
-      {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
-    </div>
-  )
-}
-
-// ---------- totals for a range ----------
-function RangeSection({ range }: { range: Range }) {
+function Dashboard({ range }: { range: Range }) {
   const ledger = useUsage((s) => s.ledger)!
+  const limits = useUsage((s) => s.limits)
+  const label = RANGES.find((r) => r.id === range)!
   const t = useMemo(() => totals(ledger, rangeStart(range)), [ledger, range])
+  const prev = useMemo(() => {
+    const p = previousRange(range)
+    return p ? totals(ledger, p[0], p[1]) : null
+  }, [ledger, range])
   const days = useMemo(() => perDay(ledger), [ledger])
   const st = useMemo(() => streaks(days), [days])
-  const peak = useMemo(
-    () => [...days.entries()].sort((a, b) => b[1].tokens - a[1].tokens)[0],
-    [days]
-  )
-  const bars = useMemo(() => buckets(ledger, range), [ledger, range])
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Tile label="Tokens" value={compactTokens(t.tokens)} />
-        <Tile label="At API prices" value={usdFmt(t.cost)} />
-        <Tile label="Prompts" value={t.prompts.toLocaleString()} />
-        <Tile label="Sessions" value={t.sessions.toLocaleString()} />
-        <Tile label="Tool calls" value={t.tools.toLocaleString()} />
-        <Tile label="Requests" value={t.requests.toLocaleString()} />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <Card
-          title={
-            range === "today"
-              ? "Tokens per hour"
-              : range === "year"
-                ? "Tokens per week"
-                : range === "all"
-                  ? "Tokens per month"
-                  : "Tokens per day"
-          }
-        >
-          <Bars data={bars} />
-        </Card>
-        <Card title="By model">
-          <Models rows={t.byModel} total={t.tokens} />
-        </Card>
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Tile
-          label="Current streak"
-          value={`${st.current} day${st.current === 1 ? "" : "s"}`}
-          small
-        />
-        <Tile label="Longest streak" value={`${st.longest} days`} small />
-        <Tile label="Active days" value={String(st.activeDays)} small />
-        <Tile
-          label="Peak day"
-          value={peak ? compactTokens(peak[1].tokens) : "–"}
-          sub={
-            peak
-              ? new Date(`${peak[0]}T12:00:00`).toLocaleDateString(undefined, {
-                  day: "numeric",
-                  month: "short",
-                  year: "numeric",
-                })
-              : undefined
-          }
-          small
-        />
-      </div>
-    </div>
-  )
-}
-
-function Tile({
-  label,
-  value,
-  sub,
-  small,
-}: {
-  label: string
-  value: string
-  sub?: string
-  small?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-1 rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span
-        className={cn(
-          "font-semibold tracking-tight tabular",
-          small ? "text-lg" : "text-2xl"
-        )}
-      >
-        {value}
-      </span>
-      {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
-    </div>
-  )
-}
-
-/** A tooltip that follows the pointer inside a chart box, and the box's width (charts draw at it, so text stays its size). */
-function useTip() {
-  const box = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(600)
-  useEffect(() => {
-    const el = box.current
-    if (!el) return
-    const ro = new ResizeObserver(([e]) =>
-      setWidth(Math.max(200, Math.round(e.contentRect.width)))
-    )
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-  const [tip, setTip] = useState<{
-    x: number
-    y: number
-    left: boolean
-    body: ReactNode
-  } | null>(null)
-  const show = (e: React.PointerEvent, body: ReactNode) => {
-    const r = box.current?.getBoundingClientRect()
-    // on the right half the tip opens to the left of the pointer
-    if (r)
-      setTip({
-        x: e.clientX - r.left,
-        y: e.clientY - r.top,
-        left: e.clientX - r.left > r.width / 2,
-        body,
-      })
-  }
-  const node = tip && (
-    <div
-      className="pointer-events-none absolute z-10 rounded-md bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10"
-      style={{
-        left: tip.x,
-        top: tip.y,
-        transform: `translate(${tip.left ? "calc(-100% - 10px)" : "10px"}, -110%)`,
-      }}
-    >
-      {tip.body}
-    </div>
-  )
-  return { box, width, show, hide: () => setTip(null), node }
-}
-
-function Bars({
-  data,
-}: {
-  data: { key: string; label: string; tokens: number; cost: number }[]
-}) {
-  const { box, width: W, show, hide, node } = useTip()
-  const H = 180
-  const max = Math.max(1, ...data.map((d) => d.tokens))
-  const bw = W / data.length
-  const gap = Math.min(2, bw * 0.25)
-  const ticks = [0.5, 1].map((f) => ({
-    y: H - (H - 20) * f,
-    label: compactTokens(max * f),
-  }))
-  return (
-    <div ref={box} className="relative" onPointerLeave={hide}>
-      <svg
-        width={W}
-        height={H + 18}
-        viewBox={`0 0 ${W} ${H + 18}`}
-        className="block"
-        role="img"
-        aria-label="Tokens over the range"
-      >
-        {ticks.map((t) => (
-          <g key={t.label}>
-            <line
-              x1={0}
-              x2={W}
-              y1={t.y}
-              y2={t.y}
-              stroke="currentColor"
-              className="text-border"
-              strokeDasharray="2 4"
-            />
-            <text
-              x={0}
-              y={t.y - 4}
-              className="fill-muted-foreground text-[10px]"
-            >
-              {t.label}
-            </text>
-          </g>
-        ))}
-        {data.map((d, i) => {
-          const h = (d.tokens / max) * (H - 20)
-          return (
-            <g key={d.key} onPointerMove={(e) => show(e, <BarTip d={d} />)}>
-              <rect x={i * bw} y={0} width={bw} height={H} fill="transparent" />
-              {h > 0 && (
-                <rect
-                  x={i * bw + gap / 2}
-                  y={H - h}
-                  width={Math.max(1, bw - gap)}
-                  height={h}
-                  rx={Math.min(4, (bw - gap) / 2)}
-                  fill={SERIES[0]}
-                />
-              )}
-            </g>
-          )
-        })}
-        <line
-          x1={0}
-          x2={W}
-          y1={H}
-          y2={H}
-          stroke="currentColor"
-          className="text-border"
-        />
-        {data.map((d, i) =>
-          i % Math.ceil(data.length / 6) === 0 ? (
-            <text
-              key={d.key}
-              x={i === 0 ? 0 : i * bw + bw / 2}
-              y={H + 14}
-              textAnchor={i === 0 ? "start" : "middle"}
-              className="fill-muted-foreground text-[10px]"
-            >
-              {d.label}
-            </text>
-          ) : null
-        )}
-      </svg>
-      {node}
-    </div>
-  )
-}
-
-function BarTip({ d }: { d: { label: string; tokens: number; cost: number } }) {
+  const peak = useMemo(() => [...days.entries()].sort((a, b) => b[1].tokens - a[1].tokens)[0], [days])
+  const session = limits?.limits.find((l) => l.group === "session")
+  const week = limits?.limits.find((l) => l.kind === "weekly_all") ?? limits?.limits.find((l) => l.group === "weekly")
+  const now = useNow()
   return (
     <>
-      <div className="font-medium">{d.label}</div>
-      <div className="tabular">{compactTokens(d.tokens)} tokens</div>
-      <div className="text-muted-foreground tabular">
-        {usdFmt(d.cost)} at API prices
+      <div className="grid grid-cols-1 gap-4 *:data-[slot=card]:bg-linear-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs @xl/main:grid-cols-2 @5xl/main:grid-cols-4 dark:*:data-[slot=card]:bg-card">
+        <StatCard title="Tokens" value={compactTokens(t.tokens)} now={t.tokens} before={prev?.tokens} line={`${t.requests.toLocaleString()} requests`} sub={`Claude Code, ${label.long}`} />
+        <StatCard title="At API prices" value={usdFmt(t.cost)} now={t.cost} before={prev?.cost} line="What pay-as-you-go would cost" sub="Your plan is a flat fee" />
+        <StatCard title="Prompts" value={t.prompts.toLocaleString()} now={t.prompts} before={prev?.prompts} line={`${t.sessions} sessions · ${t.tools.toLocaleString()} tool calls`} sub={`Messages you sent, ${label.long}`} />
+        <Card className="@container/card">
+          <CardHeader>
+            <CardDescription>Plan limits</CardDescription>
+            <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{session ? `${Math.round(session.percent)}%` : "–"}</CardTitle>
+            <CardAction>
+              <Badge variant="outline">{limits?.plan ?? "plan"}</Badge>
+            </CardAction>
+          </CardHeader>
+          <CardFooter className="flex-col items-stretch gap-2 text-sm">
+            {session && <Meter label="Current session (5 h)" percent={session.percent} sub={until(session.resets_at, now)} />}
+            {week && <Meter label="This week" percent={week.percent} sub={until(week.resets_at, now)} />}
+            {!limits && <span className="text-muted-foreground">Asking Claude Code…</span>}
+          </CardFooter>
+        </Card>
       </div>
+
+      <TokensChart range={range} />
+
+      <div className="grid gap-4 @5xl/main:grid-cols-3">
+        <Card className="@5xl/main:col-span-1">
+          <CardHeader>
+            <CardTitle>By model</CardTitle>
+            <CardDescription>Tokens and value, {label.long}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Models rows={t.byModel} total={t.tokens} />
+          </CardContent>
+        </Card>
+        <Card className="@5xl/main:col-span-2">
+          <CardHeader>
+            <CardTitle>Activity</CardTitle>
+            <CardDescription>Tokens per day, last 12 months</CardDescription>
+            <CardAction className="flex gap-5 text-right text-sm">
+              <Fact label="Streak" value={`${st.current} d`} />
+              <Fact label="Longest" value={`${st.longest} d`} />
+              <Fact label="Active days" value={String(st.activeDays)} />
+              <Fact label="Peak day" value={peak ? compactTokens(peak[1].tokens) : "–"} />
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            <Heatmap days={days} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <LimitsChart samples={limits?.samples ?? []} />
+
+      <DailyTable range={range} />
     </>
   )
 }
 
-function Models({
-  rows,
-  total,
-}: {
-  rows: { id: string; tokens: number; cost: number }[]
-  total: number
-}) {
-  if (!rows.length)
-    return (
-      <p className="text-sm text-muted-foreground">Nothing in this range.</p>
-    )
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="tabular font-medium">{value}</span>
+    </div>
+  )
+}
+
+/** A section card with the change against the period before, like the starter dashboard. */
+function StatCard({ title, value, now, before, line, sub }: { title: string; value: string; now: number; before?: number; line: ReactNode; sub: string }) {
+  const pct = before ? ((now - before) / before) * 100 : null
+  const up = (pct ?? 0) >= 0
+  return (
+    <Card className="@container/card">
+      <CardHeader>
+        <CardDescription>{title}</CardDescription>
+        <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{value}</CardTitle>
+        {pct != null && Number.isFinite(pct) && (
+          <CardAction>
+            <Badge variant="outline" title="Compared with the period before">
+              {up ? <TrendingUp /> : <TrendingDown />}
+              {up ? "+" : ""}
+              {pct.toFixed(Math.abs(pct) < 10 ? 1 : 0)}%
+            </Badge>
+          </CardAction>
+        )}
+      </CardHeader>
+      <CardFooter className="flex-col items-start gap-1.5 text-sm">
+        <div className="line-clamp-1 flex gap-2 font-medium">{line}</div>
+        <div className="text-muted-foreground">{sub}</div>
+      </CardFooter>
+    </Card>
+  )
+}
+
+// ---------- tokens over the range, stacked by model family ----------
+const tokensConfig = {
+  Opus: { label: "Opus", color: FAMILY_COLOR.Opus },
+  Sonnet: { label: "Sonnet", color: FAMILY_COLOR.Sonnet },
+  Haiku: { label: "Haiku", color: FAMILY_COLOR.Haiku },
+  Fable: { label: "Fable", color: FAMILY_COLOR.Fable },
+} satisfies ChartConfig
+
+function TokensChart({ range }: { range: Range }) {
+  const ledger = useUsage((s) => s.ledger)!
+  const data = useMemo(() => series(ledger, range), [ledger, range])
+  const used = FAMILIES.filter((f) => data.some((d) => (d[f] as number) > 0))
+  const label = RANGES.find((r) => r.id === range)!
+  return (
+    <Card className="@container/card">
+      <CardHeader>
+        <CardTitle>Tokens</CardTitle>
+        <CardDescription>
+          By model, {label.long} · per {range === "today" ? "hour" : range === "year" ? "week" : range === "all" ? "month" : "day"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+        <ChartContainer config={tokensConfig} className="aspect-auto h-[300px] w-full">
+          <AreaChart data={data} margin={{ left: 4, right: 4 }}>
+            <defs>
+              {used.map((f) => (
+                <linearGradient key={f} id={`fill-${f}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={`var(--color-${f})`} stopOpacity={0.9} />
+                  <stop offset="95%" stopColor={`var(--color-${f})`} stopOpacity={0.1} />
+                </linearGradient>
+              ))}
+            </defs>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={32} />
+            <YAxis tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => compactTokens(v)} />
+            <ChartTooltip
+              cursor={false}
+              content={
+                <ChartTooltipContent
+                  indicator="dot"
+                  formatter={(value, name) => (
+                    <div className="flex w-full items-center gap-2">
+                      <span className="size-2 shrink-0 rounded-[2px]" style={{ background: FAMILY_COLOR[String(name)] }} />
+                      <span className="text-muted-foreground">{String(name)}</span>
+                      <span className="ml-auto font-mono font-medium tabular-nums">{compactTokens(Number(value))}</span>
+                    </div>
+                  )}
+                />
+              }
+            />
+            {used
+              .slice()
+              .reverse()
+              .map((f) => (
+                <Area key={f} dataKey={f} type="natural" fill={`url(#fill-${f})`} stroke={`var(--color-${f})`} stackId="a" isAnimationActive={false} />
+              ))}
+            {used.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
+          </AreaChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------- plan limits over time (two series, one axis: % used) ----------
+const SPANS = [
+  { id: "5", label: "5 hours" },
+  { id: "24", label: "24 hours" },
+  { id: "168", label: "7 days" },
+  { id: "720", label: "30 days" },
+]
+const limitsConfig = {
+  s: { label: "Session (5 h)", color: "var(--chart-1)" },
+  w: { label: "Weekly", color: "var(--chart-3)" },
+} satisfies ChartConfig
+
+function LimitsChart({ samples }: { samples: LimitSample[] }) {
+  const [span, setSpan] = useState("24")
+  const now = useNow()
+  const from = now - Number(span) * 3600e3
+  const data = samples.filter((s) => s.t >= from).map((s) => ({ t: s.t, s: s.s ?? null, w: s.w ?? null }))
+  const fmt = (t: number) => new Date(t).toLocaleString(undefined, Number(span) > 24 ? { day: "numeric", month: "short" } : { hour: "2-digit", minute: "2-digit" })
+  return (
+    <Card className="@container/card">
+      <CardHeader>
+        <CardTitle>Plan limits over time</CardTitle>
+        <CardDescription>Sampled every 5 minutes while the app runs (claude.ai and Claude Code together)</CardDescription>
+        <CardAction>
+          <ToggleGroup type="single" variant="outline" value={span} onValueChange={(v) => v && setSpan(v)} className="hidden @[640px]/card:flex">
+            {SPANS.map((s) => (
+              <ToggleGroupItem key={s.id} value={s.id} className="px-3">
+                {s.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+        {data.length < 2 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">Not enough samples yet. The app records your limits every 5 minutes while it runs.</p>
+        ) : (
+          <ChartContainer config={limitsConfig} className="aspect-auto h-[240px] w-full">
+            <AreaChart data={data} margin={{ left: 4, right: 4 }}>
+              <defs>
+                <linearGradient id="fill-s" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-s)" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="var(--color-s)" stopOpacity={0.1} />
+                </linearGradient>
+                <linearGradient id="fill-w" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-w)" stopOpacity={0.6} />
+                  <stop offset="95%" stopColor="var(--color-w)" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="t" type="number" scale="time" domain={[from, now]} tickLine={false} axisLine={false} tickMargin={8} minTickGap={40} tickFormatter={fmt} />
+              <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => `${v}%`} />
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    indicator="dot"
+                    labelFormatter={(_, p) => fmt(Number(p?.[0]?.payload?.t))}
+                    formatter={(v, n) => (
+                      <span className="flex w-full justify-between gap-4">
+                        <span className="text-muted-foreground">{limitsConfig[n as "s" | "w"]?.label}</span>
+                        <span className="font-mono tabular-nums">{Number(v)}%</span>
+                      </span>
+                    )}
+                  />
+                }
+              />
+              <Area dataKey="w" type="monotone" fill="url(#fill-w)" stroke="var(--color-w)" connectNulls={false} isAnimationActive={false} />
+              <Area dataKey="s" type="monotone" fill="url(#fill-s)" stroke="var(--color-s)" connectNulls={false} isAnimationActive={false} />
+              <ChartLegend content={<ChartLegendContent />} />
+            </AreaChart>
+          </ChartContainer>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------- by model ----------
+function Models({ rows, total }: { rows: { id: string; tokens: number; cost: number }[]; total: number }) {
+  if (!rows.length) return <p className="text-sm text-muted-foreground">Nothing in this range.</p>
   return (
     <ul className="flex flex-col gap-3">
       {rows.slice(0, 8).map((r) => {
-        const color =
-          SERIES[
-            FAMILIES.indexOf(familyOf(r.id) as (typeof FAMILIES)[number])
-          ] ?? SERIES[0]
+        const color = FAMILY_COLOR[familyOf(r.id)] ?? FAMILY_COLOR.Opus
         const pct = total ? (r.tokens / total) * 100 : 0
         return (
           <li key={r.id} className="flex flex-col gap-1">
             <div className="flex items-baseline gap-2 text-sm">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ background: color }}
-                aria-hidden
-              />
+              <span className="size-2 shrink-0 rounded-[2px]" style={{ background: color }} aria-hidden />
               <span className="min-w-0 flex-1 truncate">{modelName(r.id)}</span>
-              <span className="text-xs text-muted-foreground tabular">
-                {usdFmt(r.cost)}
-              </span>
-              <span className="w-14 text-right font-medium tabular">
-                {compactTokens(r.tokens)}
-              </span>
+              <span className="tabular text-xs text-muted-foreground">{usdFmt(r.cost)}</span>
+              <span className="tabular w-14 text-right font-medium">{compactTokens(r.tokens)}</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full"
-                style={{ width: `${Math.max(pct, 0.5)}%`, background: color }}
-              />
+              <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 0.5)}%`, background: color }} />
             </div>
           </li>
         )
@@ -533,40 +361,26 @@ function Models({
   )
 }
 
-// ---------- activity heatmap (53 weeks, Monday first) ----------
-function Heatmap() {
-  const ledger = useUsage((s) => s.ledger)!
-  const days = useMemo(() => perDay(ledger), [ledger])
-  const { box, show, hide, node } = useTip()
+// ---------- activity heatmap (53 weeks, Monday first; fills the card width) ----------
+type Day = { key: string; date: Date; tokens: number; future: boolean }
+
+function Heatmap({ days }: { days: Map<string, { tokens: number }> }) {
+  const [tip, setTip] = useState("")
   const { cols, thresholds, months } = useMemo(() => {
     const today = new Date()
     today.setHours(12, 0, 0, 0)
     const start = new Date(today)
     start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 52 * 7)
-    const cols: {
-      key: string
-      date: Date
-      tokens: number
-      future: boolean
-    }[][] = []
+    const cols: Day[][] = []
     const months: { col: number; label: string }[] = []
     for (let c = 0; c < 53; c++) {
-      const col = []
+      const col: Day[] = []
       for (let r = 0; r < 7; r++) {
         const d = new Date(start)
         d.setDate(start.getDate() + c * 7 + r)
         const k = dayKey(d)
-        col.push({
-          key: k,
-          date: d,
-          tokens: days.get(k)?.tokens ?? 0,
-          future: d > today,
-        })
-        if (r === 0 && d.getDate() <= 7)
-          months.push({
-            col: c,
-            label: d.toLocaleDateString(undefined, { month: "short" }),
-          })
+        col.push({ key: k, date: d, tokens: days.get(k)?.tokens ?? 0, future: d > today })
+        if (r === 0 && d.getDate() <= 7) months.push({ col: c, label: d.toLocaleDateString(undefined, { month: "short" }) })
       }
       cols.push(col)
     }
@@ -575,275 +389,107 @@ function Heatmap() {
       .map((d) => d.tokens)
       .filter((v) => v > 0)
       .sort((a, b) => a - b)
-    const q = (f: number) =>
-      vals[Math.min(vals.length - 1, Math.floor(vals.length * f))] ?? 0
+    const q = (f: number) => vals[Math.min(vals.length - 1, Math.floor(vals.length * f))] ?? 0
     return { cols, thresholds: [q(0.2), q(0.4), q(0.6), q(0.8)], months }
   }, [days])
-  const level = (v: number) =>
-    v <= 0 ? -1 : thresholds.filter((t) => v > t).length
-  const C = 11
-  const G = 3
+  const level = (v: number) => (v <= 0 ? -1 : thresholds.filter((t) => v > t).length)
   return (
-    <div ref={box} className="relative overflow-x-auto" onPointerLeave={hide}>
-      <svg
-        width={30 + 53 * (C + G)}
-        height={18 + 7 * (C + G)}
-        role="img"
-        aria-label="Tokens per day for the last year"
-      >
-        {months.map((m) => (
-          <text
-            key={m.col}
-            x={30 + m.col * (C + G)}
-            y={10}
-            className="fill-muted-foreground text-[10px]"
-          >
-            {m.label}
-          </text>
+    <div className="flex flex-col gap-2">
+      <div className="grid gap-[3px]" style={{ gridTemplateColumns: "28px repeat(53, minmax(0, 1fr))" }}>
+        <span />
+        {Array.from({ length: 53 }, (_, c) => (
+          <span key={c} className="h-4 overflow-visible text-[10px] whitespace-nowrap text-muted-foreground">
+            {months.find((m) => m.col === c)?.label ?? ""}
+          </span>
         ))}
-        {["Mon", "Wed", "Fri"].map((d, i) => (
-          <text
-            key={d}
-            x={0}
-            y={18 + i * 2 * (C + G) + C - 2}
-            className="fill-muted-foreground text-[10px]"
-          >
-            {d}
-          </text>
+        {Array.from({ length: 7 }, (_, r) => (
+          <HeatRow key={r} r={r} cols={cols} level={level} onTip={setTip} />
         ))}
-        {cols.map((col, c) =>
-          col.map((d, r) =>
-            d.future ? null : (
-              <rect
-                key={d.key}
-                x={30 + c * (C + G)}
-                y={18 + r * (C + G)}
-                width={C}
-                height={C}
-                rx={2}
-                fill={
-                  level(d.tokens) < 0 ? "var(--muted)" : HEAT[level(d.tokens)]
-                }
-                onPointerMove={(e) =>
-                  show(
-                    e,
-                    <>
-                      <div className="font-medium">
-                        {d.date.toLocaleDateString(undefined, {
-                          weekday: "short",
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </div>
-                      <div className="tabular">
-                        {d.tokens
-                          ? `${compactTokens(d.tokens)} tokens`
-                          : "No usage"}
-                      </div>
-                    </>
-                  )
-                }
-              />
-            )
-          )
-        )}
-      </svg>
-      <div className="mt-2 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate">{tip || "Hover a day"}</span>
         Less
-        <span className="size-2.5 rounded-sm bg-muted" />
-        {HEAT.map((c) => (
-          <span
-            key={c}
-            className="size-2.5 rounded-sm"
-            style={{ background: c }}
-          />
+        {[-1, 0, 1, 2, 3, 4].map((l) => (
+          <span key={l} className="size-2.5 rounded-[2px]" style={{ background: l < 0 ? "var(--muted)" : HEAT[l] }} />
         ))}
         More
       </div>
-      {node}
     </div>
   )
 }
 
-// ---------- limits over time (two series, one axis: % used) ----------
-const SPANS = [
-  { id: 5, label: "5 hours" },
-  { id: 24, label: "24 hours" },
-  { id: 24 * 7, label: "7 days" },
-  { id: 24 * 30, label: "30 days" },
-]
-
-function LimitsOverTime({ samples }: { samples: LimitSample[] }) {
-  const [span, setSpan] = useState(24)
-  const { box, width: W, show, hide, node } = useTip()
-  const now = useNow()
-  const from = now - span * 3600e3
-  const pts = samples.filter((s) => s.t >= from)
-  const H = 160
-  const x = (t: number) => ((t - from) / (now - from)) * W
-  const y = (v: number) => H - (Math.max(0, Math.min(100, v)) / 100) * H
-  const path = (k: "s" | "w") => {
-    let d = ""
-    let prev = 0
-    for (const p of pts) {
-      const v = p[k]
-      if (v == null) continue
-      // a gap in sampling (app closed) breaks the line
-      d += `${d && p.t - prev < 20 * 60e3 ? "L" : "M"}${x(p.t).toFixed(1)},${y(v).toFixed(1)}`
-      prev = p.t
-    }
-    return d
-  }
-  const last = pts.at(-1)
+function HeatRow({ r, cols, level, onTip }: { r: number; cols: Day[][]; level: (v: number) => number; onTip: (s: string) => void }) {
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-3 text-xs">
-        <span className="flex items-center gap-1.5">
-          <span
-            className="h-0.5 w-3 rounded"
-            style={{ background: SERIES[0] }}
-          />{" "}
-          Session (5 h)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span
-            className="h-0.5 w-3 rounded"
-            style={{ background: SERIES[1] }}
-          />{" "}
-          Weekly
-        </span>
-        <span className="flex-1" />
-        {SPANS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setSpan(s.id)}
-            className={cn(
-              "h-6 rounded-md px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-              span === s.id
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-      <div
-        ref={box}
-        className="relative"
-        onPointerLeave={hide}
-        onPointerMove={(e) => {
-          const r = box.current!.getBoundingClientRect()
-          const t = from + ((e.clientX - r.left) / r.width) * (now - from)
-          if (pts.length < 2) return
-          const p = pts.reduce((a, b) =>
-            Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a
-          )
-          show(
-            e,
-            <>
-              <div className="font-medium">
-                {new Date(p.t).toLocaleString(undefined, {
-                  weekday: "short",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-              <div className="tabular">Session {p.s ?? "–"}%</div>
-              <div className="tabular">Weekly {p.w ?? "–"}%</div>
-            </>
-          )
-        }}
-      >
-        {pts.length < 2 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            Not enough samples yet. The app records your limits every 5 minutes
-            while it runs.
-          </p>
-        ) : (
-          <>
-            <svg
-              width={W}
-              height={H + 16}
-              viewBox={`0 0 ${W} ${H + 16}`}
-              className="block"
-              role="img"
-              aria-label="Session and weekly limit used over time"
-            >
-              {[25, 50, 75, 100].map((v) => (
-                <g key={v}>
-                  <line
-                    x1={0}
-                    x2={W}
-                    y1={y(v)}
-                    y2={y(v)}
-                    stroke="currentColor"
-                    className="text-border"
-                    strokeDasharray={v === 100 ? undefined : "2 4"}
-                  />
-                  <text
-                    x={W}
-                    y={y(v) - 3}
-                    textAnchor="end"
-                    className="fill-muted-foreground text-[10px]"
-                  >
-                    {v}%
-                  </text>
-                </g>
+    <>
+      <span className="text-[10px] leading-none text-muted-foreground">{r === 0 ? "Mon" : r === 2 ? "Wed" : r === 4 ? "Fri" : ""}</span>
+      {cols.map((col) => {
+        const d = col[r]
+        if (d.future) return <span key={d.key} />
+        const l = level(d.tokens)
+        const text = `${d.date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}: ${d.tokens ? `${compactTokens(d.tokens)} tokens` : "no usage"}`
+        return <span key={d.key} className="aspect-square rounded-[2px]" style={{ background: l < 0 ? "var(--muted)" : HEAT[l] }} title={text} onPointerEnter={() => onTip(text)} />
+      })}
+    </>
+  )
+}
+
+// ---------- daily table (like `ccusage daily`) ----------
+function DailyTable({ range }: { range: Range }) {
+  const ledger = useUsage((s) => s.ledger)!
+  const rows = useMemo(() => dailyRows(ledger, rangeStart(range)), [ledger, range])
+  const sum = rows.reduce((a, r) => ({ i: a.i + r.i, o: a.o + r.o, w: a.w + r.w, r: a.r + r.r, cost: a.cost + r.cost }), { i: 0, o: 0, w: 0, r: 0, cost: 0 })
+  const n = (v: number) => v.toLocaleString("en-US")
+  const num = "text-right font-mono text-xs tabular-nums"
+  return (
+    <Card className="@container/card">
+      <CardHeader>
+        <CardTitle>Daily</CardTitle>
+        <CardDescription>Every day of {RANGES.find((r) => r.id === range)!.long}, the same columns as ccusage</CardDescription>
+      </CardHeader>
+      <CardContent className="px-0">
+        <div className="max-h-[480px] overflow-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-card">
+              <TableRow>
+                <TableHead className="pl-6">Date</TableHead>
+                <TableHead>Models</TableHead>
+                <TableHead className="text-right">Input</TableHead>
+                <TableHead className="text-right">Output</TableHead>
+                <TableHead className="text-right">Cache write</TableHead>
+                <TableHead className="text-right">Cache read</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+                <TableHead className="pr-6 text-right">Cost</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.date}>
+                  <TableCell className="pl-6 font-mono text-xs">{r.date}</TableCell>
+                  <TableCell className="max-w-56 truncate text-xs text-muted-foreground">{[...r.models].join(", ")}</TableCell>
+                  <TableCell className={num}>{n(r.i)}</TableCell>
+                  <TableCell className={num}>{n(r.o)}</TableCell>
+                  <TableCell className={num}>{n(r.w)}</TableCell>
+                  <TableCell className={num}>{n(r.r)}</TableCell>
+                  <TableCell className={num}>{n(r.i + r.o + r.w + r.r)}</TableCell>
+                  <TableCell className={cn(num, "pr-6")}>${r.cost.toFixed(2)}</TableCell>
+                </TableRow>
               ))}
-              <line
-                x1={0}
-                x2={W}
-                y1={H}
-                y2={H}
-                stroke="currentColor"
-                className="text-border"
-              />
-              <path
-                d={path("w")}
-                fill="none"
-                stroke={SERIES[1]}
-                strokeWidth={2}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <path
-                d={path("s")}
-                fill="none"
-                stroke={SERIES[0]}
-                strokeWidth={2}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <text
-                x={0}
-                y={H + 13}
-                className="fill-muted-foreground text-[10px]"
-              >
-                {new Date(from).toLocaleString(
-                  undefined,
-                  span > 24
-                    ? { day: "numeric", month: "short" }
-                    : { hour: "2-digit", minute: "2-digit" }
-                )}
-              </text>
-              <text
-                x={W}
-                y={H + 13}
-                textAnchor="end"
-                className="fill-muted-foreground text-[10px]"
-              >
-                now
-                {last
-                  ? ` · session ${last.s ?? "–"}% · weekly ${last.w ?? "–"}%`
-                  : ""}
-              </text>
-            </svg>
-          </>
-        )}
-        {node}
-      </div>
-    </div>
+            </TableBody>
+            <TableFooter className="sticky bottom-0 bg-card">
+              <TableRow>
+                <TableCell className="pl-6 font-medium">Total</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{rows.length} days</TableCell>
+                <TableCell className={num}>{n(sum.i)}</TableCell>
+                <TableCell className={num}>{n(sum.o)}</TableCell>
+                <TableCell className={num}>{n(sum.w)}</TableCell>
+                <TableCell className={num}>{n(sum.r)}</TableCell>
+                <TableCell className={num}>{n(sum.i + sum.o + sum.w + sum.r)}</TableCell>
+                <TableCell className={cn(num, "pr-6 font-medium")}>${sum.cost.toFixed(2)}</TableCell>
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

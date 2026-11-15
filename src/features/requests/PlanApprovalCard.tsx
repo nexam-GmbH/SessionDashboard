@@ -1,8 +1,8 @@
 // Adapted from vercel/ai-elements@ca8be60:packages/elements/src/confirmation.tsx (Apache-2.0). Modified for session-dashboard.
 // Changes: AI SDK ToolUIPart approval state replaced by our PlanApproval request;
 // every ExitPlanMode option (several allow_always, one per target mode) is its own
-// button with a short label (RESEARCH §1.6); "Keep planning" takes optional feedback;
-// calm chrome (§2.5): "Approve plan?" over the plan, no instruction text.
+// button with a short label; "Keep planning" takes optional feedback;
+// calm chrome: "Approve plan?" over the plan, no instruction text.
 import { memo, useEffect, useRef, useState } from "react"
 import { ListChecks } from "lucide-react"
 import type { PermissionOption, PlanApproval } from "@/lib/model"

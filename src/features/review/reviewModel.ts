@@ -1,5 +1,5 @@
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/git-diff-tree.ts (Apache-2.0). Modified for session-dashboard.
-// Review model — UI_PLAN §5.4. Turns a session transcript's FileChanges into the
+// Review model. Turns a session transcript's FileChanges into the
 // review list: net change per path (first old text → last new text in scope),
 // per-turn scoping (the Codex `turn/diff/updated` idea), and for the main agent
 // the delegated child sessions grouped by repo. File tree builder (folders first,

@@ -1,4 +1,4 @@
-// Control-mode banners — UI_PLAN §5.3 / RESEARCH §1.4, calm rules §2.5: one short line
+// Control-mode banners: one short line
 // with the action. Observed sessions take messages but approvals happen in the user's
 // terminal (take over = stop there, resume here); history sessions offer
 // Resume and Fork.

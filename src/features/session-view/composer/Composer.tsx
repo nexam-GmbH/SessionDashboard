@@ -1,6 +1,6 @@
-// The chat's prompt box (Claude Code desktop layout, RESEARCH §11) with the session's settings in
+// The chat's prompt box (Claude Code desktop layout) with the session's settings in
 // the row under it: permission mode, model, effort and the context ring. Key semantics mirror the
-// Claude Code CLI (RESEARCH §1.6): Enter queues while Claude is working (the queue above stays
+// Claude Code CLI: Enter queues while Claude is working (the queue above stays
 // editable), Ctrl/⌘+Enter sends now, ↑ edits the last queued message, Esc in an empty box stops,
 // Esc Esc opens Rewind, Shift+Tab cycles the permission mode.
 import { memo, useMemo, useRef } from "react"

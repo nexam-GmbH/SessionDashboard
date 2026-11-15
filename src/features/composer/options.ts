@@ -1,4 +1,4 @@
-// Session settings as the Claude Code desktop app names them (RESEARCH §11): permission modes
+// Session settings as the Claude Code desktop app names them: permission modes
 // Manual / Accept edits / Plan / Auto (+ Bypass permissions only when allowed in Settings), a
 // model picker and an effort picker under the prompt box.
 import { Hand, ListChecks, PencilLine, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"

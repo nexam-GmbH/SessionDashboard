@@ -1,6 +1,6 @@
 // Adapted from pingdotgg/t3code@be5f805:apps/web/src/components/DiffWorkerPoolProvider.tsx (MIT). Modified for session-dashboard.
 // Shared @pierre/diffs setup for the session view's inline diffs and the Review screen
-// (UI_PLAN §2.2, §8.5). pierre keeps one worker pool singleton: whichever provider
+//. pierre keeps one worker pool singleton: whichever provider
 // mounts first creates it, so both screens pass these same options. The token block
 // targets `:host` (the diff's Shadow DOM host): pierre 1.6.4 never sets
 // `data-theme-type`, so selectors on it were silently ignored.
@@ -11,7 +11,7 @@ export const DIFF_THEME = { dark: "pierre-dark", light: "pierre-light" } as cons
 export const POOL_OPTIONS = { workerFactory: () => new DiffsWorker(), poolSize: 2 }
 export const HIGHLIGHTER_OPTIONS = { theme: DIFF_THEME, langs: [] }
 
-/** Our diff tints, gutters and selection (UI_PLAN §2.2 tokens), for pierre's `unsafe` CSS layer. */
+/** Our diff tints, gutters and selection, for pierre's `unsafe` CSS layer. */
 export const DIFF_TOKEN_CSS = `
   :host {
     --diffs-gap-style: none !important;

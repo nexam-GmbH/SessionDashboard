@@ -1,6 +1,6 @@
-// The *once* answers (UI_PLAN §12.6): the only answers offered outside the session view, where the
+// The *once* answers: the only answers offered outside the session view, where the
 // full request, always-allow and deny-with-feedback are visible. Options are data (ACP
-// request_permission, RESEARCH §3.1). Used by the map card, the map toolbar and context menu, the
+// request_permission). Used by the map card, the map toolbar and context menu, the
 // inspector and the session view's subagent request chip.
 import { useState } from "react"
 import { Button } from "@/components/ui/button"

@@ -1,5 +1,5 @@
 // "Archived · <title> · Undo" in the middle of the top bar, which is otherwise empty: feedback for
-// a reversible action without anything floating over the content (PRODUCT.md: nothing stacked).
+// a reversible action without anything floating over the content.
 // Gone after 6 s; the timer pauses while the pointer or keyboard focus is on it.
 import { useEffect, useState } from "react"
 import { Archive, ArchiveRestore, X } from "lucide-react"

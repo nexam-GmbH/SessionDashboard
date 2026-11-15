@@ -1,10 +1,10 @@
 // Adapted from coollabsio/jean@1d53d3c:src/components/chat/GitDiffFileTree.tsx (Apache-2.0). Modified for session-dashboard.
 // Adapted from cline/cline@72b3d71:apps/examples/desktop-app/webview/components/views/chat/changes-panel.tsx (Apache-2.0). Modified for session-dashboard.
 // Left column of the Review screen: changed files (for the main agent grouped by repo
-// first) as Cline's dense change rows with a filter on top. Calm rules (§2.5, Zed's
+// first) as Cline's dense change rows with a filter on top. Calm rules (Zed's
 // edits list): file name first, folder muted, ± only; the kept/rejected glyph and the
 // comment count appear only when set. Rows are a flat list virtualized with TanStack
-// Virtual (fixed 24px rows, UI_PLAN §8.4).
+// Virtual (fixed 24px rows).
 import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import {

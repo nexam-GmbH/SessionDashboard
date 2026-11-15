@@ -7,7 +7,7 @@ import { FOLLOW_UPS } from "./catalog"
 import { Rng, hashString } from "./rng"
 
 /**
- * Lazily generated, realistic transcripts (UI_PLAN §3). Shape mirrors what the
+ * Lazily generated, realistic transcripts. Shape mirrors what the
  * Phase 2 backend will produce from Claude Code stream-json / ACP updates:
  * turns of items (user message, thought, tool calls, agent message, notices).
  * Generated on first open of a session; background sessions never generate one.
@@ -388,7 +388,7 @@ function buildTurn(ctx: Ctx, turnIndex: number, prompt: string, mode: "complete"
 
 /**
  * The main agent plans and delegates instead of editing files: Graphify query across repos, a
- * per-repo plan, one SendMessage per delegated session, then status reports (RESEARCH §1.2).
+ * per-repo plan, one SendMessage per delegated session, then status reports.
  */
 function generateMainTranscript(session: Session): Transcript {
   const st = getApp()

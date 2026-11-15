@@ -15,7 +15,7 @@ import { generateWorld, type World } from "@/mocks/world"
 import { REAL } from "@/backend/mode"
 
 /**
- * One normalized zustand store (UI_PLAN §8): records keyed by id, components
+ * One normalized zustand store: records keyed by id, components
  * select a single record, derived lists are memoized on version counters.
  * Store shape after Orca's slices (MIT) — keyed records, no hot state in Context.
  */

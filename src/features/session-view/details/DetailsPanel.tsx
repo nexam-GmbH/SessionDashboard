@@ -12,7 +12,7 @@ import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
 import { useChangedFiles } from "../sessionStore"
-import { Meter } from "@/features/usage/UsageView"
+import { Meter } from "@/features/usage/Meter"
 import { useUsage } from "@/features/usage/usageData"
 
 // validated categorical steps for the dark surface, in a fixed order (dataviz reference palette)

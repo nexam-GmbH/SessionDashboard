@@ -1,6 +1,6 @@
 /**
- * Domain model — UI_PLAN.md §3. Mirrors how Claude Code really works
- * (RESEARCH.md §1) and the data-model lessons in RESEARCH.md §4. Phase 2 keeps
+ * Domain model. Mirrors how Claude Code really works
+ * and data-model lessons from other session managers. Phase 2 keeps
  * these types; only the data source changes.
  */
 export type ID = string
@@ -104,7 +104,7 @@ export type SessionStatus =
   | "error"
   | "stopped"
 
-/** RESEARCH §1.4 */
+/** How the app is connected to a session: runs it, watches it, or only has its history. */
 /** owned: the app runs it · observed: a terminal runs it · history: not running · cloud: claude.ai runs it */
 export type ControlMode = "owned" | "pty" | "observed" | "history" | "cloud"
 

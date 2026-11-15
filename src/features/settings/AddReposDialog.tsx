@@ -6,7 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 
 /**
- * Add repositories (UI_PLAN §5.12 onboarding + Settings → Repositories). Pick a
+ * Add repositories. Pick a
  * folder, the scan lists git repos with how many Claude Code sessions already
  * exist for each (matched by transcript cwd). Phase 1: mock scan result.
  */

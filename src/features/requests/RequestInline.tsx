@@ -8,8 +8,8 @@ import { onceOptions, OnceButtons } from "./OnceAnswers"
 
 /**
  * Compact waiting-request block for the inspector. Only *once* options are offered inline
- * (UI_PLAN §12.6): always-allow and deny-with-feedback live in the session view where the full
- * request is visible. Options are data (ACP request_permission, RESEARCH §3.1).
+ *: always-allow and deny-with-feedback live in the session view where the full
+ * request is visible. Options are data (ACP request_permission).
  */
 export const RequestInline = memo(function RequestInline({
   sessionId,
