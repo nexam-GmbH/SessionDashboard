@@ -9,7 +9,7 @@ import { useOverlaps } from "@/store/selectors"
 import { openSession } from "@/store/actions"
 import { cn } from "@/lib/utils"
 
-const name = (p: string) => p.split("/").pop() ?? p
+const name = (p: string) => p.split(/[\\/]/).pop() ?? p
 
 /** One line for a card: "Same files as <session>". */
 export const OverlapLine = memo(function OverlapLine({ id, className }: { id: ID; className?: string }) {

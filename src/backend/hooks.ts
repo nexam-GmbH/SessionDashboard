@@ -1,3 +1,4 @@
+import { normPath } from "@/lib/format"
 // Hook events (src-tauri/src/claude/hooks.rs): once the user installs the hook, every Claude Code
 // session posts its events here, sessions in a terminal included. They turn into exact states —
 // "waiting for permission: Bash npm test" instead of the pid file's "blocked" — and, for a VPS,
@@ -89,6 +90,8 @@ export async function startHooks() {
   await listen<HookPost>("hook-event", ({ payload }) => {
     const e = payload.event
     if (!e?.session_id) return
+    // Windows: C:\x as C:/x, like every other path in the app
+    if (e.cwd) e.cwd = normPath(e.cwd)
     // progress by the agent that asked: its prompt was answered (a subagent's progress says
     // nothing about the main agent's prompt, and the other way round)
     if (e.hook_event_name === "PreToolUse" || e.hook_event_name === "Stop" || e.hook_event_name === "SubagentStop" || e.hook_event_name === "UserPromptSubmit" || e.hook_event_name === "SessionEnd") movedOn(e.session_id, payload.at, e.agent_id)

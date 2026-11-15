@@ -100,7 +100,7 @@ pub async fn claude_info(hook_port: State<'_, HookPort>) -> Result<Value, String
     Ok(serde_json::json!({
         "dir": discover::claude_dir().to_string_lossy(),
         "bin": discover::claude_bin(),
-        "home": std::env::var("HOME").unwrap_or_default(),
+        "home": crate::sys::norm(&crate::sys::home().to_string_lossy()),
         "hostname": hooks::local_hostname(),
         "hookPort": hook_port.0,
     }))
@@ -115,8 +115,7 @@ fn prefs_path(name: &str) -> Result<std::path::PathBuf, String> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("bad name".into());
     }
-    let base = std::env::var("XDG_CONFIG_HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config"));
-    Ok(base.join("session-dashboard").join(format!("{name}.json")))
+    Ok(crate::sys::config_dir().join(format!("{name}.json")))
 }
 
 #[tauri::command]
@@ -322,4 +321,25 @@ pub async fn claude_inject_check(terms: State<'_, crate::term::Terms>, pid: u32)
 pub async fn claude_inject(terms: State<'_, crate::term::Terms>, pid: u32, text: String) -> Result<String, String> {
     let terms = terms.inner().clone();
     blocking(move || inject::send(&terms, pid, &text)).await
+}
+
+/// Terminal sync: whether `claude` in your shells runs through the app's wrapper.
+#[tauri::command]
+pub async fn sync_status() -> Result<Value, String> {
+    #[cfg(unix)]
+    return Ok(crate::wrap::status());
+    #[cfg(not(unix))]
+    Ok(serde_json::json!({ "on": false, "unsupported": true }))
+}
+
+/// Turn terminal sync on or off (the shell function in your shells' startup files).
+#[tauri::command]
+pub async fn sync_set(on: bool) -> Result<Value, String> {
+    #[cfg(unix)]
+    return blocking(move || crate::wrap::set(on)).await;
+    #[cfg(not(unix))]
+    {
+        let _ = on;
+        Err("Terminal sync is not available on Windows yet".into())
+    }
 }

@@ -1,6 +1,8 @@
 mod claude;
 mod term;
 pub mod sys;
+#[cfg(unix)]
+pub mod wrap;
 mod usage;
 
 use tauri::webview::PageLoadEvent;
@@ -42,7 +44,48 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// `session-dashboard wrap claude …` (the terminal sync wrapper): handled before the app starts.
+/// Returns the exit code when this run was one.
+pub fn cli() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `session-dashboard sync on|off|status`: the terminal sync shell function, from a terminal
+    #[cfg(unix)]
+    if args.first().map(String::as_str) == Some("sync") {
+        let r = match args.get(1).map(String::as_str) {
+            Some("on") => wrap::set(true),
+            Some("off") => wrap::set(false),
+            _ => Ok(wrap::status()),
+        };
+        return Some(match r {
+            Ok(v) => {
+                println!("{v}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        });
+    }
+    if args.first().map(String::as_str) != Some("wrap") {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        Some(wrap::run(&args[1..]))
+    }
+    #[cfg(not(unix))]
+    {
+        // no terminal sync on Windows yet: run the program as it is
+        let rest = &args[1..];
+        let prog = rest.first().cloned().unwrap_or_else(|| "claude".into());
+        Some(std::process::Command::new(&prog).args(&rest[1.min(rest.len())..]).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127))
+    }
+}
+
 pub fn run() {
+    // started from the Dock, Finder or a launcher: the shell's PATH, so claude, gh and git are found
+    sys::fix_path();
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
     {
@@ -120,6 +163,8 @@ pub fn run() {
             claude::claude_set_config_dirs,
             claude::claude_inject_check,
             claude::claude_inject,
+            claude::sync_status,
+            claude::sync_set,
             claude::hooks_status,
             claude::hooks_set,
             claude::hooks_answer,

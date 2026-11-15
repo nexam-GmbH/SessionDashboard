@@ -1,3 +1,4 @@
+import { OS } from "@/lib/platform"
 // Claude Code commands that need its full-screen terminal UI (menus, sign-in). Sessions the app runs
 // are headless (`claude -p`), where these only print a summary ("Use /mcp in the terminal"), so the
 // app opens Claude Code's real menu in its own terminal instead, in the session's folder
@@ -24,7 +25,11 @@ const TUI = new Set([
   "privacy-settings",
 ])
 
-const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
+// the built-in terminal runs PowerShell on Windows, a POSIX shell elsewhere
+const WIN = OS === "windows"
+const q = (s: string) => (WIN ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, "'\\''")}'`)
+/** claude with SD_HIDE=1 (left out of the session list), in the terminal's shell syntax */
+const hidden = (args: string) => (WIN ? `$env:SD_HIDE='1'; claude ${args}; $env:SD_HIDE=$null` : `SD_HIDE=1 claude ${args}`)
 
 /** What the installed claude itself reports as bound to its terminal UI (system/init of a session the app runs). */
 let reported: Set<string> | null = null
@@ -44,7 +49,7 @@ export function terminalCommandFor(text: string): { run: string; mcp?: boolean }
     case "mcp":
       // Claude Code's own MCP menu (servers, status, Authenticate / Disable), in a claude the
       // session list leaves out (SD_HIDE); `/mcp <args>` runs the CLI's `claude mcp <args>`
-      return args ? { run: `claude mcp ${args}`, mcp: true } : { run: "SD_HIDE=1 claude /mcp", mcp: true }
+      return args ? { run: `claude mcp ${args}`, mcp: true } : { run: hidden("/mcp"), mcp: true }
     case "login":
       return { run: "claude auth login" }
     case "logout":
@@ -53,6 +58,6 @@ export function terminalCommandFor(text: string): { run: string; mcp?: boolean }
       return { run: "claude doctor" }
     default:
       // an interactive claude that opens with that command (left out of the session list)
-      return { run: `SD_HIDE=1 claude ${q(`/${cmd}${args ? ` ${args}` : ""}`)}` }
+      return { run: hidden(q(`/${cmd}${args ? ` ${args}` : ""}`)) }
   }
 }

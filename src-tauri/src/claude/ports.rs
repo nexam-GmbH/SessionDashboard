@@ -1,11 +1,13 @@
-//! Which TCP ports each session's processes listen on (its dev servers): the session's process tree
-//! from /proc, matched to listening sockets in /proc/net/tcp{,6} by socket inode. Linux only; cheap
-//! enough to run every few seconds (one pass over /proc, fds read only for the sessions' trees).
+//! Which TCP ports each session's processes listen on (its dev servers). Linux: the session's
+//! process tree from /proc, matched to listening sockets in /proc/net/tcp{,6} by socket inode (one
+//! pass over /proc, fds read only for the sessions' trees). macOS: `lsof`; Windows: `netstat -ano`,
+//! both give the listening process directly.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
 /// Listening sockets: inode → port.
+#[cfg(target_os = "linux")]
 fn listening() -> HashMap<u64, u16> {
     let mut out = HashMap::new();
     for f in ["/proc/net/tcp", "/proc/net/tcp6"] {
@@ -28,6 +30,7 @@ fn listening() -> HashMap<u64, u16> {
 }
 
 /// Parent of every process: pid → ppid.
+#[cfg(target_os = "linux")]
 fn parents() -> HashMap<u32, u32> {
     let mut out = HashMap::new();
     let Ok(dir) = fs::read_dir("/proc") else { return out };
@@ -43,6 +46,7 @@ fn parents() -> HashMap<u32, u32> {
 }
 
 /// For each root (session key → pid): the ports its process tree listens on, sorted.
+#[cfg(target_os = "linux")]
 pub fn ports_of(roots: &[(String, u32)]) -> HashMap<String, Vec<u16>> {
     let mut result = HashMap::new();
     if roots.is_empty() {
@@ -91,6 +95,87 @@ pub fn ports_of(roots: &[(String, u32)]) -> HashMap<String, Vec<u16>> {
     result
 }
 
+/// Listening TCP ports per process id, from the system's own tool.
+#[cfg(any(not(target_os = "linux"), test))]
+fn listening_by_pid() -> HashMap<u32, HashSet<u16>> {
+    let mut out: HashMap<u32, HashSet<u16>> = HashMap::new();
+    let port_of = |addr: &str| addr.rsplit(':').next().and_then(|p| p.parse::<u16>().ok());
+    #[cfg(windows)]
+    {
+        for proto in ["TCP", "TCPv6"] {
+            let Ok(o) = crate::sys::command("netstat").args(["-ano", "-p", proto]).output() else { continue };
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let c: Vec<&str> = line.split_whitespace().collect();
+                if c.len() >= 5 && c[0].starts_with("TCP") && c[3] == "LISTENING" {
+                    if let (Some(port), Ok(pid)) = (port_of(c[1]), c[4].parse::<u32>()) {
+                        out.entry(pid).or_default().insert(port);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(o) = crate::sys::command("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]).output() {
+            let mut pid = 0u32;
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                if let Some(p) = line.strip_prefix('p') {
+                    pid = p.parse().unwrap_or(0);
+                } else if let Some(n) = line.strip_prefix('n') {
+                    if let Some(port) = port_of(n) {
+                        out.entry(pid).or_default().insert(port);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn ports_of(roots: &[(String, u32)]) -> HashMap<String, Vec<u16>> {
+    ports_by_tool(roots)
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn ports_by_tool(roots: &[(String, u32)]) -> HashMap<String, Vec<u16>> {
+    let mut result = HashMap::new();
+    if roots.is_empty() {
+        return result;
+    }
+    let by_pid = listening_by_pid();
+    if by_pid.is_empty() {
+        return result;
+    }
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, ppid) in crate::sys::parents() {
+        children.entry(ppid).or_default().push(pid);
+    }
+    let me = std::process::id();
+    for (key, root) in roots {
+        let mut ports: HashSet<u16> = HashSet::new();
+        let mut stack = vec![*root];
+        let mut seen = HashSet::new();
+        while let Some(pid) = stack.pop() {
+            if !seen.insert(pid) || seen.len() > 400 || (pid == me && pid != *root) {
+                continue;
+            }
+            if let Some(p) = by_pid.get(&pid) {
+                ports.extend(p);
+            }
+            if let Some(c) = children.get(&pid) {
+                stack.extend(c);
+            }
+        }
+        if !ports.is_empty() {
+            let mut v: Vec<u16> = ports.into_iter().collect();
+            v.sort_unstable();
+            result.insert(key.clone(), v);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +187,10 @@ mod tests {
         let me = std::process::id();
         let got = ports_of(&[("me".into(), me)]);
         assert!(got.get("me").map(|p| p.contains(&port)).unwrap_or(false), "{got:?} should hold {port}");
+        // the macOS way (lsof, process tree from sysinfo) finds it too, where lsof is installed
+        if crate::sys::command("lsof").arg("-v").output().is_ok() {
+            let got = ports_by_tool(&[("me".into(), me)]);
+            assert!(got.get("me").map(|p| p.contains(&port)).unwrap_or(false), "lsof: {got:?} should hold {port}");
+        }
     }
 }

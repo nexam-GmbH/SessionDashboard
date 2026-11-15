@@ -91,8 +91,7 @@ static INDEX: Mutex<Option<Index>> = Mutex::new(None);
 static SCANNING: Mutex<()> = Mutex::new(());
 
 fn dir() -> PathBuf {
-    let base = std::env::var("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|_| Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config"));
-    base.join("session-dashboard")
+    crate::sys::config_dir()
 }
 
 fn h64(parts: &[&str]) -> u64 {

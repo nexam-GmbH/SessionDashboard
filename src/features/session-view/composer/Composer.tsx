@@ -92,7 +92,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
       <PromptBox
         files={files}
         initialText={initialText}
-        placeholder={takeOver ? (injectWay ? `Reply: typed into its terminal (${injectWay}); it keeps running there` : "Reply: continues in a copy here; the terminal keeps running its own") : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
+        placeholder={takeOver ? (injectWay ? `Reply: typed into its terminal (${injectWay}); it keeps running there` : "Reply: continues in a copy here (Settings → Sessions → Sync terminal sessions keeps it one session)") : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
         keysHint={`${working ? `Enter queues, ${MOD}+Enter sends now, Escape stops.` : "Enter sends, Shift+Enter adds a line."} Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
         sendHint={takeOver ? (injectWay ? `Send to ${injectWay} · Enter` : "Continue in a copy · Enter") : working ? `Enter: after this step · ${MOD}+Enter: send now${observedNote}` : `Send · Enter${observedNote}`}
         busy={working && caps.interrupt}

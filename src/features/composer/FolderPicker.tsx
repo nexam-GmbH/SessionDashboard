@@ -33,7 +33,7 @@ export function FolderPicker({ value, onChange }: { value: ID; onChange: (id: ID
   // the desktop app offers the folders you used Claude Code in; the mock world its sample disk
   const folders = (REAL ? recentFolders().map(homePath) : LOCAL_FOLDERS).filter((f) => !tracked.has(f)).slice(0, 12)
   const typed = query.trim()
-  const looksLikePath = typed.startsWith("~/") || typed.startsWith("/")
+  const looksLikePath = typed.startsWith("~/") || typed.startsWith("/") || /^[A-Za-z]:[\\/]/.test(typed)
   const pick = (id: ID) => {
     onChange(id)
     setOpen(false)

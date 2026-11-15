@@ -3,6 +3,7 @@
 // overview, where the request is a line among others. Everything else stays one keypress, so the
 // habit of approving routine requests quickly is not spent on the dangerous ones.
 import type { PermissionRequest } from "@/lib/model"
+import { normPath } from "@/lib/format"
 
 const COMMAND: [RegExp, string][] = [
   [/\brm\s+(?:-\w*[rR]\w*|--recursive)\b/, "Deletes files and folders recursively"],
@@ -34,7 +35,7 @@ const PATH: [RegExp, string][] = [
   [/(?:^|\/)\.(?:ssh|aws|gnupg|kube|docker)\//, "Edits credentials"],
   [/(?:^|\/)(?:id_rsa|id_ed25519|credentials|\.netrc|\.npmrc|\.pypirc)$/, "Edits credentials"],
   [/(?:^|\/)\.github\/workflows\//, "Changes CI workflows (they run with the repository's secrets)"],
-  [/^\/(?:etc|usr|boot|bin|sbin|var)\//, "Edits system files"],
+  [/^\/(?:etc|usr|boot|bin|sbin|var)\/|^[A-Z]:\/(?:Windows|Program Files)/i, "Edits system files"],
   [/(?:^|\/)\.(?:bashrc|zshrc|profile|bash_profile)$/, "Edits your shell startup"],
 ]
 
@@ -51,12 +52,13 @@ export function riskOf(req: PermissionRequest, cwd?: string): Risk {
     for (const [re, effect] of COMMAND) if (re.test(s.command)) return { high: true, effect }
     return NONE
   }
-  const path = s?.path
+  // Windows paths compare as C:/x like the rest of the app
+  const path = s?.path ? normPath(s.path) : undefined
   if (!path) return NONE
   for (const [re, effect] of PATH) if (re.test(path)) return { high: true, effect }
   // an edit outside the session's folder
-  const base = s?.type === "tool_call" && cwd ? cwd.replace(/\/+$/, "") : undefined
-  if (base && path.startsWith("/") && !path.startsWith(base + "/") && /^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(req.toolName))
+  const base = s?.type === "tool_call" && cwd ? normPath(cwd).replace(/\/+$/, "") : undefined
+  if (base && /^(?:\/|[A-Z]:\/)/.test(path) && !path.startsWith(base + "/") && /^(?:Edit|Write|MultiEdit|NotebookEdit)$/.test(req.toolName))
     return { high: true, effect: "Edits a file outside this session's folder" }
   return NONE
 }

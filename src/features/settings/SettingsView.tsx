@@ -183,6 +183,44 @@ export function ReposPage() {
 
 /** Where sessions come from: hooks on this computer, the cloud, VPS machines over ssh. */
 /**
+ * Terminal sync: `claude` in your shells runs through the app's wrapper, so a session in any terminal
+ * (Zed's, GNOME Terminal, …) takes replies from the app as if you typed them there.
+ */
+function TerminalSync() {
+  const [st, setSt] = useState<{ on: boolean; files?: string[]; unsupported?: boolean } | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const live = IN_TAURI && REAL
+  useEffect(() => {
+    if (!live) return
+    void import("@tauri-apps/api/core").then(({ invoke }) => invoke<{ on: boolean; files?: string[]; unsupported?: boolean }>("sync_status").then(setSt))
+  }, [live])
+  if (!live || !st) return null
+  const set = (on: boolean) =>
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<{ on: boolean; files?: string[] }>("sync_set", { on }))
+      .then((v) => {
+        setSt(v)
+        setErr(null)
+      })
+      .catch((e) => setErr(String(e)))
+  return (
+    <SettingRow
+      title="Sync terminal sessions"
+      hint={st.unsupported ? "not on Windows yet" : st.on ? "on" : undefined}
+      disabled={st.unsupported}
+      description={
+        <>
+          Claude Code sessions you start in any terminal (Zed, GNOME Terminal, Konsole, …) stay in full sync with the app: replies you write here are typed into that terminal, and the terminal keeps running. It adds a small <Code>claude</Code> function to your shell's startup file{st.files?.length ? ` (${st.files.map((f) => f.split("/").pop()).join(", ")})` : ""}; turning it off removes it. Applies to terminals opened afterwards.
+          {err && <span className="mt-1 block text-st-error-fg">{err}</span>}
+        </>
+      }
+    >
+      <RowSwitch checked={st.on} disabled={st.unsupported} onCheckedChange={set} />
+    </SettingRow>
+  )
+}
+
+/**
  * Other Claude Code config folders (a second account: `CLAUDE_CONFIG_DIR=~/.claude-work claude`).
  * Their sessions, transcripts and usage are read beside the main one; a workspace can start its new
  * sessions in one of them (Workspaces → edit).
@@ -295,6 +333,7 @@ export function SourcesPage() {
         <SettingRow title="Recent sessions per project" description="How many sessions each project shows on the overview and in the list: every running one, then the ones you used last. Older ones are a search away (Ctrl+K).">
           <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
         </SettingRow>
+        <TerminalSync />
         <KeepChats />
         <Accounts />
         <SettingRow

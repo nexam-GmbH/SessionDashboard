@@ -10,6 +10,8 @@ use crate::term::{self, Terms};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Way {
+    /// started through `session-dashboard wrap` (terminal sync): its own socket
+    Sync { port: u16, token: String },
     App(String),
     Tmux { socket: String, pane: String },
     Konsole { service: String, session: String },
@@ -18,14 +20,7 @@ enum Way {
 }
 
 fn env_of(pid: u32) -> HashMap<String, String> {
-    let raw = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
-    raw.split(|b| *b == 0)
-        .filter_map(|kv| {
-            let s = String::from_utf8_lossy(kv);
-            let (k, v) = s.split_once('=')?;
-            Some((k.to_string(), v.to_string()))
-        })
-        .collect()
+    crate::sys::env_of(pid)
 }
 
 fn qdbus() -> Option<&'static str> {
@@ -36,7 +31,24 @@ fn which(bin: &str) -> bool {
     command(bin).arg("--version").output().is_ok()
 }
 
+/// A wrapped session registers by the pid of what it started; claude may be that process or a child
+/// of it (a launcher script), so look a few levels up.
+fn synced(pid: u32) -> Option<Way> {
+    let mut cur = pid;
+    for _ in 0..4 {
+        if let Ok(t) = std::fs::read_to_string(crate::sys::config_dir().join("sync").join(format!("{cur}.json"))) {
+            let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+            return Some(Way::Sync { port: v["port"].as_u64()? as u16, token: v["token"].as_str()?.to_string() });
+        }
+        cur = crate::sys::parent_of(cur)?;
+    }
+    None
+}
+
 fn way(terms: &Terms, pid: u32) -> Option<Way> {
+    if let Some(w) = synced(pid) {
+        return Some(w);
+    }
     if let Some(k) = term::key_of_descendant(terms, pid) {
         return Some(Way::App(k));
     }
@@ -66,6 +78,7 @@ fn way(terms: &Terms, pid: u32) -> Option<Way> {
 
 fn name(w: &Way) -> &'static str {
     match w {
+        Way::Sync { .. } => "synced",
         Way::App(_) => "the app's terminal",
         Way::Tmux { .. } => "tmux",
         Way::Konsole { .. } => "Konsole",
@@ -93,6 +106,17 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
     let w = way(terms, pid).ok_or("this terminal offers no way to type into it")?;
     let body = text.trim_end().replace("\r\n", "\n").replace('\n', "\\\r");
     match &w {
+        Way::Sync { port, token } => {
+            use std::io::{BufRead, Write};
+            let mut s = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], *port)), std::time::Duration::from_secs(2)).map_err(|e| format!("the synced terminal did not answer: {e}"))?;
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(3)));
+            s.write_all(format!("{}\n", serde_json::json!({ "token": token, "text": text })).as_bytes()).map_err(|e| e.to_string())?;
+            let mut ok = String::new();
+            std::io::BufReader::new(&s).read_line(&mut ok).map_err(|e| e.to_string())?;
+            if ok.trim() != "ok" {
+                return Err("the synced terminal refused the reply".into());
+            }
+        }
         Way::App(k) => term::write(terms, k, &format!("{body}\r"))?,
         Way::Tmux { socket, pane } => {
             let base = |c: &mut std::process::Command| {
@@ -123,7 +147,7 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
     Ok(name(&w).to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};

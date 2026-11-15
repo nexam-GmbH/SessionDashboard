@@ -1,6 +1,6 @@
 [package]
 name = "session-dashboard"
-version = "0.2.2"
+version = "0.3.0"
 description = "Session Dashboard: one place for all your Claude Code sessions"
 authors = ["you"]
 edition = "2024"
@@ -28,6 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["v4"] }
 portable-pty = "0.9"
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -41,3 +42,6 @@ strip = true
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+
+[target.'cfg(unix)'.dependencies]
+crossterm = { version = "0.28", default-features = false }

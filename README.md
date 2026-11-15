@@ -4,8 +4,8 @@ A desktop app for running many Claude Code sessions at once. It finds every sess
 your servers over ssh), shows at a glance which ones need you, and lets you answer, review and switch between
 them as fast as terminal tabs.
 
-Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS builds come from the same code
-(on Windows the optional hooks are not available yet; dev-server ports are shown on Linux).
+Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows (terminal sync is Linux
+and macOS for now).
 
 ## What it does
 
@@ -43,6 +43,9 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
 - **Finds sessions by itself.** Sessions started in any terminal show up on their own, grouped by
   repository (worktrees, servers and cloud sessions of one repo share a column). Optional hooks make their
   states exact and let you answer a terminal session's permission prompt from the app.
+- **Terminal sync.** Turn on Settings → Sessions → Sync terminal sessions and every `claude` you start
+  in any terminal (Zed, GNOME Terminal, iTerm, Konsole…) stays one session with the app: replies you
+  write in the app are typed into that terminal, and nothing is closed or copied.
 - **Built-in terminal.** `` Ctrl+` `` opens a real shell in the session's folder. `! command` in the prompt
   box runs there, and Claude Code commands that need its own interface (`/mcp`, `/login`, `/config`)
   open in it.
@@ -84,6 +87,7 @@ yet: on macOS right-click the app → Open the first time, on Windows choose "Mo
 
 - [Claude Code](https://code.claude.com) installed and signed in (`claude` on your `PATH`)
 - Optional: `gh` (GitHub CLI) for pull request status, `ssh` for sessions on servers
+- Windows: Git for Windows (Claude Code needs it too); the built-in terminal opens PowerShell
 
 ## Build and run
 

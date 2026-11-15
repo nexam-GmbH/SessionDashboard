@@ -8,6 +8,7 @@ import { emit, listen } from "@tauri-apps/api/event"
 import { getApp, setApp, useApp } from "@/store/app"
 import { selectNeedsYou } from "@/store/selectors"
 import { POPOUT, REAL } from "./mode"
+import { setHomeDir } from "@/lib/format"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
 import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, type MapState } from "./mapTranscript"
@@ -326,7 +327,8 @@ export function suggestedFolders(): { path: string; count: number }[] {
   const tilde = (p: string) => (home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p)
   return [...by.entries()].sort((a, b) => b[1] - a[1]).map(([p, count]) => ({ path: tilde(p), count }))
 }
-const isTmp = (p: string) => p.startsWith("/tmp/") || p.includes("/scratchpad/")
+// scratch folders: /tmp (Linux), /var/folders and /private/tmp (macOS), AppData/Local/Temp (Windows)
+const isTmp = (p: string) => p.startsWith("/tmp/") || p.startsWith("/private/tmp/") || p.startsWith("/var/folders/") || p.includes("/AppData/Local/Temp/") || p.includes("/scratchpad/")
 
 function repoIdFor(cwd: string, machine?: string) {
   return machine ? `repo:${machine}:${cwd}` : `repo:${cwd}`
@@ -1323,7 +1325,7 @@ function buildRequest(key: ID, requestId: string, r: CanUseTool): { req: Pending
       state: "pending",
       requestedAt: now,
     } satisfies PermissionRequest
-    waiting = { kind: "permission", summary: cmd ? `Bash: ${cmd}` : `${r.tool_name}${path ? ` ${path.split("/").pop()}` : ""}`, requestId }
+    waiting = { kind: "permission", summary: cmd ? `Bash: ${cmd}` : `${r.tool_name}${path ? ` ${path.split(/[\\/]/).pop()}` : ""}`, requestId }
   }
   return { req, status, waiting }
 }
@@ -1611,7 +1613,7 @@ function onEvent({ key, event, exit }: EventPayload) {
 
 function activityOf(name: string, input: Record<string, unknown>) {
   const s = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : "")
-  const file = s("file_path").split("/").pop()
+  const file = s("file_path").split(/[\\/]/).pop()
   if (name === "Bash") return `Running ${s("command").split("\n")[0].slice(0, 80)}`
   if (name === "Edit" || name === "MultiEdit") return `Editing ${file}`
   if (name === "Write") return `Writing ${file}`
@@ -1628,6 +1630,7 @@ export async function startReal() {
   try {
     const info = await invoke<{ home: string }>("claude_info")
     home = info.home
+    setHomeDir(home)
   } catch {
     /* ignore */
   }

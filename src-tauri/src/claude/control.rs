@@ -121,8 +121,7 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
             let mut c = crate::sys::command(claude_bin());
             c.args(&args).current_dir(&o.cwd);
             if let Some(d) = o.config_dir.as_ref().filter(|d| !d.is_empty()) {
-                let home = std::env::var("HOME").unwrap_or_default();
-                c.env("CLAUDE_CONFIG_DIR", d.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| d.clone()));
+                c.env("CLAUDE_CONFIG_DIR", crate::sys::expand(d));
             }
             c
         }
@@ -266,13 +265,10 @@ pub fn takeover(pid: u32) -> Result<(), String> {
     if !alive(pid) {
         return Err("that session is not running any more".into());
     }
-    // Linux can say what the process is: never stop something that is not claude
-    #[cfg(target_os = "linux")]
-    {
-        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-        if !String::from_utf8_lossy(&cmdline).contains("claude") {
-            return Err("that process is not claude".into());
-        }
+    // never stop something that is not claude
+    let cmdline = crate::sys::cmdline(pid);
+    if !cmdline.is_empty() && !cmdline.to_lowercase().contains("claude") {
+        return Err("that process is not claude".into());
     }
     crate::sys::interrupt(pid);
     std::thread::sleep(std::time::Duration::from_millis(300));

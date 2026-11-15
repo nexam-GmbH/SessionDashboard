@@ -59,6 +59,21 @@ export function pathTail(p: string, segments = 2) {
   return parts.slice(-segments).join("/")
 }
 
+let homeDir = ""
+/** The home folder as the backend reports it (forward slashes on Windows too). */
+export function setHomeDir(h: string) {
+  homeDir = h.replace(/\/+$/, "")
+}
+
+/** A path with the home folder shown as ~ (Linux /home/x, macOS /Users/x, Windows C:/Users/x). */
 export function homePath(p: string) {
-  return p.replace(/^\/home\/[^/]+/, "~")
+  if (homeDir && (p === homeDir || p.startsWith(homeDir + "/"))) return "~" + p.slice(homeDir.length)
+  return p.replace(/^(?:\/home\/[^/]+|\/Users\/[^/]+|[A-Za-z]:[/\\]Users[/\\][^/\\]+)/, "~")
+}
+
+/** A path from Claude Code or a hook as the app keeps it: forward slashes, upper-case drive letter. */
+export function normPath(p: string) {
+  if (!p.includes("\\") && !/^[a-z]:/.test(p)) return p
+  const s = p.replace(/\\/g, "/")
+  return /^[a-z]:/.test(s) ? s[0].toUpperCase() + s.slice(1) : s
 }

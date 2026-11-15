@@ -127,5 +127,176 @@ mod tests {
         assert!(output_timeout(Command::new("sh").args(["-c", "sleep 5"]), 1).is_none());
         assert!(t.elapsed() < Duration::from_secs(3));
         assert!(alive(std::process::id()));
+        // the sysinfo paths (macOS, Windows) work: parents, environment, command line
+        let me = std::process::id();
+        assert!(parents().contains_key(&me));
+        assert!(parent_of(me).is_some());
+        assert!(env_of(me).contains_key("PATH"));
+        assert!(!cmdline(me).is_empty());
+        assert_eq!(norm("c:\\Users\\x"), "C:/Users/x");
+    }
+}
+
+// ---------- folders and paths ----------
+
+/// The user's home folder (HOME; Windows: USERPROFILE).
+pub fn home() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+}
+
+/// Where the app keeps its own files (usage ledger, hook token, prefs): ~/.config/session-dashboard
+/// (XDG_CONFIG_HOME when set; Windows: %APPDATA%\session-dashboard).
+pub fn config_dir() -> std::path::PathBuf {
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
+        return std::path::PathBuf::from(x).join("session-dashboard");
+    }
+    #[cfg(windows)]
+    if let Some(a) = std::env::var_os("APPDATA") {
+        return std::path::PathBuf::from(a).join("session-dashboard");
+    }
+    home().join(".config").join("session-dashboard")
+}
+
+/// A path as the UI keeps it: forward slashes and an upper-case drive letter on Windows (Claude Code
+/// writes `C:\x`, git `C:/x`; both must be the same folder), unchanged elsewhere.
+pub fn norm(p: &str) -> String {
+    if cfg!(windows) || p.contains('\\') && p.as_bytes().get(1) == Some(&b':') {
+        let mut s = p.replace('\\', "/");
+        if s.as_bytes().get(1) == Some(&b':') {
+            s.replace_range(0..1, &s[0..1].to_ascii_uppercase());
+        }
+        s
+    } else {
+        p.to_string()
+    }
+}
+
+/// `~/x` → the home folder's x.
+pub fn expand(p: &str) -> String {
+    match p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
+        Some(rest) => home().join(rest).to_string_lossy().to_string(),
+        None if p == "~" => home().to_string_lossy().to_string(),
+        None => p.to_string(),
+    }
+}
+
+// ---------- processes ----------
+
+fn sysinfo_of(pids: Option<&[u32]>, environ: bool, cmd: bool) -> sysinfo::System {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut s = System::new();
+    let mut kind = ProcessRefreshKind::nothing();
+    if environ {
+        kind = kind.with_environ(UpdateKind::Always);
+    }
+    if cmd {
+        kind = kind.with_cmd(UpdateKind::Always);
+    }
+    let list: Vec<Pid> = pids.unwrap_or(&[]).iter().map(|p| Pid::from_u32(*p)).collect();
+    let which = if pids.is_some() { ProcessesToUpdate::Some(&list) } else { ProcessesToUpdate::All };
+    s.refresh_processes_specifics(which, true, kind);
+    s
+}
+
+/// Parent of every process: pid → ppid.
+pub fn parents() -> std::collections::HashMap<u32, u32> {
+    let mut out = std::collections::HashMap::new();
+    #[cfg(all(target_os = "linux", not(test)))]
+    {
+        if let Ok(dir) = std::fs::read_dir("/proc") {
+            for e in dir.flatten() {
+                let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+                if let Some(pp) = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|st| st.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1)?.parse::<u32>().ok())) {
+                    out.insert(pid, pp);
+                }
+            }
+            return out;
+        }
+    }
+    let s = sysinfo_of(None, false, false);
+    for (pid, p) in s.processes() {
+        if let Some(pp) = p.parent() {
+            out.insert(pid.as_u32(), pp.as_u32());
+        }
+    }
+    out
+}
+
+/// The parent of one process.
+pub fn parent_of(pid: u32) -> Option<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        let st = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        return st.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok();
+    }
+    #[allow(unreachable_code)]
+    sysinfo_of(Some(&[pid]), false, false).process(sysinfo::Pid::from_u32(pid))?.parent().map(|p| p.as_u32())
+}
+
+/// A process's environment (only the user's own processes can be read).
+pub fn env_of(pid: u32) -> std::collections::HashMap<String, String> {
+    let pairs: Vec<String> = {
+        #[cfg(all(target_os = "linux", not(test)))]
+        {
+            std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default().split(|b| *b == 0).map(|kv| String::from_utf8_lossy(kv).to_string()).collect()
+        }
+        #[cfg(any(not(target_os = "linux"), test))]
+        {
+            sysinfo_of(Some(&[pid]), true, false).process(sysinfo::Pid::from_u32(pid)).map(|p| p.environ().iter().map(|e| e.to_string_lossy().to_string()).collect()).unwrap_or_default()
+        }
+    };
+    pairs.into_iter().filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect()
+}
+
+/// A process's command line.
+pub fn cmdline(pid: u32) -> String {
+    #[cfg(target_os = "linux")]
+    {
+        return String::from_utf8_lossy(&std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default()).replace('\0', " ");
+    }
+    #[allow(unreachable_code)]
+    sysinfo_of(Some(&[pid]), false, true).process(sysinfo::Pid::from_u32(pid)).map(|p| p.cmd().iter().map(|c| c.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ")).unwrap_or_default()
+}
+
+/// This computer's name.
+pub fn hostname() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .or_else(|| command("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "localhost".into())
+}
+
+/// An app opened from the Dock or Finder (macOS), or some Linux launchers, gets a bare PATH without
+/// the folders where `claude`, `gh` and `git` live: take the login shell's PATH, once, at start.
+pub fn fix_path() {
+    #[cfg(unix)]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| if cfg!(target_os = "macos") { "/bin/zsh".into() } else { "/bin/sh".into() });
+        let Some(out) = output_timeout(command(&shell).args(["-l", "-c", "printf '__SDPATH__%s' \"$PATH\""]), 4) else { return };
+        let text = String::from_utf8_lossy(&out.stdout);
+        let Some(found) = text.rsplit("__SDPATH__").next().map(str::trim).filter(|p| !p.is_empty() && text.contains("__SDPATH__")) else { return };
+        let cur = std::env::var("PATH").unwrap_or_default();
+        let mut parts: Vec<&str> = found.split(':').collect();
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            if std::path::Path::new(extra).is_dir() {
+                parts.push(extra);
+            }
+        }
+        for p in cur.split(':') {
+            if !parts.contains(&p) {
+                parts.push(p);
+            }
+        }
+        let merged = parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(":");
+        // SAFETY: called at start, before any other thread runs
+        unsafe { std::env::set_var("PATH", merged) };
     }
 }

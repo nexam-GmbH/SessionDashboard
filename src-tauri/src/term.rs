@@ -27,8 +27,11 @@ fn size(cols: u16, rows: u16) -> PtySize {
 fn shell() -> CommandBuilder {
     #[cfg(windows)]
     {
-        let sh = std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".into());
-        CommandBuilder::new(sh)
+        // PowerShell 7 when installed, else Windows PowerShell (what Windows Terminal opens)
+        let ps = if crate::sys::command("pwsh").arg("-Version").output().is_ok() { "pwsh.exe" } else { "powershell.exe" };
+        let mut c = CommandBuilder::new(ps);
+        c.arg("-NoLogo");
+        c
     }
     #[cfg(not(windows))]
     {
@@ -55,10 +58,7 @@ fn shell_quote(p: &str) -> String {
 }
 
 fn expand(p: &str) -> String {
-    match (p.strip_prefix("~"), std::env::var("HOME")) {
-        (Some(rest), Ok(home)) => format!("{home}{rest}"),
-        _ => p.to_string(),
-    }
+    crate::sys::expand(p)
 }
 
 /// Start a shell in `cwd` and stream what it prints to `on_data`. An empty message means it exited.
@@ -81,8 +81,8 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
     let dir = expand(&cwd);
     if host.is_none() && std::path::Path::new(&dir).is_dir() {
         cmd.cwd(dir);
-    } else if let Ok(home) = std::env::var("HOME") {
-        cmd.cwd(home);
+    } else {
+        cmd.cwd(crate::sys::home());
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -156,8 +156,7 @@ pub fn key_of_descendant(terms: &Terms, pid: u32) -> Option<String> {
         if let Some((k, _)) = shells.iter().find(|(_, s)| *s == cur) {
             return Some(k.clone());
         }
-        let stat = std::fs::read_to_string(format!("/proc/{cur}/stat")).ok()?;
-        cur = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+        cur = crate::sys::parent_of(cur)?;
         if cur <= 1 {
             return None;
         }

@@ -17,8 +17,7 @@ pub fn claude_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    Path::new(&home).join(".claude")
+    crate::sys::home().join(".claude")
 }
 
 static EXTRA_DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -26,11 +25,11 @@ static EXTRA_DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 /// Other Claude Code config folders (other accounts, `CLAUDE_CONFIG_DIR=~/.claude-work`), set from
 /// the app's settings. Their sessions, transcripts and usage are read too.
 pub fn set_extra_dirs(dirs: &[String]) {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::sys::home();
     let main = claude_dir();
     let list = dirs
         .iter()
-        .map(|d| if let Some(rest) = d.strip_prefix("~/") { Path::new(&home).join(rest) } else { PathBuf::from(d) })
+        .map(|d| if let Some(rest) = d.strip_prefix("~/") { home.join(rest) } else { PathBuf::from(d) })
         .filter(|d| d.is_dir() && *d != main)
         .collect();
     *EXTRA_DIRS.lock().unwrap() = list;
@@ -54,17 +53,28 @@ pub fn claude_bin() -> String {
     if let Ok(p) = std::env::var("SD_CLAUDE_BIN") {
         return p;
     }
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::sys::home();
+    let h = |rel: &str| home.join(rel).to_string_lossy().to_string();
+    #[cfg(windows)]
     let candidates = [
-        format!("{home}/.npm-global/bin/claude"),
-        format!("{home}/.local/bin/claude"),
-        format!("{home}/.claude/local/claude"),
+        h(".local\\bin\\claude.exe"),
+        h("AppData\\Roaming\\npm\\claude.cmd"),
+        h(".claude\\local\\claude.exe"),
+        String::new(),
+        String::new(),
+        String::new(),
+    ];
+    #[cfg(not(windows))]
+    let candidates = [
+        h(".npm-global/bin/claude"),
+        h(".local/bin/claude"),
+        h(".claude/local/claude"),
         "/usr/local/bin/claude".to_string(),
         "/usr/bin/claude".to_string(),
         "/opt/homebrew/bin/claude".to_string(),
     ];
     for c in candidates {
-        if Path::new(&c).exists() {
+        if !c.is_empty() && Path::new(&c).exists() {
             return c;
         }
     }
@@ -97,7 +107,7 @@ static HELPERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// A claude the built-in terminal opened only for one of its menus (`SD_HIDE=1 claude /mcp`): not a
 /// session to list.
 fn hidden(pid: u64) -> bool {
-    std::fs::read(format!("/proc/{pid}/environ")).map(|e| e.split(|b| *b == 0).any(|v| v == b"SD_HIDE=1")).unwrap_or(false)
+    crate::sys::env_of(pid as u32).get("SD_HIDE").map(|v| v == "1").unwrap_or(false)
 }
 
 fn is_helper(pid: u64) -> bool {
@@ -111,7 +121,7 @@ pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<
     use std::io::{BufRead, BufReader, Write};
     let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
-        .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+        .current_dir(crate::sys::home())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -172,7 +182,7 @@ pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<
 pub fn spinner_verbs() -> Value {
     let bin = std::fs::canonicalize(claude_bin()).unwrap_or_else(|_| PathBuf::from(claude_bin()));
     let stamp = std::fs::metadata(&bin).map(|m| format!("{}:{}", m.len(), m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0))).unwrap_or_default();
-    let cache = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/session-dashboard/verbs.json");
+    let cache = crate::sys::config_dir().join("verbs.json");
     let mut found: Option<(Vec<String>, Vec<String>)> = None;
     if let Ok(v) = std::fs::read_to_string(&cache).map(|s| serde_json::from_str::<Value>(&s).unwrap_or(Value::Null)) {
         if v["stamp"] == stamp.as_str() {
@@ -275,7 +285,7 @@ impl HostHelper {
         use std::io::{BufRead, BufReader, Write};
         let mut cmd = crate::sys::command(claude_bin());
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
-            .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+            .current_dir(crate::sys::home())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -376,7 +386,7 @@ pub fn cloud_send(session_id: &str, text: &str) -> Result<Value, String> {
     }
     let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--cloud", session_id, "--output-format", "json"])
-        .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+        .current_dir(crate::sys::home())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -495,10 +505,11 @@ fn note_edits(m: &mut SessionMeta, parts: &[Value]) {
         }
         let input = p.get("input");
         let Some(path) = input.and_then(|i| i.get("file_path").or_else(|| i.get("notebook_path"))).and_then(Value::as_str) else { continue };
-        if let Some(i) = m.edited.iter().position(|x| x == path) {
+        let path = crate::sys::norm(path);
+        if let Some(i) = m.edited.iter().position(|x| *x == path) {
             m.edited.remove(i);
         }
-        m.edited.push(path.to_string());
+        m.edited.push(path);
         if m.edited.len() > EDITED_MAX {
             m.edited.remove(0);
         }
@@ -555,8 +566,13 @@ fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collect
             }
         }
         let mut v = v;
-        if let (Some(x), Some(obj)) = (&extra, v.as_object_mut()) {
-            obj.insert("configDir".into(), Value::String(x.clone()));
+        if let Some(obj) = v.as_object_mut() {
+            if let Some(x) = &extra {
+                obj.insert("configDir".into(), Value::String(x.clone()));
+            }
+            if let Some(c) = obj.get("cwd").and_then(Value::as_str).map(crate::sys::norm) {
+                obj.insert("cwd".into(), Value::String(c));
+            }
         }
         out.push(v);
     }
@@ -678,7 +694,7 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
             m.pr_number = v.get("prNumber").and_then(Value::as_u64).or(m.pr_number);
         }
         "user" | "assistant" => {
-            if let Some(c) = s("cwd") {
+            if let Some(c) = s("cwd").map(|c| crate::sys::norm(&c)) {
                 if !from_tail && m.start_cwd.is_none() {
                     m.start_cwd = Some(c.clone());
                 }

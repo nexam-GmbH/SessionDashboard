@@ -3,6 +3,7 @@
 // applied once. Partial text from the stream (`stream_event` text deltas) shows as a streaming
 // agent message until the final assistant record replaces it.
 import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Picture } from "@/lib/model"
+import { normPath } from "@/lib/format"
 import { classifyTool } from "@/features/session-view/tools/toolSummary"
 
 type Usage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } }
@@ -83,7 +84,7 @@ function toolTitle(name: string, input: Record<string, unknown>) {
 }
 
 function diffFor(name: string, input: Record<string, unknown>): FileChange[] | undefined {
-  const path = typeof input.file_path === "string" ? input.file_path : undefined
+  const path = typeof input.file_path === "string" ? normPath(input.file_path) : undefined
   if (!path) return undefined
   if (name === "Edit" && typeof input.old_string === "string" && typeof input.new_string === "string") {
     return [{ path, op: "modify", oldText: input.old_string, newText: input.new_string, added: count(input.new_string), removed: count(input.old_string) }]
@@ -184,7 +185,7 @@ function applyRecord(b: Builder, r: Rec) {
           completedAt: at,
           ...(images.length ? { images } : {}),
           ...(Array.isArray(att) && att.length
-            ? { files: att.filter((a) => a.path).map((a) => ({ path: a.path!, name: a.path!.split("/").pop() ?? a.path!, size: a.size, mediaType: a.media_type, fileUuid: a.file_uuid })) }
+            ? { files: att.filter((a) => a.path).map((a) => ({ path: a.path!, name: a.path!.split(/[\\/]/).pop() ?? a.path!, size: a.size, mediaType: a.media_type, fileUuid: a.file_uuid })) }
             : {}),
         }))
       }
@@ -235,11 +236,11 @@ function applyRecord(b: Builder, r: Rec) {
           input,
           diff: diffFor(name, input),
           terminal: name === "Bash" && typeof input.command === "string" ? { command: input.command } : undefined,
-          locations: typeof input.file_path === "string" ? [{ path: input.file_path }] : undefined,
+          locations: typeof input.file_path === "string" ? [{ path: normPath(input.file_path) }] : undefined,
           startedAt: at,
           // files Claude hands you: known from the call, completed by its result
           ...(name === "SendUserFile" && Array.isArray(input.files)
-            ? { files: (input.files as unknown[]).filter((f): f is string => typeof f === "string").map((f) => ({ path: f, name: f.split("/").pop() ?? f })), caption: typeof input.caption === "string" ? input.caption : undefined }
+            ? { files: (input.files as unknown[]).filter((f): f is string => typeof f === "string").map((f) => ({ path: f, name: f.split(/[\\/]/).pop() ?? f })), caption: typeof input.caption === "string" ? input.caption : undefined }
             : {}),
         }
         b.st.tools.set(p.id, id)

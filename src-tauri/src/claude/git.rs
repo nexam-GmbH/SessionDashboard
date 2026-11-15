@@ -224,12 +224,11 @@ pub fn remote(host: &str, paths: &[String], quick: bool) -> Vec<GitState> {
 /// Git repositories in a workspace folder: the folder itself, its children and grandchildren
 /// (hidden folders and node_modules skipped).
 pub fn find_repos(root: &str) -> Vec<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let root = root.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| root.to_string());
+    let root = crate::sys::expand(root);
     let mut out = Vec::new();
     fn walk(dir: &std::path::Path, depth: u8, out: &mut Vec<String>) {
         if dir.join(".git").exists() {
-            out.push(dir.to_string_lossy().to_string());
+            out.push(crate::sys::norm(&dir.to_string_lossy()));
             return;
         }
         if depth == 0 {
@@ -253,10 +252,7 @@ pub fn find_repos(root: &str) -> Vec<String> {
 /// The pull request of the branch checked out in `cwd` (GitHub CLI): number, title, state, review
 /// decision, mergeable, checks. Null when there is none, `gh` is missing or not signed in.
 pub fn pr_status(cwd: &str) -> serde_json::Value {
-    let dir = match (cwd.strip_prefix("~/"), std::env::var("HOME")) {
-        (Some(rest), Ok(home)) => format!("{home}/{rest}"),
-        _ => cwd.to_string(),
-    };
+    let dir = crate::sys::expand(cwd);
     let fields = "number,url,title,state,isDraft,reviewDecision,mergeable,statusCheckRollup";
     // never let gh hang the panel on a slow network
     let mut c = crate::sys::command("gh");

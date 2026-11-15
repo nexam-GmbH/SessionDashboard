@@ -62,7 +62,7 @@ pub fn hook_token() -> String {
     static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TOKEN
         .get_or_init(|| {
-            let p = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/session-dashboard/hook-token");
+            let p = crate::sys::config_dir().join("hook-token");
             if let Ok(t) = std::fs::read_to_string(&p) {
                 if t.trim().len() >= 32 {
                     return t.trim().to_string();
@@ -105,10 +105,7 @@ fn write_token(dir: &std::path::Path) -> Result<(), String> {
 }
 
 pub fn local_hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .or_else(|_| std::fs::read_to_string("/etc/hostname"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+    crate::sys::hostname()
 }
 
 // ---------- the endpoint ----------
@@ -347,9 +344,10 @@ pub fn status_local() -> Value {
 
 /// Install (or remove) the hook on this computer. The first change keeps a backup of settings.json.
 pub fn set_local(install: bool, port: u16) -> Result<Value, String> {
-    // the hook is a POSIX shell script; Windows has no sh by default
-    if cfg!(windows) && install {
-        return Err("Hooks need a POSIX shell (sh) and are not available on Windows yet. Sessions are still found and shown without them.".into());
+    // the hook is a POSIX shell script: on Windows it runs in Git for Windows' sh (Claude Code needs
+    // Git for Windows anyway)
+    if cfg!(windows) && install && crate::sys::command(crate::sys::sh()).args(["-c", "exit 0"]).status().is_err() {
+        return Err("Hooks need Git for Windows (its sh). Install it from git-scm.com, then turn this on again.".into());
     }
     let path = settings_path();
     let before = std::fs::read_to_string(&path).unwrap_or_default();

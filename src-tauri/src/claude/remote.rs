@@ -21,7 +21,7 @@ pub fn ssh_bin() -> String {
 }
 
 fn control_path() -> String {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().trim_end_matches('/').to_string());
     format!("{dir}/sd-ssh-%C")
 }
 
@@ -35,18 +35,12 @@ pub const REMOTE_PATH: &str = r#"PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$H
 /// An ssh command for `host` running `script` in a POSIX shell there.
 pub fn ssh_cmd(host: &str, script: &str) -> Command {
     let mut c = crate::sys::command(ssh_bin());
+    c.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]);
+    // one shared connection per host (Windows' OpenSSH has no connection sharing)
+    if !cfg!(windows) {
+        c.args(["-o", "ControlMaster=auto", "-o", &format!("ControlPath={}", control_path()), "-o", "ControlPersist=120"]);
+    }
     c.args([
-        "-T",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=8",
-        "-o",
-        "ControlMaster=auto",
-        "-o",
-        &format!("ControlPath={}", control_path()),
-        "-o",
-        "ControlPersist=120",
         host,
         &format!("sh -c {}", shell_quote(&format!("{REMOTE_PATH}; {script}"))),
     ]);

@@ -5,6 +5,7 @@
 // - at most 2 single alerts in 10 minutes and 6 an hour; more become one summary of what still waits
 // - never while the window is in front, never for a muted repo, never stealing focus
 import type { SessionStatus } from "@/lib/model"
+import { OS } from "@/lib/platform"
 import { getApp, useApp } from "@/store/app"
 
 type Kind = "permission" | "question" | "finished" | "error"
@@ -55,7 +56,8 @@ async function send(title: string, body: string, sessionId?: string) {
       title,
       body: body.slice(0, 180),
       extra: sessionId ? { sessionId } : undefined,
-      sound: getApp().settings.notify.sound ? "message-new-instant" : undefined,
+      // the system's message sound: freedesktop name on Linux, the default sound elsewhere
+      sound: getApp().settings.notify.sound ? (OS === "linux" ? "message-new-instant" : "default") : undefined,
     })
   } catch {
     /* no notification service */
