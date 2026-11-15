@@ -22,7 +22,18 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
   panel with the context window breakdown, changes, pull request status and plan limits.
 - **Back in context.** Return to a session after a while and a card says what you last asked and what
   happened since. The details panel tells whether tests or checks ran after the last edit, and a banner
-  offers "Step back" when the same step has failed three times in a row.
+  offers "Step back" when the same step has failed three times in a row. A long, much-steered session
+  can start fresh: a new session in the same folder, opened with an editable brief built from the old
+  one (no model call).
+- **Parallel work without collisions.** Two sessions editing the same files in one repository are flagged
+  on their cards: in the same folder they overwrite each other, in separate worktrees a merge conflict
+  waits. Dev servers a session started show as `:5173` chips that open in the browser, and a working
+  session that has written nothing for five minutes says so.
+- **After a restart.** The sessions that were running when the app closed are offered back in one go.
+- **Pull requests.** Status and checks in the details panel; a red check's failing log lines go to the
+  session with one click.
+- **Permissions you granted.** Settings → Permissions lists every "always allow" rule from your user and
+  project settings, the ones that allow something hard to undo first, and removes one with a click.
 - **Finds sessions by itself.** Sessions started in any terminal show up on their own, grouped by
   repository (worktrees, servers and cloud sessions of one repo share a column). Optional hooks make their
   states exact and let you answer a terminal session's permission prompt from the app.
@@ -34,6 +45,8 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
   your plan's 5-hour and weekly limits over time. The history is kept in its own ledger, so it survives
   Claude Code cleaning up old transcripts. Next to the prompt box, a session whose prompt cache has expired
   says what the next message costs to re-read the conversation.
+- **Review.** Files that deserve a look first (secrets, CI, migrations, auth, dependencies) lead the list
+  and tests come last; very large diffs suggest going turn by turn.
 - **Git loose ends.** Worktrees and branches with uncommitted or unpushed work, per repository.
 - **Fast.** Sessions switch instantly, chats load from the end of their transcript, and nothing polls
   harder than it has to.

@@ -36,7 +36,8 @@ export function duration(ms: number) {
 }
 
 export function usd(n: number) {
-  if (n < 0.01) return "$0.00"
+  if (n <= 0) return "$0.00"
+  if (n < 0.01) return "<$0.01"
   if (n < 100) return `$${n.toFixed(2)}`
   return `$${Math.round(n)}`
 }

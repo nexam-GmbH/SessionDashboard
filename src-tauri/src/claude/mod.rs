@@ -5,6 +5,8 @@ pub mod control;
 pub mod discover;
 pub mod git;
 pub mod hooks;
+pub mod perms;
+pub mod ports;
 pub mod remote;
 pub mod transcript;
 
@@ -186,6 +188,12 @@ pub async fn pr_status(cwd: String) -> Result<Value, String> {
     blocking(move || Ok(git::pr_status(&cwd))).await
 }
 
+/// The failing GitHub Actions log lines of these runs, for sending to the session.
+#[tauri::command]
+pub async fn ci_failure_log(cwd: String, runs: Vec<u64>) -> Result<String, String> {
+    blocking(move || git::ci_failure_log(&cwd, &runs)).await
+}
+
 #[tauri::command]
 pub async fn workspace_repos(roots: Vec<String>) -> Result<Vec<String>, String> {
     blocking(move || Ok(roots.iter().flat_map(|r| git::find_repos(r)).collect())).await
@@ -254,4 +262,42 @@ pub async fn remote_tunnels(app: AppHandle, tunnels: State<'_, remote::Tunnels>,
         Ok(())
     })
     .await
+}
+
+/// Claude Code's "always allow" / "deny" rules: the user's file and each project's (for review).
+#[tauri::command]
+pub async fn claude_permission_rules(projects: Vec<String>) -> Result<Vec<perms::RuleFile>, String> {
+    blocking(move || Ok(perms::list(&projects))).await
+}
+
+/// Add or remove one permission rule in one of those files.
+#[tauri::command]
+pub async fn claude_permission_rule(path: String, list: String, rule: String, add: bool) -> Result<(), String> {
+    blocking(move || perms::edit(&path, &list, &rule, add)).await
+}
+
+/// Ports each live local session's processes listen on (its dev servers): session id → ports.
+#[tauri::command]
+pub async fn session_ports(app: AppHandle) -> Result<std::collections::HashMap<String, Vec<u16>>, String> {
+    blocking(move || {
+        let mut roots: Vec<(String, u32)> = discover::pid_sessions()
+            .iter()
+            .filter_map(|v| Some((v.get("sessionId")?.as_str()?.to_string(), v.get("pid")?.as_u64()? as u32)))
+            .collect();
+        roots.extend(app.state::<Procs>().local_pids());
+        Ok(ports::ports_of(&roots))
+    })
+    .await
+}
+
+/// One top-level value of Claude Code's user settings (null when unset).
+#[tauri::command]
+pub async fn claude_user_setting(key: String) -> Result<Value, String> {
+    blocking(move || Ok(perms::user_setting(&key))).await
+}
+
+/// Change one of the few user settings the app offers to change (cleanupPeriodDays).
+#[tauri::command]
+pub async fn claude_set_user_setting(key: String, value: Value) -> Result<(), String> {
+    blocking(move || perms::set_user_setting(&key, value)).await
 }

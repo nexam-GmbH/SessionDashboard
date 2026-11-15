@@ -12,7 +12,10 @@ import { openNewSession, openSession } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { ModeMark } from "@/components/common/ModeMark"
 import { riskOf } from "@/features/requests/risk"
-import { RelativeTime } from "@/components/common/RelativeTime"
+import { OverlapLine } from "@/components/common/OverlapNote"
+import { PortChips } from "@/components/common/PortChips"
+import { RestoreCard } from "./RestoreCard"
+import { RelativeTime, useQuietMinutes } from "@/components/common/RelativeTime"
 import { onceOptions, OnceButtons } from "@/features/requests/OnceAnswers"
 import { capabilities } from "@/lib/status"
 import { whereItIs, WHERE_TONE_CLASS } from "@/lib/where"
@@ -33,6 +36,7 @@ export default function Overview() {
   if (!repoOrder.length && !homes.length) return <NoSessions />
   return (
     <div className="ov h-full w-full overflow-auto" style={{ "--n": repoOrder.length } as React.CSSProperties}>
+      <RestoreCard />
       <div className="ov-tree">
         {hasMain && (
           <div className="ov-main-wrap gap-6">
@@ -51,6 +55,16 @@ export default function Overview() {
       <LooseEnds className="pb-12" />
     </div>
   )
+}
+
+/**
+ * A working session that has written nothing for 5+ minutes: a long command, or a hang. Said plainly
+ * on the card ("no output for 7 min") so a silent stall does not pass for progress.
+ */
+function QuietFor({ s }: { s: Session }) {
+  const min = useQuietMinutes(s.updatedAt, s.status === "working")
+  if (min === null) return null
+  return <span className="text-muted-foreground/70"> · no output for {min} min</span>
 }
 
 /** While the first list of sessions is read: the tree's shape (main card, rail, repo columns). */
@@ -301,9 +315,12 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
             title={where.text}
           >
             {where.text}
+            <QuietFor s={s} />
           </p>
         )}
         {origin && <Origin s={s} />}
+        <OverlapLine id={s.id} className="pointer-events-none relative mt-1 pl-[22px]" />
+        <PortChips id={s.id} className="relative mt-1.5 pl-[22px]" />
         {once && (
           <div className="relative mt-2 flex items-center gap-1 pl-[22px]">
             <OnceButtons once={once} />

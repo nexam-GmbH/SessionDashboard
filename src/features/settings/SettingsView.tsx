@@ -3,7 +3,7 @@
 // packages/ui/src/components/settings/SettingRow.tsx (MIT) — title left, control right — and
 // coollabsio/jean@1d53d3c: src/components/preferences/SettingsSection.tsx (Apache-2.0).
 // Modified for session-dashboard: our tokens, a single scrolling page instead of a dialog.
-import { createContext, useContext, useId, useState, type ComponentProps, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useId, useState, type ComponentProps, type ReactNode } from "react"
 import { FolderGit2, Plus, Server, Trash2 } from "lucide-react"
 import { useApp } from "@/store/app"
 import { patchSettings, pushNotification } from "@/store/actions"
@@ -25,11 +25,13 @@ import { probeMachine } from "@/backend/machines"
 import { pollCloud } from "@/backend/cloud"
 import { Input } from "@/components/ui/input"
 import { NOTICES } from "./notices"
+import { PermissionsPage } from "./PermissionsPage"
 
 /** The settings sections, in the order the dialog lists them. */
 export const SECTIONS = [
   { id: "sessions", label: REAL ? "Sessions" : "Repos", Page: REAL ? SourcesPage : ReposPage },
   { id: "new", label: "New sessions", Page: ClaudePage },
+  { id: "permissions", label: "Permissions", Page: PermissionsPage },
   { id: "notifications", label: "Notifications", Page: NotificationsPage },
   { id: "window", label: "Window", Page: WindowPage },
   { id: "about", label: "About", Page: AboutPage },
@@ -180,6 +182,47 @@ export function ReposPage() {
 }
 
 /** Where sessions come from: hooks on this computer, the cloud, VPS machines over ssh. */
+/**
+ * Claude Code deletes transcripts older than cleanupPeriodDays (30 by default). The usage ledger
+ * survives that, the chats themselves don't: offer a longer period, written on a click.
+ */
+function KeepChats() {
+  const [days, setDays] = useState<number | null | undefined>(undefined)
+  const [err, setErr] = useState<string | null>(null)
+  const live = IN_TAURI && REAL
+  useEffect(() => {
+    if (!live) return
+    void import("@tauri-apps/api/core").then(({ invoke }) => invoke<number | null>("claude_user_setting", { key: "cleanupPeriodDays" }).then((v) => setDays(typeof v === "number" ? v : null)))
+  }, [live])
+  if (!live || days === undefined) return null
+  const now = days ?? 30
+  const set = (v: number) =>
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke("claude_set_user_setting", { key: "cleanupPeriodDays", value: v }))
+      .then(() => setDays(v))
+      .catch((e) => setErr(String(e)))
+  return (
+    <SettingRow
+      title="Keep chats for"
+      hint={`${now} days${days === null ? " (default)" : ""}`}
+      description={
+        <>
+          Claude Code deletes session transcripts older than this (<Code>cleanupPeriodDays</Code> in <Code>~/.claude/settings.json</Code>). Usage history here survives it; the chats, search and resume don't.
+          {err && <span className="mt-1 block text-st-error-fg">{err}</span>}
+        </>
+      }
+    >
+      {now < 365 ? (
+        <Button size="sm" variant="outline" onClick={() => set(365)}>
+          Keep a year
+        </Button>
+      ) : (
+        <span className="text-xs text-muted-foreground">{now} days</span>
+      )}
+    </SettingRow>
+  )
+}
+
 export function SourcesPage() {
   const recentPer = useApp((s) => s.settings.recentPerRepo ?? 5)
   const hooks = useApp((s) => s.hooks)
@@ -206,6 +249,7 @@ export function SourcesPage() {
         <SettingRow title="Recent sessions per project" description="How many sessions each project shows on the overview and in the list: every running one, then the ones you used last. Older ones are a search away (Ctrl+K).">
           <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
         </SettingRow>
+        <KeepChats />
         <SettingRow
           title="Exact states from hooks"
           hint={err ? "failed" : hooks?.installed ? "on" : undefined}

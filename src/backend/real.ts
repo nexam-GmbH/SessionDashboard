@@ -47,6 +47,7 @@ interface Meta {
   endedTurn: boolean
   lastText?: string
   lastActivity?: string
+  edited?: string[]
 }
 interface Live {
   pid?: number
@@ -479,6 +480,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     activity: own && prev?.activity && working ? prev.activity : working ? (meta?.lastActivity ?? "Working") : (meta?.lastText ?? meta?.lastPrompt),
     lastPrompt: meta?.lastPrompt,
     lastText: meta?.lastText,
+    editedPaths: meta?.edited && prev?.editedPaths && sameList(prev.editedPaths, meta.edited) ? prev.editedPaths : meta?.edited,
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
     model: own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5"),
@@ -1205,6 +1207,8 @@ function onElicitation(key: ID, requestId: string, e: Elicitation) {
   noticeInfo(key, `${e.mcp_server_name} asked for input the app can't show yet (${e.message.slice(0, 120)}). Declined; use /mcp in the terminal for this server.`)
 }
 
+const mcpWarned = new Set<string>()
+
 function noticeInfo(id: ID, text: string) {
   patchTranscript(id, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${Date.now()}`, timestamp: new Date().toISOString() }], { running: isRunning(id) }))
 }
@@ -1485,7 +1489,25 @@ function onEvent({ key, event, exit }: EventPayload) {
       // exact state (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS): a turn's result can come while
       // background subagents or shells still work; "idle" is when it is really done
       // the commands that need Claude Code's own terminal UI, as this claude reports them
-      if (event.subtype === "init") void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
+      if (event.subtype === "init") {
+        void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
+        // MCP servers that did not connect: said once per server, with the way to fix it
+        const servers = (event.mcp_servers as { name?: string; status?: string }[] | undefined) ?? []
+        const failed = servers.filter((x) => x.name && (x.status === "failed" || x.status === "needs-auth"))
+        for (const x of failed) {
+          const k = `${key}:${x.name}:${x.status}`
+          if (mcpWarned.has(k)) continue
+          mcpWarned.add(k)
+          noticeInfo(key, `MCP server ${x.name} ${x.status === "needs-auth" ? "needs you to sign in" : "did not connect"}. Run /mcp to ${x.status === "needs-auth" ? "sign in" : "see why and reconnect"}.`)
+        }
+      }
+      // an API error Claude Code is retrying: say when it tries again instead of looking stuck
+      if (event.subtype === "api_retry") {
+        const ms = typeof event.retry_delay_ms === "number" ? event.retry_delay_ms : 0
+        const attempt = typeof event.attempt === "number" ? event.attempt : undefined
+        const why = typeof event.error === "string" ? event.error.replace(/_/g, " ") : typeof event.error_status === "number" ? `HTTP ${event.error_status}` : "API error"
+        setStatusLocal(key, "working", { activity: `${why[0].toUpperCase()}${why.slice(1)}: retrying${ms ? ` in ${Math.round(ms / 1000)} s` : ""}${attempt ? ` (attempt ${attempt})` : ""}` })
+      }
       if (event.subtype === "session_state_changed") {
         const state = event.state as "idle" | "running" | "requires_action" | undefined
         const was = own.state
@@ -1550,6 +1572,7 @@ export async function startReal() {
     /* ignore */
   }
   registerSync(sync)
+  void import("./ports").then((p) => p.startPorts())
   await listen<EventPayload>("claude-event", (e) => onEvent(e.payload))
   void loadCaps()
   // the installed claude's spinner words ("Drizzling…", "Cooked for 26s")
@@ -1570,6 +1593,8 @@ export async function startReal() {
   await readGit([...recentStarts].slice(0, 60), undefined, true)
   sync()
   setApp({ ready: true })
+  // what ran last time and runs no more (after pid polling has had a few rounds)
+  setTimeout(() => void import("@/features/overview/restore").then((r) => r.startRestore()), 6000)
   // read ahead the chats that need you, once the first paint is done
   setTimeout(pruneTranscripts, 1500)
   setInterval(() => void pollPids().then(sync), 2000)

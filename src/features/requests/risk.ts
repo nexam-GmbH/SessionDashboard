@@ -60,3 +60,76 @@ export function riskOf(req: PermissionRequest, cwd?: string): Risk {
     return { high: true, effect: "Edits a file outside this session's folder" }
   return NONE
 }
+
+// ---------- standing rules ("always allow") ----------
+export interface RuleRisk {
+  level: "high" | "broad" | null
+  effect?: string
+}
+
+const RUNS_ANY_CODE = /^(?:bash|sh|zsh|fish|python3?|node|deno|bun|npx|bunx|pnpx|pnpm dlx|uvx?|uv run|ruby|perl|php|eval|exec|xargs|env|sudo|ssh|docker(?: run| exec)?|kubectl exec|make|just|npm run|pnpm|yarn|cargo run|go run|tsx|ts-node)$/
+const PREFIX: [RegExp, string][] = [
+  [/^(?:rm|rmdir|unlink|shred|find|dd|mkfs\S*|truncate)$/, "Deletes files without asking"],
+  [/^(?:chmod|chown|chgrp)$/, "Changes file permissions without asking"],
+  [/^git(?: push)?$/, "Any push without asking, force pushes included"],
+  [/^git (?:reset|clean|checkout|restore|branch|rebase|filter-branch|stash)$/, "Can throw away work without asking"],
+  [/^(?:curl|wget|nc|scp|rsync)$/, "Sends and fetches data anywhere without asking"],
+  [/^(?:npm|pnpm|yarn|cargo|gem|twine|poetry) publish$/, "Publishes packages without asking"],
+  [/^gh(?: pr| release| repo| api)?$/, "Acts on GitHub for everyone without asking"],
+  [/^(?:kubectl|helm|terraform|pulumi|aws|gcloud|az|fly|flyctl|vercel|netlify|firebase|heroku)$/, "Changes cloud resources without asking"],
+  [/^(?:psql|mysql|sqlite3|mongo|mongosh|redis-cli)$/, "Runs any database command without asking"],
+  [/^(?:kill|pkill|killall|systemctl|reboot|shutdown)$/, "Stops processes or services without asking"],
+]
+
+/**
+ * What an allow rule lets Claude do unasked. High: hard to undo or runs anything. Broad: a whole tool
+ * or server without limits. Rules look like `Bash(npm test:*)`, `Edit(src/**)`, `mcp__github`.
+ */
+export function ruleRisk(rule: string): RuleRisk {
+  const m = /^([\w-]+)(?:\((.*)\))?$/.exec(rule.trim())
+  if (!m) return { level: null }
+  const [, tool, arg = ""] = m
+  const spec = arg.trim()
+  if (tool === "Bash") {
+    const prefix = spec.replace(/(?::\*|\s*\*)+$/, "").trim()
+    if (!prefix) return { level: "high", effect: "Any shell command without asking" }
+    const low = prefix.toLowerCase()
+    if (RUNS_ANY_CODE.test(low)) return { level: "high", effect: `Runs any code through ${prefix} without asking` }
+    for (const [re, effect] of PREFIX) if (re.test(low)) return { level: "high", effect }
+    const r = COMMAND.find(([re]) => re.test(prefix))
+    if (r) return { level: "high", effect: `${r[1]} without asking` }
+    return { level: null }
+  }
+  if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
+    if (!spec || spec === "**" || spec === "*" || spec === "./**") return { level: "broad", effect: "Edits any file in the project without asking" }
+    if (/^(?:~|\/\/|\/)/.test(spec)) {
+      const p = PATH.find(([re]) => re.test(spec.replace(/^\/\//, "/").replace(/\*+$/, "x")))
+      return { level: "high", effect: p ? `${p[1]} without asking` : "Edits files outside the project without asking" }
+    }
+    return { level: null }
+  }
+  if (tool === "WebFetch" && !spec) return { level: "broad", effect: "Fetches any website without asking" }
+  if (tool.startsWith("mcp__") && tool.split("__").length === 2) return { level: "broad", effect: `Every tool of the ${tool.slice(5)} server without asking` }
+  return { level: null }
+}
+
+// ---------- files to review first ----------
+const LOOK: [RegExp, string][] = [
+  [/(?:^|\/)\.env(?:\.[\w-]+)?$|\.(?:pem|key|p12|pfx)$|(?:^|\/)(?:secrets?|credentials?)(?:\/|\.|$)/i, "Secrets"],
+  [/(?:^|\/)(?:\.github\/workflows|\.gitlab-ci|\.circleci|Jenkinsfile|\.buildkite)|(?:^|\/)(?:Dockerfile|docker-compose[\w.-]*\.ya?ml|compose\.ya?ml)$|\.tf$|(?:^|\/)(?:helm|k8s|kubernetes|deploy|infra)\//i, "CI, build or deploy"],
+  [/(?:^|\/)(?:migrations?|migrate|db\/schema)\/|\.sql$|(?:^|\/)schema\.prisma$/i, "Database migration"],
+  [/(?:^|[/._-])(?:auth(?:n|z|entication|orization|orize[rd]?)?|oauth2?|security|permissions?|crypto|passwords?|jwt|acl|rbac|csrf|saniti[sz]e\w*)(?=[/._-]|$)/i, "Security-sensitive"],
+  [/(?:^|\/)(?:package\.json|Cargo\.toml|go\.mod|requirements[\w.-]*\.txt|pyproject\.toml|Gemfile|pom\.xml|build\.gradle(?:\.kts)?)$/, "Dependencies"],
+]
+
+/**
+ * Why a changed file deserves a look before the rest (secrets, CI, migrations, auth, dependencies,
+ * deletions); undefined for the ordinary ones. Review attention is best spent where mistakes cost most.
+ */
+export function lookFirst(path: string, op: string): string | undefined {
+  for (const [re, why] of LOOK) if (re.test(path)) return why
+  return op === "delete" ? "Deleted" : undefined
+}
+
+/** Test files: reviewed after the code they test. */
+export const isTestPath = (path: string) => /(?:^|\/)(?:__tests__|tests?|spec|e2e)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|_test\.(?:go|py|rs)$|(?:^|\/)test_\w+\.py$/.test(path)

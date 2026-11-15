@@ -4,6 +4,7 @@
 // per-turn scoping (the Codex `turn/diff/updated` idea), and for the main agent
 // the delegated child sessions grouped by repo. File tree builder (folders first,
 // VS Code style compact folders) from Jean's git-diff-tree.ts.
+import { isTestPath, lookFirst } from "@/features/requests/risk"
 import { useMemo } from "react"
 import { useShallow } from "zustand/react/shallow"
 import type {
@@ -85,6 +86,8 @@ export interface ReviewFile {
   lastAt: string
   /** worker highlight cache key: changes whenever the contents change */
   cacheKey: string
+  /** why to look at it before the rest (secrets, CI, migration, auth, dependencies, deleted) */
+  look?: string
 }
 
 export interface FolderNode {
@@ -196,6 +199,7 @@ function toFile(a: Agg, groupId: string): ReviewFile {
     edits: a.edits,
     lastAt: a.lastAt,
     cacheKey: `${key}:${hash(oldText ?? "")}:${hash(newText ?? "")}`,
+    look: lookFirst(a.path, created ? "add" : deleted ? "delete" : "modify"),
   }
 }
 
@@ -420,7 +424,10 @@ export function buildModel(
     const list = byGroup.get(o.groupId)
     if (!list?.length || groups.some((g) => g.id === o.groupId)) continue
     const root = buildTree(list)
-    const ordered = collectFiles(root, [])
+    // the files worth a look first lead and tests come last, after the code they test (stable: the
+    // tree order otherwise). Files shown first get the most attention in a review.
+    const rank = (f: ReviewFile) => (f.look ? 0 : isTestPath(f.path) ? 2 : 1)
+    const ordered = collectFiles(root, []).sort((a, b) => rank(a) - rank(b))
     const g: ReviewGroup = {
       id: o.groupId,
       sessionId: o.id,

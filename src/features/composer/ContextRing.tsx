@@ -69,7 +69,7 @@ export function ContextRing({ sessionId, canCompact }: { sessionId: ID; canCompa
           </p>
         )}
         {cache && cache.tokens >= 200_000 && (
-          <p className="text-xs text-muted-foreground">Every message re-reads all {compact(cache.tokens)} tokens. A fresh session with a short brief is cheaper and often more focused.</p>
+          <p className="text-xs text-muted-foreground">Every message re-reads all {compact(cache.tokens)} tokens. A fresh session with a short brief (Start fresh, in the side panel) is cheaper and often more focused.</p>
         )}
         {canCompact && (
           <Button size="sm" variant="outline" className="mt-1 self-start" onClick={() => sendMessage(sessionId, "/compact", "now")}>

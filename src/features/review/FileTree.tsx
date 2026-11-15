@@ -16,6 +16,7 @@ import {
   FolderGit2,
   MessageSquare,
   Search,
+  TriangleAlert,
   X,
 } from "lucide-react"
 import type { ID } from "@/lib/model"
@@ -314,7 +315,7 @@ const FileRow = memo(function FileRow({
       aria-selected={active}
       data-active={active || undefined}
       onClick={() => onSelect(file.key)}
-      title={`${file.path} · ${OP_TITLE[file.op]}${mark ? ` · ${mark}` : ""}`}
+      title={`${file.path} · ${OP_TITLE[file.op]}${file.look ? ` · look first: ${file.look}` : ""}${mark ? ` · ${mark}` : ""}`}
       className={cn(
         "flex h-full w-full min-w-0 items-center gap-1.5 rounded-sm pr-1.5 text-left",
         indent ? "pl-6" : "pl-2",
@@ -334,6 +335,11 @@ const FileRow = memo(function FileRow({
       >
         {file.name}
       </span>
+      {file.look && (
+        <span role="img" aria-label={`Look first: ${file.look}`} title={`Look first: ${file.look}`} className="shrink-0 text-foreground">
+          <TriangleAlert size={11} />
+        </span>
+      )}
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground/70">
         {file.dir}
       </span>

@@ -445,6 +445,34 @@ pub struct SessionMeta {
     pub last_text: Option<String>,
     /// what the session did last: "Edit src/x.ts", "Bash: npm test", …
     pub last_activity: Option<String>,
+    /// files it edited (absolute paths, newest last, a few dozen), for sessions active in the last
+    /// day only: two sessions editing the same file are about to collide
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edited: Vec<String>,
+}
+
+const EDITED_MAX: usize = 40;
+const EDITED_RECENT_MS: u64 = 24 * 3600 * 1000;
+
+fn note_edits(m: &mut SessionMeta, parts: &[Value]) {
+    for p in parts {
+        if p.get("type").and_then(Value::as_str) != Some("tool_use") {
+            continue;
+        }
+        let name = p.get("name").and_then(Value::as_str).unwrap_or("");
+        if !matches!(name, "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+            continue;
+        }
+        let input = p.get("input");
+        let Some(path) = input.and_then(|i| i.get("file_path").or_else(|| i.get("notebook_path"))).and_then(Value::as_str) else { continue };
+        if let Some(i) = m.edited.iter().position(|x| x == path) {
+            m.edited.remove(i);
+        }
+        m.edited.push(path.to_string());
+        if m.edited.len() > EDITED_MAX {
+            m.edited.remove(0);
+        }
+    }
 }
 
 /// Live interactive sessions from `~/.claude/sessions/<pid>.json`, cheap enough to poll every few
@@ -651,6 +679,11 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                 if let Some(t) = assistant_text(v) {
                     m.last_text = Some(t);
                 }
+                if m.updated_ms + EDITED_RECENT_MS >= now_ms() {
+                    if let Some(parts) = v.get("message").and_then(|x| x.get("content")).and_then(Value::as_array) {
+                        note_edits(m, parts);
+                    }
+                }
                 if let Some(tu) = v
                     .get("message")
                     .and_then(|x| x.get("content"))
@@ -700,6 +733,10 @@ pub fn memfind(hay: &[u8], needle: &[u8]) -> bool {
         return hay.windows(n).any(|w| w == needle);
     }
     hay[..EDGE + n].windows(n).any(|w| w == needle) || hay[hay.len() - EDGE - n..].windows(n).any(|w| w == needle)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {

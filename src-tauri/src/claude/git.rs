@@ -268,3 +268,39 @@ pub fn pr_status(cwd: &str) -> serde_json::Value {
         _ => serde_json::Value::Null,
     }
 }
+
+/// The failing part of GitHub Actions runs (`gh run view --log-failed`), the last lines of each run,
+/// at most ~12k characters in all: what a session needs to fix a red check.
+pub fn ci_failure_log(cwd: &str, runs: &[u64]) -> Result<String, String> {
+    let mut out = String::new();
+    for id in runs.iter().take(3) {
+        let mut c = Command::new("timeout");
+        c.args(["30", "gh", "run", "view", &id.to_string(), "--log-failed"]);
+        c.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0").env("NO_COLOR", "1");
+        let o = c.output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect());
+        }
+        let text = String::from_utf8_lossy(&o.stdout);
+        let lines: Vec<&str> = text.lines().collect();
+        let tail = &lines[lines.len().saturating_sub(120)..];
+        out.push_str(&format!("--- run {id} ---\n"));
+        for l in tail {
+            // gh prefixes each line with "job<TAB>step<TAB>"; the timestamp after it is noise too
+            let l = l.splitn(3, '\t').last().unwrap_or(l);
+            let l = l.split_once(' ').filter(|(t, _)| t.len() > 20 && t.ends_with('Z')).map(|(_, r)| r).unwrap_or(l);
+            out.push_str(l);
+            out.push('\n');
+        }
+        if out.len() > 12_000 {
+            break;
+        }
+    }
+    if out.len() > 12_000 {
+        let cut = out.len() - 12_000;
+        let start = out.char_indices().find(|(i, _)| *i >= cut).map(|(i, _)| i).unwrap_or(0);
+        out = format!("…\n{}", &out[start..]);
+    }
+    Ok(out)
+}

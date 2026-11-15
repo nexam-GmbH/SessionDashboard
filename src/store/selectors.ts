@@ -241,3 +241,63 @@ export const selectArchivedCount = memoOn(
 export function sortByAttention(sessions: Session[]) {
   return sessions.slice().sort(compareAttention)
 }
+
+// ---------- sessions editing the same files ----------
+export interface Overlap {
+  other: ID
+  files: string[]
+  /** both work in the same checkout: their edits can overwrite each other right now */
+  sameFolder: boolean
+}
+
+const OVERLAP_WINDOW = 6 * 3600_000
+let overlapFor: { sessions: AppState["sessions"]; repos: AppState["repos"]; value: Map<ID, Overlap[]> } | null = null
+
+/**
+ * Live sessions of one repository that edited the same files in the last hours. Same folder: they
+ * write over each other now. Different worktrees: a merge conflict waits, unless the other worktree
+ * has nothing pending any more (its edits are merged or gone).
+ */
+export function selectOverlaps(s: AppState): Map<ID, Overlap[]> {
+  if (overlapFor && overlapFor.sessions === s.sessions && overlapFor.repos === s.repos) return overlapFor.value
+  const now = Date.now()
+  const byFile = new Map<string, { id: ID; root: string; pending: boolean }[]>()
+  for (const sess of Object.values(s.sessions)) {
+    if (!sess.editedPaths?.length || !sess.repoId || !isVisibleLive(sess)) continue
+    if (now - Date.parse(sess.updatedAt) > OVERLAP_WINDOW) continue
+    const repo = s.repos[sess.repoId]
+    if (!repo) continue
+    const wt = repo.worktrees.find((w) => w.id === sess.worktreeId)
+    const root = (wt?.path ?? repo.rootPath).replace(/\/+$/, "")
+    const pending = !wt || wt.git.state !== "clean"
+    for (const p of sess.editedPaths) {
+      if (!p.startsWith(root + "/")) continue
+      const key = `${sess.repoId}\0${p.slice(root.length + 1)}`
+      const list = byFile.get(key) ?? []
+      list.push({ id: sess.id, root, pending })
+      byFile.set(key, list)
+    }
+  }
+  const pairs = new Map<string, Overlap & { self: ID }>()
+  for (const [key, list] of byFile) {
+    if (list.length < 2) continue
+    const file = key.slice(key.indexOf("\0") + 1)
+    for (const a of list)
+      for (const b of list) {
+        if (a.id === b.id) continue
+        const sameFolder = a.root === b.root
+        if (!sameFolder && !(a.pending && b.pending)) continue
+        const k = `${a.id}>${b.id}`
+        const o = pairs.get(k) ?? { self: a.id, other: b.id, files: [], sameFolder }
+        o.files.push(file)
+        pairs.set(k, o)
+      }
+  }
+  const value = new Map<ID, Overlap[]>()
+  for (const { self, ...o } of pairs.values()) value.set(self, [...(value.get(self) ?? []), o])
+  overlapFor = { sessions: s.sessions, repos: s.repos, value }
+  return value
+}
+
+const NO_OVERLAP: Overlap[] = []
+export const useOverlaps = (id: ID) => useApp((s) => selectOverlaps(s).get(id) ?? NO_OVERLAP)

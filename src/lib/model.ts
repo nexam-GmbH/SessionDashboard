@@ -157,6 +157,8 @@ export interface Session {
   /** the last thing you asked and the last thing Claude said (hover preview) */
   lastPrompt?: string
   lastText?: string
+  /** files it edited lately (absolute paths, newest last): two sessions on one file collide */
+  editedPaths?: string[]
   lastStopReason?: "end_turn" | "max_tokens" | "refusal" | "cancelled" | "error"
   errorMessage?: string
   model: string

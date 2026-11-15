@@ -33,3 +33,12 @@ export function RelativeTime({ iso, className }: { iso: string | undefined; clas
     </time>
   )
 }
+
+/** Whole minutes since `iso` once at least `minMs` passed, else null (renders only when it changes). */
+export function useQuietMinutes(iso: string | undefined, active: boolean, minMs = 5 * 60_000): number | null {
+  return useSyncExternalStore(subscribe, () => {
+    if (!active || !iso) return null
+    const ms = now - Date.parse(iso)
+    return ms >= minMs ? Math.floor(ms / 60_000) : null
+  })
+}

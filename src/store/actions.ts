@@ -325,6 +325,18 @@ export function resumeSession(id: ID) {
   openSession(id)
 }
 
+/** Bring several sessions back at once (after a restart), without leaving the screen; staggered. */
+export function resumeMany(ids: ID[]) {
+  ids.forEach((id, i) =>
+    setTimeout(() => {
+      const s = getApp().sessions[id]
+      if (!s) return
+      if (REAL) realStart({ cwd: s.startCwd ?? s.cwd, resume: id, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+      else setStatus(id, "idle", { control: "owned", archived: false })
+    }, i * 400),
+  )
+}
+
 let seq = 0
 const newId = (p: string) => `${p}_${Date.now().toString(36)}${(seq++).toString(36)}`
 
@@ -359,6 +371,24 @@ export function forkSession(id: ID) {
   }
   addSession(fork)
   openSession(fid)
+}
+
+/**
+ * Start over with a brief: a new session in the same folder (same worktree, so its uncommitted work
+ * is there) whose first message is the brief. The old session stays as it is.
+ */
+export function startFresh(id: ID, brief: string) {
+  const s = getApp().sessions[id]
+  if (!s || !brief.trim()) return
+  const name = `${s.title.replace(/ \(continued\)$/, "")} (continued)`
+  if (REAL) {
+    openSession(realStart({ cwd: s.cwd, machine: s.machine, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, name }))
+    return
+  }
+  if (!s.repoId) return
+  const nid = createSession({ repoId: s.repoId, where: "main", title: name, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, additionalRepoIds: [], background: false, parent: { sessionId: id, kind: "forked" } })
+  patchSession(nid, { cwd: s.cwd, worktreeId: s.worktreeId })
+  openSession(nid)
 }
 
 export function addSession(session: Session) {

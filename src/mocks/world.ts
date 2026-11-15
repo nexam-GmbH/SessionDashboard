@@ -424,6 +424,15 @@ export function generateWorld(now = Date.now()): World {
   }
   notifications.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
+  // two api-gateway sessions on the same file: the overlap warning
+  const gw = Object.values(repos).find((r) => r.name === "api-gateway")
+  const pair = gw ? (sessionIdsByRepo[gw.id] ?? []).map((id) => sessions[id]).filter((x) => x && !x.archived && x.control !== "history").slice(0, 2) : []
+  if (pair.length === 2) {
+    pair[0].editedPaths = [`${pair[0].cwd}/src/auth/retry.ts`, `${pair[0].cwd}/src/routes/tickets.ts`]
+    pair[1].editedPaths = [`${pair[1].cwd}/src/routes/tickets.ts`, `${pair[1].cwd}/src/middleware/rate-limit.ts`]
+    for (const x of pair) x.updatedAt = new Date().toISOString()
+  }
+
   return {
     repos,
     repoOrder,

@@ -270,7 +270,20 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
   })
   if (item?.type !== "notice") return null
   if (item.severity === "info") {
-    return <div className="py-1 text-xs text-muted-foreground/70 select-text">{item.text}</div>
+    return (
+      <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground/70">
+        <span className="min-w-0 select-text">{item.text}</span>
+        {/\/mcp\b/.test(item.text) && (
+          <button
+            type="button"
+            onClick={() => void import("@/features/terminal/terminals").then((t) => t.runSlashInTerminal("/mcp", sessionId))}
+            className="h-5 shrink-0 rounded-sm border border-border px-1.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            Open /mcp
+          </button>
+        )}
+      </div>
+    )
   }
   const Icon = item.severity === "error" ? OctagonX : TriangleAlert
   return (

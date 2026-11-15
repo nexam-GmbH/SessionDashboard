@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { getApp, useApp } from "@/store/app"
+import { selectNeedsYouCount, selectStatusCounts } from "@/store/selectors"
 import { createSession, openPalette, openSession, resumeSession } from "@/store/actions"
 import { MOD } from "@/components/common/bits"
 import { relTime } from "@/lib/format"
@@ -38,6 +39,22 @@ function startRepo(repoId?: ID): ID {
   if (usable(repoId)) return repoId
   const last = st.recent.map((id) => st.sessions[id]?.repoId).find(usable)
   return last ?? st.repoOrder.find(usable) ?? st.repoOrder[0]
+}
+
+/**
+ * How much already waits on you. Supervising more automated tasks at once helps only while you keep up
+ * with them: performance falls off once attending them fills most of your time (Cummings & Guerlain
+ * 2007), so with several waiting the screen says so before you add another.
+ */
+function Load() {
+  const waiting = useApp(selectNeedsYouCount)
+  const working = useApp((s) => selectStatusCounts(s).working)
+  if (waiting < 2) return null
+  return (
+    <p className="text-sm text-muted-foreground">
+      {waiting} sessions are waiting for you{working ? ` and ${working} are working` : ""}. Answering those first (<kbd className="font-sans">{MOD}+J</kbd>) keeps them moving.
+    </p>
+  )
 }
 
 export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
@@ -103,9 +120,12 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
   return (
     <div data-new-session className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-[880px] flex-col gap-8 px-6 pt-[12vh] pb-16">
-        <h1 className="text-xl font-medium text-foreground">
-          New session <span className="text-muted-foreground/70">in {repo?.name ?? "…"}{repo?.isHome ? " · all repos" : ""}{repo?.machine ? ` on ${repo.machine}` : ""}</span>
-        </h1>
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-xl font-medium text-foreground">
+            New session <span className="text-muted-foreground/70">in {repo?.name ?? "…"}{repo?.isHome ? " · all repos" : ""}{repo?.machine ? ` on ${repo.machine}` : ""}</span>
+          </h1>
+          <Load />
+        </div>
         <PromptBox
           key={repoId}
           size="lg"

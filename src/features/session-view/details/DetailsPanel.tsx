@@ -1,7 +1,7 @@
 // The session's details beside the chat (Claude Code desktop's right panel): where it runs, what
 // fills its context window, its changes and pull request, and the plan's limits.
 import { useEffect, useState, type ReactNode } from "react"
-import { CircleAlert, CircleCheck, CircleDashed, CircleX, LoaderCircle, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
+import { CircleAlert, CircleCheck, CircleDashed, CircleX, LoaderCircle, Radio, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
 import { openReview, sendMessage } from "@/store/actions"
@@ -13,7 +13,11 @@ import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
 import { useChangedFiles } from "../sessionStore"
-import { useVerification } from "../signals"
+import { usePromptCount, useVerification } from "../signals"
+import { OverlapList } from "@/components/common/OverlapNote"
+import { StartFreshButton } from "./StartFresh"
+import { PortChips } from "@/components/common/PortChips"
+import { usePorts } from "@/backend/ports"
 import { RelativeTime } from "@/components/common/RelativeTime"
 import { Meter } from "@/features/usage/Meter"
 import { useUsage } from "@/features/usage/usageData"
@@ -82,7 +86,22 @@ function Environment({ s }: { s: Session }) {
           <span className="font-mono text-xs">{branch}</span>
         </Row>
       )}
+      <Serving id={s.id} />
     </Section>
+  )
+}
+
+/** Dev servers this session started (ports its processes listen on). */
+function Serving({ id }: { id: ID }) {
+  const has = usePorts((st) => !!st[id]?.length)
+  if (!has) return null
+  return (
+    <Row icon={<Radio />}>
+      <span className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">Serving</span>
+        <PortChips id={id} />
+      </span>
+    </Row>
   )
 }
 
@@ -97,9 +116,10 @@ function Context({ s }: { s: Session }) {
   if (!c) {
     const pct = s.usage.contextPct || (cache ? Math.round((cache.tokens / (cache.tokens > 200_000 ? 1_000_000 : 200_000)) * 100) : 0)
     return (
-      <Section title="Context">
+      <Section title="Context" action={s.machine !== "cloud" && <StartFreshButton sessionId={s.id} />}>
         {pct > 0 ? <Meter label={cache ? `${k(cache.tokens)} tokens` : "Used"} percent={pct} /> : <p className="text-xs text-muted-foreground">Shown after the first reply.</p>}
         <CacheLine cache={cache} />
+        <Steered id={s.id} />
       </Section>
     )
   }
@@ -112,11 +132,14 @@ function Context({ s }: { s: Session }) {
     <Section
       title="Context"
       action={
-        caps.changeSettings && (
-          <Button size="xs" variant="outline" onClick={() => sendMessage(s.id, "/compact", "now")}>
-            Compact
-          </Button>
-        )
+        <>
+          {s.machine !== "cloud" && <StartFreshButton sessionId={s.id} />}
+          {caps.changeSettings && (
+            <Button size="xs" variant="outline" onClick={() => sendMessage(s.id, "/compact", "now")}>
+              Compact
+            </Button>
+          )}
+        </>
       }
     >
       <div className="flex items-baseline gap-2">
@@ -151,8 +174,19 @@ function Context({ s }: { s: Session }) {
       </ul>
       {free && buffer && <p className="text-xs text-muted-foreground">{k(Math.max(0, free.tokens))} until auto-compact</p>}
       <CacheLine cache={cache} />
+      <Steered id={s.id} />
     </Section>
   )
+}
+
+/**
+ * After many course corrections: requirements spread over many turns are followed far worse than the
+ * same ones in one prompt, and a fresh start that restates them recovers most of it (Laban et al. 2025).
+ */
+function Steered({ id }: { id: ID }) {
+  const n = usePromptCount(id)
+  if (n < 8) return null
+  return <p className="text-xs text-muted-foreground">You have steered this session {n} times. Requirements spread over many messages get followed less well; Start fresh puts them in one prompt.</p>
 }
 
 /** Prompt cache: warm for how long, or expired and what the next message costs because of it. */
@@ -175,7 +209,40 @@ interface Pr {
   isDraft?: boolean
   reviewDecision?: string
   mergeable?: string
-  statusCheckRollup?: { conclusion?: string; state?: string; status?: string }[]
+  statusCheckRollup?: { name?: string; conclusion?: string; state?: string; status?: string; detailsUrl?: string; workflowName?: string }[]
+}
+
+const FAILED = /FAIL|ERROR|CANCEL|TIMED_OUT|ACTION_REQUIRED/
+
+/**
+ * A red check, handed to the session: the failing lines of its GitHub Actions runs as a message, so
+ * the fix starts from the actual error instead of a copy-paste round trip.
+ */
+function SendFailures({ s, pr }: { s: Session; pr: Pr }) {
+  const [state, setState] = useState<"idle" | "busy" | "sent" | string>("idle")
+  const failing = (pr.statusCheckRollup ?? []).filter((c) => FAILED.test((c.conclusion || c.state || c.status || "").toUpperCase()))
+  const runs = [...new Set(failing.map((c) => /\/actions\/runs\/(\d+)/.exec(c.detailsUrl ?? "")?.[1]).filter((x): x is string => !!x).map(Number))]
+  if (!runs.length || !capabilities(s.control).send || !(IN_TAURI && REAL)) return null
+  const send = async () => {
+    setState("busy")
+    try {
+      const { invoke } = await import("@tauri-apps/api/core")
+      const log = await invoke<string>("ci_failure_log", { cwd: s.cwd, runs })
+      const names = failing.map((c) => c.name || c.workflowName).filter(Boolean).slice(0, 5).join(", ")
+      sendMessage(s.id, `CI is failing on PR #${pr.number}${names ? ` (${names})` : ""}. The failing log lines:\n\n\`\`\`\n${log.trim()}\n\`\`\`\n\nFind the cause and fix it. Run the failing check locally first if you can.`, "queue")
+      setState("sent")
+    } catch (e) {
+      setState(String(e).slice(0, 160))
+    }
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <Button size="xs" variant="outline" disabled={state === "busy" || state === "sent"} onClick={() => void send()} title="Read the failing lines with gh and send them to this session">
+        {state === "busy" ? "Reading the log…" : state === "sent" ? "Sent to Claude" : "Send failures to Claude"}
+      </Button>
+      {state !== "idle" && state !== "busy" && state !== "sent" && <span className="min-w-0 truncate text-xs text-st-error-fg" title={state}>{state}</span>}
+    </div>
+  )
 }
 
 function checks(pr: Pr) {
@@ -220,6 +287,7 @@ function Changes({ s }: { s: Session }) {
   const c = pr ? checks(pr) : null
   return (
     <Section title="Changes">
+      <OverlapList id={s.id} />
       {n > 0 ? (
         <div className="flex items-center gap-2">
           <FileDiff className="size-4 shrink-0 text-muted-foreground" />
@@ -268,7 +336,9 @@ function Changes({ s }: { s: Session }) {
             )}
           </span>
         </a>
-      ) : (
+      ) : null}
+      {pr && c && c.bad > 0 && <SendFailures s={s} pr={pr} />}
+      {pr ? null : (
         pr === null &&
         n > 0 && (
           <Button size="sm" variant="outline" className="self-start" onClick={() => void import("@/features/terminal/terminals").then((t) => t.runInTerminal("gh pr create --fill"))}>

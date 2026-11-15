@@ -125,3 +125,19 @@ export function useStuck(sessionId: ID): Stuck | null {
 
 export const STEP_BACK =
   "Stop and step back: the same step has now failed several times. Before changing anything else, say what you tried, what the error actually says, and what you assumed that may be wrong. Then propose a different approach."
+
+// ---------- steering ----------
+const pCache = new Map<ID, { order: ID[]; value: number }>()
+/** How many messages you sent this session (the first prompt included). */
+export function usePromptCount(sessionId: ID): number {
+  return useApp((s) => {
+    const t = s.transcripts[sessionId]
+    if (!t) return 0
+    const hit = pCache.get(sessionId)
+    if (hit && hit.order === t.order) return hit.value
+    let n = 0
+    for (const id of t.order) if (t.items[id]?.type === "user_message") n++
+    pCache.set(sessionId, { order: t.order, value: n })
+    return n
+  })
+}

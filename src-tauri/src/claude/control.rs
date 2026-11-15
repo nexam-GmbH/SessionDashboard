@@ -24,6 +24,13 @@ pub struct Proc {
 #[derive(Default, Clone)]
 pub struct Procs(Arc<Mutex<HashMap<String, Proc>>>);
 
+impl Procs {
+    /// Process ids of the local sessions the app runs (ssh ones run elsewhere).
+    pub fn local_pids(&self) -> Vec<(String, u32)> {
+        self.0.lock().unwrap().iter().map(|(k, p)| (k.clone(), p.child.id())).collect()
+    }
+}
+
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StartOpts {

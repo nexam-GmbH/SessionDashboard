@@ -134,6 +134,41 @@ export async function runSelftest() {
     return `${out.join(" ")} in ${Math.round(performance.now() - t0)} ms`
   })
 
+  await step("permissions: read rule files, add and remove a rule", async () => {
+    const st = getApp()
+    const projects = [...new Set(Object.values(st.repos).filter((r) => !r.machine && !r.isHome).map((r) => r.rootPath))]
+    const files = await invoke<{ path: string; allow: string[] }[]>("claude_permission_rules", { projects })
+    // a scratch project of its own: the real settings files are only read
+    const dir = `/tmp/sd-selftest-${Date.now()}`
+    const read = () => invoke<{ allow: string[] }[]>("claude_permission_rules", { projects: [dir] }).then((f) => f[0]?.allow ?? [])
+    const path = `${dir}/.claude/settings.local.json`
+    await invoke("claude_permission_rule", { path, list: "allow", rule: "Bash(ls:*)", add: true })
+    await invoke("claude_permission_rule", { path, list: "allow", rule: "Bash(rm:*)", add: true })
+    const added = await read()
+    await invoke("claude_permission_rule", { path, list: "allow", rule: "Bash(rm:*)", add: false })
+    const removed = await read()
+    let refused = false
+    await invoke("claude_permission_rule", { path: "/etc/hosts", list: "allow", rule: "x", add: true }).catch(() => (refused = true))
+    if (!added.includes("Bash(rm:*)") || removed.includes("Bash(rm:*)") || !refused) throw new Error(`added ${added} removed ${removed} refused ${refused}`)
+    return `${files.length} rule files, ${files.reduce((n, f) => n + f.allow.length, 0)} allow rules; edit round trip ok`
+  })
+
+  await step("discovery: files edited lately, overlaps between sessions", async () => {
+    const { selectOverlaps } = await import("@/store/selectors")
+    const st = getApp()
+    const withEdits = Object.values(st.sessions).filter((x) => x.editedPaths?.length)
+    const t0 = performance.now()
+    const o = selectOverlaps(st)
+    return `${withEdits.length} sessions with recent edits, ${o.size} overlapping, ${Math.round((performance.now() - t0) * 10) / 10} ms`
+  })
+
+  await step("ports: what live sessions serve", async () => {
+    const t0 = performance.now()
+    const ports = await invoke<Record<string, number[]>>("session_ports")
+    const days = await invoke<number | null>("claude_user_setting", { key: "cleanupPeriodDays" })
+    return `${Object.keys(ports).length} sessions serving (${Object.values(ports).flat().join(", ") || "none"}) in ${Math.round(performance.now() - t0)} ms; cleanupPeriodDays ${days ?? "default"}`
+  })
+
   await step("slash: /mcp goes to Claude Code's menu", async () => {
     const { terminalCommandFor } = await import("@/features/terminal/slash")
     const c = terminalCommandFor("/mcp")
