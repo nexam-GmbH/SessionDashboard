@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
+import { takeImages } from "@/features/composer/images"
 import { addSessionFolder, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
 import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals"
 import { MOD } from "@/components/common/bits"
@@ -47,7 +48,8 @@ function replyToTerminal(id: ID, text: string, attachments: string[], way: strin
   if (way === "headless") {
     const s = getApp().sessions[id]
     if (s && s.status !== "idle" && s.status !== "done_unseen") return void queueMessage(id, text, attachments)
-    takeOverSession(id, withNames(text, attachments))
+    const { images, rest } = takeImages(attachments)
+    takeOverSession(id, withNames(text, rest), images)
     return
   }
   if (way) {

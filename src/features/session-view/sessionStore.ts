@@ -3,6 +3,7 @@ import { REAL } from "@/backend/mode"
 import { useShallow } from "zustand/react/shallow"
 import type { FileChange, ID, Item, PendingRequest, ToolCall, Transcript } from "@/lib/model"
 import { getApp, setApp, useApp } from "@/store/app"
+import { takeImages } from "@/features/composer/images"
 import { answerQuestion, interrupt, removeQueued, resolvePermission, sendMessage, setSessionSettings } from "@/store/actions"
 
 /**
@@ -159,8 +160,6 @@ function setOutbox(sessionId: ID, items: Queued[]) {
   }
 }
 
-const asText = (q: Queued) => (q.attachments?.length ? `${q.text}\n\n${q.attachments.map((a) => `[attached: ${a}]`).join("\n")}` : q.text)
-
 /** Send what waits in the outbox of every session whose turn is over (in one message, like Claude Code's queue). */
 function deliverOutbox() {
   for (const id of [...outboxIds]) {
@@ -176,10 +175,15 @@ function deliverOutbox() {
     const ready = items.filter((q) => q.id !== editing)
     if (!ready.length) continue
     setOutbox(id, items.filter((q) => q.id === editing))
-    const text = ready.map(asText).join("\n\n")
-    // a terminal session continues here (nothing is lost); one the app runs takes it as a message
-    if (s.control === "observed") void import("@/backend/real").then((r) => r.realTakeOver(id, text))
-    else sendMessage(id, text, "now")
+    const text = ready.map((q) => q.text).join("\n\n")
+    const attachments = ready.flatMap((q) => q.attachments ?? [])
+    // a terminal session continues here (nothing is lost; pictures go as images, other files by
+    // name); one the app runs takes it as a message
+    if (s.control === "observed") {
+      const { images, rest } = takeImages(attachments)
+      const body = rest.length ? `${text}\n\n${rest.map((a) => `[attached: ${a}]`).join("\n")}` : text
+      void import("@/backend/real").then((r) => r.realTakeOver(id, body, images))
+    } else sendMessage(id, text, "now", attachments)
   }
 }
 

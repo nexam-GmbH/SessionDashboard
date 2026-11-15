@@ -22,6 +22,7 @@ const GROUPS: { title: string; items: [string, string[]][] }[] = [
       ["Send", ["⏎"]],
       ["Send now, mid-turn", ["mod", "⏎"]],
       ["Interrupt", ["Esc"]],
+      ["Transcript view: Normal, Thinking, Verbose", ["mod", "O"]],
       ["Rewind", ["Esc", "Esc"]],
       ["New session", ["mod", "N"]],
     ],

@@ -78,8 +78,8 @@ export function openSession(id: ID) {
 }
 
 /** Move a session from its terminal into the app (stops it there, resumes it here). */
-export function takeOverSession(id: ID, prompt?: string) {
-  if (REAL) void realTakeOver(id, prompt)
+export function takeOverSession(id: ID, prompt?: string, images?: string[]) {
+  if (REAL) void realTakeOver(id, prompt, images)
   else resumeSession(id)
   openSession(id)
 }

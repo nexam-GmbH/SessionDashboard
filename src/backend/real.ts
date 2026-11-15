@@ -1181,7 +1181,7 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
  * Take a session over from its terminal: stop it there (as Ctrl+C twice would), then resume it
  * in the app, with `prompt` as the next message when given.
  */
-export async function realTakeOver(id: ID, prompt?: string) {
+export async function realTakeOver(id: ID, prompt?: string, images?: string[]) {
   const s = getApp().sessions[id]
   if (!s) return
   const remote = s.machine && s.machine !== CLOUD ? s.machine : undefined
@@ -1192,7 +1192,7 @@ export async function realTakeOver(id: ID, prompt?: string) {
     noticeError(id, "Can't take this one over from here: its process isn't visible to the app. Stop it where it runs (Ctrl+C twice in its terminal, or `claude agents`), then press Resume.", false)
     return
   }
-  if (prompt) patchTranscript(id, (t, m) => addPendingUser(t, m, prompt))
+  if (prompt) patchTranscript(id, (t, m) => addPendingUser(t, m, prompt, undefined, images))
   setStatusLocal(id, "starting", { activity: "Taking it over from the terminal", waitingFor: undefined })
   try {
     if (pid) await invoke("claude_takeover", { pid, host: remote })
@@ -1204,7 +1204,7 @@ export async function realTakeOver(id: ID, prompt?: string) {
   bgLive.delete(id)
   for (const o of offers.get(id) ?? []) dropOffer(o.id, false)
   // the settings picked in the prompt box while it ran in the terminal apply now
-  realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt, promptShown: true, model: s.model, effort: s.effort, permissionMode: s.permissionMode, fastMode: s.fastMode, ultracode: s.ultracode, outputStyle: s.outputStyle, machine: s.machine })
+  realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt, images, promptShown: true, model: s.model, effort: s.effort, permissionMode: s.permissionMode, fastMode: s.fastMode, ultracode: s.ultracode, outputStyle: s.outputStyle, machine: s.machine })
 }
 
 export function realInterrupt(id: ID) {
