@@ -65,7 +65,7 @@ jobs:
             - **Windows:** `.msi` or the `-setup.exe` installer
 
             **First start**
-            - macOS: the app is not notarized yet. Right-click it in Applications → Open, or run `xattr -dr com.apple.quarantine "/Applications/Session Dashboard.app"`.
+            - macOS: the app is not notarized. Open it once, then System Settings → Privacy & Security → "Open Anyway"; or run `xattr -dr com.apple.quarantine "/Applications/Session Dashboard.app"`.
             - Windows: the installer is not signed yet. SmartScreen → More info → Run anyway.
 
-            Linux is the main platform. On Windows, the optional hooks (exact states for terminal sessions) are not available yet, and dev-server ports are shown on Linux only.
+            **Terminal sync:** Settings → Sessions → Sync terminal sessions keeps `claude` sessions in any terminal in sync with the app (bash, zsh, fish, PowerShell, Git Bash). On Windows, if PowerShell's execution policy blocks profiles, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.

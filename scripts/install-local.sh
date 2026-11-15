@@ -12,6 +12,8 @@ pkill -f "^$APP/bin/session-dashboard( |$)" 2>/dev/null || true
 for _ in $(seq 1 50); do pgrep -f "^$APP/bin/session-dashboard( |$)" >/dev/null || break; sleep 0.1; done
 mkdir -p "$APP/bin" "$HOME/.local/bin" "$HOME/.local/share/applications"
 install -m 755 src-tauri/target/release/session-dashboard "$APP/bin/session-dashboard"
+# the terminal sync helper, beside the app (Settings → Sessions → Sync terminal sessions)
+install -m 755 src-tauri/target/release/sd-wrap "$APP/bin/sd-wrap"
 for s in 32 64 128; do
   mkdir -p "$APP/share/icons/hicolor/${s}x${s}/apps"
   cp "src-tauri/icons/${s}x${s}.png" "$APP/share/icons/hicolor/${s}x${s}/apps/session-dashboard.png"

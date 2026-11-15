@@ -1,7 +1,7 @@
 //! Which TCP ports each session's processes listen on (its dev servers). Linux: the session's
 //! process tree from /proc, matched to listening sockets in /proc/net/tcp{,6} by socket inode (one
-//! pass over /proc, fds read only for the sessions' trees). macOS: `lsof`; Windows: `netstat -ano`,
-//! both give the listening process directly.
+//! pass over /proc, fds read only for the sessions' trees). macOS and Windows: the system's socket
+//! tables through the `listeners` crate, which gives the listening process directly.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -95,37 +95,16 @@ pub fn ports_of(roots: &[(String, u32)]) -> HashMap<String, Vec<u16>> {
     result
 }
 
-/// Listening TCP ports per process id, from the system's own tool.
+/// Listening TCP ports per process id, from the system's own tables (libproc on macOS, the IP Helper
+/// API on Windows) through the `listeners` crate (MIT): no tool output to parse, which on Windows
+/// comes translated.
 #[cfg(any(not(target_os = "linux"), test))]
 fn listening_by_pid() -> HashMap<u32, HashSet<u16>> {
     let mut out: HashMap<u32, HashSet<u16>> = HashMap::new();
-    let port_of = |addr: &str| addr.rsplit(':').next().and_then(|p| p.parse::<u16>().ok());
-    #[cfg(windows)]
-    {
-        for proto in ["TCP", "TCPv6"] {
-            let Ok(o) = crate::sys::command("netstat").args(["-ano", "-p", proto]).output() else { continue };
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                let c: Vec<&str> = line.split_whitespace().collect();
-                if c.len() >= 5 && c[0].starts_with("TCP") && c[3] == "LISTENING" {
-                    if let (Some(port), Ok(pid)) = (port_of(c[1]), c[4].parse::<u32>()) {
-                        out.entry(pid).or_default().insert(port);
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Ok(o) = crate::sys::command("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]).output() {
-            let mut pid = 0u32;
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if let Some(p) = line.strip_prefix('p') {
-                    pid = p.parse().unwrap_or(0);
-                } else if let Some(n) = line.strip_prefix('n') {
-                    if let Some(port) = port_of(n) {
-                        out.entry(pid).or_default().insert(port);
-                    }
-                }
+    if let Ok(all) = listeners::get_all() {
+        for l in all {
+            if l.protocol == listeners::Protocol::TCP && l.state == listeners::SocketState::Listen {
+                out.entry(l.process.pid).or_default().insert(l.socket.port());
             }
         }
     }
@@ -187,10 +166,8 @@ mod tests {
         let me = std::process::id();
         let got = ports_of(&[("me".into(), me)]);
         assert!(got.get("me").map(|p| p.contains(&port)).unwrap_or(false), "{got:?} should hold {port}");
-        // the macOS way (lsof, process tree from sysinfo) finds it too, where lsof is installed
-        if crate::sys::command("lsof").arg("-v").output().is_ok() {
-            let got = ports_by_tool(&[("me".into(), me)]);
-            assert!(got.get("me").map(|p| p.contains(&port)).unwrap_or(false), "lsof: {got:?} should hold {port}");
-        }
+        // the macOS/Windows way (listeners + sysinfo process tree) finds it too
+        let got = ports_by_tool(&[("me".into(), me)]);
+        assert!(got.get("me").map(|p| p.contains(&port)).unwrap_or(false), "listeners: {got:?} should hold {port}");
     }
 }

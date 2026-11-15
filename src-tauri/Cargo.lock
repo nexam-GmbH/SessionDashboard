@@ -2083,6 +2083,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
+name = "listeners"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "504c4ecfa20498c07ae4ff19b632d212e1fdcef83195b8e9eb2552306c42205f"
+dependencies = [
+ "byteorder",
+ "cc",
+ "libc",
+ "rustix 1.1.6",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3176,6 +3189,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sdwrap"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "portable-pty",
+ "serde_json",
+ "uuid",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "selectors"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3404,11 +3428,13 @@ dependencies = [
 
 [[package]]
 name = "session-dashboard"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crossterm",
+ "listeners",
  "log",
  "portable-pty",
+ "sdwrap",
  "serde",
  "serde_json",
  "sysinfo",

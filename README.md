@@ -4,8 +4,7 @@ A desktop app for running many Claude Code sessions at once. It finds every sess
 your servers over ssh), shows at a glance which ones need you, and lets you answer, review and switch between
 them as fast as terminal tabs.
 
-Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows (terminal sync is Linux
-and macOS for now).
+Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
 
 ## What it does
 
@@ -81,7 +80,8 @@ and macOS for now).
 
 Installers for Linux (`.AppImage`, `.deb`, `.rpm`), macOS (Apple silicon and Intel) and Windows are on the
 [Releases](https://github.com/shamilbasarov/SessionDashboard/releases/latest) page. They are not signed
-yet: on macOS right-click the app → Open the first time, on Windows choose "More info → Run anyway".
+yet: on macOS open it once, then System Settings → Privacy & Security → "Open Anyway"; on Windows choose
+"More info → Run anyway".
 
 ## Requirements
 

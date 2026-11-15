@@ -1,7 +1,6 @@
 mod claude;
 mod term;
 pub mod sys;
-#[cfg(unix)]
 pub mod wrap;
 mod usage;
 
@@ -48,8 +47,7 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
 /// Returns the exit code when this run was one.
 pub fn cli() -> Option<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // `session-dashboard sync on|off|status`: the terminal sync shell function, from a terminal
-    #[cfg(unix)]
+    // `session-dashboard sync on|off|status`: the terminal sync shell functions, from a terminal
     if args.first().map(String::as_str) == Some("sync") {
         let r = match args.get(1).map(String::as_str) {
             Some("on") => wrap::set(true),
@@ -70,17 +68,7 @@ pub fn cli() -> Option<i32> {
     if args.first().map(String::as_str) != Some("wrap") {
         return None;
     }
-    #[cfg(unix)]
-    {
-        Some(wrap::run(&args[1..]))
-    }
-    #[cfg(not(unix))]
-    {
-        // no terminal sync on Windows yet: run the program as it is
-        let rest = &args[1..];
-        let prog = rest.first().cloned().unwrap_or_else(|| "claude".into());
-        Some(std::process::Command::new(&prog).args(&rest[1.min(rest.len())..]).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127))
-    }
+    Some(wrap::run(&args[1..]))
 }
 
 pub fn run() {

@@ -1,9 +1,11 @@
 [package]
 name = "session-dashboard"
-version = "0.3.0"
+version = "0.3.1"
 description = "Session Dashboard: one place for all your Claude Code sessions"
 authors = ["you"]
 edition = "2024"
+# the app (tauri dev / cargo run); sd-wrap is the terminal sync helper beside it
+default-run = "session-dashboard"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -29,6 +31,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 uuid = { version = "1", features = ["v4"] }
 portable-pty = "0.9"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+listeners = "0.6"
+sdwrap = { path = "crates/sdwrap" }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -45,3 +49,4 @@ tauri-plugin-window-state = "2"
 
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "0.28", default-features = false }
+

@@ -326,20 +326,11 @@ pub async fn claude_inject(terms: State<'_, crate::term::Terms>, pid: u32, text:
 /// Terminal sync: whether `claude` in your shells runs through the app's wrapper.
 #[tauri::command]
 pub async fn sync_status() -> Result<Value, String> {
-    #[cfg(unix)]
-    return Ok(crate::wrap::status());
-    #[cfg(not(unix))]
-    Ok(serde_json::json!({ "on": false, "unsupported": true }))
+    blocking(|| Ok(crate::wrap::status())).await
 }
 
 /// Turn terminal sync on or off (the shell function in your shells' startup files).
 #[tauri::command]
 pub async fn sync_set(on: bool) -> Result<Value, String> {
-    #[cfg(unix)]
-    return blocking(move || crate::wrap::set(on)).await;
-    #[cfg(not(unix))]
-    {
-        let _ = on;
-        Err("Terminal sync is not available on Windows yet".into())
-    }
+    blocking(move || crate::wrap::set(on)).await
 }

@@ -17,6 +17,39 @@ enum Way {
     Konsole { service: String, session: String },
     Kitty { to: String, window: String },
     Wezterm { pane: String },
+    /// macOS, by the session's tty (other processes' environment is hidden there)
+    Iterm { tty: String },
+    TerminalApp { tty: String },
+}
+
+/// The terminal device a process writes to ("/dev/ttys003", "/dev/pts/3"), from `ps`.
+fn tty_of(pid: u32) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let o = command("ps").args(["-o", "tty=", "-p", &pid.to_string()]).output().ok()?;
+    let t = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    (!t.is_empty() && t != "?" && t != "??").then(|| if t.starts_with("/dev/") { t } else { format!("/dev/{t}") })
+}
+
+/// tmux pane on that tty (when the environment can't be read).
+fn tmux_pane_by_tty(tty: &str) -> Option<String> {
+    let o = command("tmux").args(["list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"]).output().ok()?;
+    String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.split_once(' ').filter(|(t, _)| *t == tty).map(|(_, p)| p.to_string()))
+}
+
+fn osascript(script: &str) -> Option<String> {
+    let o = crate::sys::output_timeout(command("osascript").args(["-e", script]), 6)?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+fn running(app: &str) -> bool {
+    command("pgrep").args(["-x", app]).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// An AppleScript string literal.
+fn as_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn env_of(pid: u32) -> HashMap<String, String> {
@@ -73,6 +106,22 @@ fn way(terms: &Terms, pid: u32) -> Option<Way> {
             return Some(Way::Wezterm { pane: pane.clone() });
         }
     }
+    // no environment to read (macOS hides it): find the terminal by the session's tty
+    let tty = tty_of(pid)?;
+    if which("tmux") {
+        if let Some(pane) = tmux_pane_by_tty(&tty) {
+            return Some(Way::Tmux { socket: String::new(), pane });
+        }
+    }
+    if cfg!(target_os = "macos") {
+        let t = as_str(&tty);
+        if running("iTerm2") && osascript(&format!("tell application \"iTerm2\" to repeat with w in windows\nrepeat with tb in tabs of w\nrepeat with s in sessions of tb\nif tty of s is {t} then return \"yes\"\nend repeat\nend repeat\nend repeat")).as_deref() == Some("yes") {
+            return Some(Way::Iterm { tty });
+        }
+        if running("Terminal") && osascript(&format!("tell application \"Terminal\" to repeat with w in windows\nrepeat with tb in tabs of w\nif tty of tb is {t} then return \"yes\"\nend repeat\nend repeat")).as_deref() == Some("yes") {
+            return Some(Way::TerminalApp { tty });
+        }
+    }
     None
 }
 
@@ -84,6 +133,8 @@ fn name(w: &Way) -> &'static str {
         Way::Konsole { .. } => "Konsole",
         Way::Kitty { .. } => "kitty",
         Way::Wezterm { .. } => "WezTerm",
+        Way::Iterm { .. } => "iTerm2",
+        Way::TerminalApp { .. } => "Terminal",
     }
 }
 
@@ -139,6 +190,16 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
         }
         Way::Kitty { to, window } => {
             ok(command("kitty").args(["@", "--to", to, "send-text", "--match", &format!("id:{window}"), &format!("{body}\r")]).status(), "kitty")?;
+        }
+        Way::Iterm { tty } => {
+            // iTerm2 presses Enter after `write text`; a new line in the prompt is backslash + Enter
+            let line = as_str(&text.trim_end().replace("\r\n", "\n").replace('\n', " "));
+            osascript(&format!("tell application \"iTerm2\" to repeat with w in windows\nrepeat with tb in tabs of w\nrepeat with s in sessions of tb\nif tty of s is {} then\ntell s to write text {line}\nreturn \"ok\"\nend if\nend repeat\nend repeat\nend repeat", as_str(tty))).filter(|r| r == "ok").ok_or("iTerm2 did not take it (allow the app to control iTerm2 in System Settings → Privacy & Security → Automation)")?;
+        }
+        Way::TerminalApp { tty } => {
+            // `do script … in` a tab types the text and Enter into what runs there
+            let line = as_str(&text.trim_end().replace("\r\n", "\n").replace('\n', " "));
+            osascript(&format!("tell application \"Terminal\" to repeat with w in windows\nrepeat with tb in tabs of w\nif tty of tb is {} then\ndo script {line} in tb\nreturn \"ok\"\nend if\nend repeat\nend repeat", as_str(tty))).filter(|r| r == "ok").ok_or("Terminal did not take it (allow the app to control Terminal in System Settings → Privacy & Security → Automation)")?;
         }
         Way::Wezterm { pane } => {
             ok(command("wezterm").args(["cli", "send-text", "--pane-id", pane, "--no-paste", &format!("{body}\r")]).status(), "WezTerm")?;

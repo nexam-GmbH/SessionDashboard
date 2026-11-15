@@ -1,204 +1,92 @@
-//! `session-dashboard wrap claude [args]`: runs claude in a pseudo-terminal of its own and passes the
-//! terminal through untouched (keys in, screen out, size followed), while the app can type into it
-//! too, over a local socket with a secret token. That keeps a session in any terminal (Zed's, GNOME
-//! Terminal, …) in full sync with the app: what you type in either place goes to the same claude.
-//! The shell function the app installs (Settings → Sessions) calls this for every `claude`.
+//! Terminal sync, the app's side: the shell functions that route `claude` through the wrapper
+//! (sd-wrap, crates/sdwrap), and `session-dashboard wrap …` on Linux and macOS.
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+pub use sdwrap::{registry, run};
 
-/// Where wrapped sessions register: <config>/sync/<pid of the program>.json.
-pub fn registry() -> std::path::PathBuf {
-    crate::sys::config_dir().join("sync")
-}
-
-fn size() -> PtySize {
-    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
-}
-
-/// Raw mode for as long as it lives (restored on drop, also when the program crashes).
-struct Raw;
-impl Raw {
-    fn on() -> Option<Raw> {
-        crossterm::terminal::enable_raw_mode().ok().map(|_| Raw)
-    }
-}
-impl Drop for Raw {
-    fn drop(&mut self) {
-        let _ = crossterm::terminal::disable_raw_mode();
-    }
-}
-
-/// Run `args[0]` with `args[1..]`; returns its exit code.
-pub fn run(args: &[String]) -> i32 {
-    let Some(program) = args.first() else {
-        eprintln!("usage: session-dashboard wrap <program> [args…]");
-        return 2;
-    };
-    let program = if program == "claude" { crate::claude::discover::claude_bin() } else { program.clone() };
-    let pair = match native_pty_system().openpty(size()) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("session-dashboard wrap: no pseudo-terminal ({e}); running it directly");
-            return std::process::Command::new(&program).args(&args[1..]).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127);
-        }
-    };
-    let mut cmd = CommandBuilder::new(&program);
-    cmd.args(&args[1..]);
-    if let Ok(cwd) = std::env::current_dir() {
-        cmd.cwd(cwd);
-    }
-    cmd.env("SD_SYNC", "1");
-    let mut child = match pair.slave.spawn_command(cmd) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("session-dashboard wrap: could not start {program}: {e}");
-            return 127;
-        }
-    };
-    drop(pair.slave);
-    let pid = child.process_id().unwrap_or(0);
-    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(pair.master.take_writer().expect("pty writer")));
-    let mut reader = pair.master.try_clone_reader().expect("pty reader");
-    let master = Arc::new(Mutex::new(pair.master));
-
-    // the app's way in: a local socket and a token, registered by the program's pid
-    let token = uuid::Uuid::new_v4().to_string();
-    let reg = registry().join(format!("{pid}.json"));
-    if let Ok(listener) = TcpListener::bind("127.0.0.1:0") {
-        let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-        let _ = std::fs::create_dir_all(registry());
-        let _ = std::fs::write(&reg, serde_json::json!({ "port": port, "token": token, "wrapper": std::process::id() }).to_string());
-        let w = writer.clone();
-        let token = token.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-                let mut line = String::new();
-                if BufReader::new(&stream).read_line(&mut line).is_err() {
-                    continue;
-                }
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
-                if v["token"].as_str() != Some(token.as_str()) {
-                    continue;
-                }
-                let text = v["text"].as_str().unwrap_or("");
-                // a new line in Claude Code's prompt is backslash + Enter; Enter alone sends
-                let body = text.trim_end().replace("\r\n", "\n").replace('\n', "\\\r");
-                {
-                    let mut g = w.lock().unwrap();
-                    let _ = g.write_all(body.as_bytes());
-                    let _ = g.flush();
-                }
-                // Enter a moment later, so the prompt takes the text as typed, not as a paste
-                std::thread::sleep(Duration::from_millis(40));
-                {
-                    let mut g = w.lock().unwrap();
-                    let _ = g.write_all(b"\r");
-                    let _ = g.flush();
-                }
-                let mut s = &stream;
-                let _ = s.write_all(b"ok\n");
-            }
-        });
-    }
-
-    let raw = Raw::on();
-    // keys in
-    {
-        let w = writer.clone();
-        std::thread::spawn(move || {
-            let mut stdin = std::io::stdin();
-            let mut buf = [0u8; 4096];
-            loop {
-                match stdin.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let mut w = w.lock().unwrap();
-                        if w.write_all(&buf[..n]).is_err() {
-                            break;
-                        }
-                        let _ = w.flush();
-                    }
-                }
-            }
-        });
-    }
-    // the size of the terminal, followed
-    {
-        let m = master.clone();
-        std::thread::spawn(move || {
-            let mut last = size();
-            loop {
-                std::thread::sleep(Duration::from_millis(200));
-                let now = size();
-                if now.rows != last.rows || now.cols != last.cols {
-                    let _ = m.lock().unwrap().resize(now);
-                    last = now;
-                }
-            }
-        });
-    }
-    // screen out, until the program closes its side
-    let out = std::thread::spawn(move || {
-        let mut stdout = std::io::stdout();
-        let mut buf = [0u8; 16384];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if stdout.write_all(&buf[..n]).is_err() {
-                        break;
-                    }
-                    let _ = stdout.flush();
-                }
-            }
-        }
-    });
-    let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(1);
-    let _ = std::fs::remove_file(&reg);
-    // the last of its output (a helper it left behind may hold the terminal open: don't wait on it)
-    for _ in 0..10 {
-        if out.is_finished() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(30));
-    }
-    drop(raw);
-    code
-}
-
-// ---------- the shell function that routes `claude` through the wrapper ----------
+// ---------- the shell functions that route `claude` through the wrapper ----------
 
 const BEGIN: &str = "# >>> session-dashboard terminal sync >>>";
 const END: &str = "# <<< session-dashboard terminal sync <<<";
 
-/// The app binary as a terminal can run it later (an AppImage runs from a temporary mount: its
-/// file instead).
-fn app_bin() -> String {
-    std::env::var("APPIMAGE").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())
+/// What a shell runs for synced `claude`: sd-wrap next to the app; an AppImage (whose files live in a
+/// temporary mount) runs itself with `wrap`.
+fn wrapper_cmd() -> Vec<String> {
+    if let Some(img) = std::env::var("APPIMAGE").ok().filter(|p| !p.is_empty()) {
+        return vec![img, "wrap".into()];
+    }
+    let exe = std::env::current_exe().unwrap_or_default();
+    let dir = exe.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let side = dir.join(if cfg!(windows) { "sd-wrap.exe" } else { "sd-wrap" });
+    if side.exists() {
+        return vec![side.to_string_lossy().to_string()];
+    }
+    // a build without the helper (Linux/macOS): the app binary itself
+    if cfg!(windows) { vec![side.to_string_lossy().to_string()] } else { vec![exe.to_string_lossy().to_string(), "wrap".into()] }
 }
 
-fn rc_files() -> Vec<(std::path::PathBuf, bool)> {
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Posix,
+    Fish,
+    PowerShell,
+}
+
+fn rc_files() -> Vec<(std::path::PathBuf, Kind)> {
     let home = crate::sys::home();
+    let mut v: Vec<(std::path::PathBuf, Kind)> = Vec::new();
+    if cfg!(windows) {
+        // each PowerShell (5.1 and 7) says where its profile is (Documents may be in OneDrive)
+        for ps in ["powershell.exe", "pwsh.exe"] {
+            if let Some(o) = crate::sys::output_timeout(crate::sys::command(ps).args(["-NoProfile", "-NonInteractive", "-Command", "$PROFILE.CurrentUserAllHosts"]), 8) {
+                let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if o.status.success() && !p.is_empty() {
+                    v.push((std::path::PathBuf::from(p), Kind::PowerShell));
+                }
+            }
+        }
+        // Git Bash
+        v.push((home.join(".bashrc"), Kind::Posix));
+        v.retain(|(p, k)| *k == Kind::PowerShell || p.exists());
+        return v;
+    }
     let shell = std::env::var("SHELL").unwrap_or_default();
     let zdot = std::env::var("ZDOTDIR").map(std::path::PathBuf::from).unwrap_or_else(|_| home.clone());
-    let mut v = vec![(home.join(".bashrc"), false), (zdot.join(".zshrc"), false), (home.join(".config/fish/conf.d/session-dashboard.fish"), true)];
+    v.push((home.join(".bashrc"), Kind::Posix));
+    // macOS terminals open login shells: bash reads ~/.bash_profile there
+    if cfg!(target_os = "macos") {
+        v.push((home.join(".bash_profile"), Kind::Posix));
+    }
+    v.push((zdot.join(".zshrc"), Kind::Posix));
+    v.push((home.join(".config/fish/conf.d/session-dashboard.fish"), Kind::Fish));
     // the shells you have, and yours even if its file does not exist yet
-    v.retain(|(p, fish)| p.exists() || (*fish && shell.ends_with("fish")) || (!*fish && shell.ends_with(p.file_name().and_then(|n| n.to_str()).unwrap_or("").trim_start_matches('.').trim_end_matches("rc"))));
+    v.retain(|(p, k)| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        p.exists() || (*k == Kind::Fish && shell.ends_with("fish")) || (name.starts_with(".zsh") && shell.ends_with("zsh")) || (name == ".bashrc" && shell.ends_with("bash") && !cfg!(target_os = "macos")) || (name == ".bash_profile" && shell.ends_with("bash"))
+    });
     v
 }
 
-fn block(bin: &str, fish: bool) -> String {
-    let q = format!("'{}'", bin.replace('\'', "'\\''"));
-    if fish {
-        format!("{BEGIN}\nfunction claude\n    if test -x {q}; and not set -q SD_SYNC\n        {q} wrap claude $argv\n    else\n        command claude $argv\n    end\nend\n{END}\n")
-    } else {
-        format!("{BEGIN}\nclaude() {{ if [ -x {q} ] && [ -z \"$SD_SYNC\" ]; then {q} wrap claude \"$@\"; else command claude \"$@\"; fi; }}\n{END}\n")
+fn block(cmd: &[String], kind: Kind) -> String {
+    match kind {
+        Kind::PowerShell => {
+            let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+            let exe = q(&cmd[0]);
+            let pre = cmd[1..].iter().map(|a| q(a)).collect::<Vec<_>>().join(" ");
+            format!(
+                "{BEGIN}\nfunction claude {{\n    $real = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n    if ((Test-Path {exe}) -and -not $env:SD_SYNC) {{ & {exe} {pre} claude @args }}\n    elseif ($real) {{ & $real @args }}\n    else {{ Write-Error 'claude was not found' }}\n}}\n{END}\n"
+            )
+        }
+        Kind::Fish => {
+            let q = |s: &str| format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"));
+            let all = cmd.iter().map(|a| q(a)).collect::<Vec<_>>().join(" ");
+            format!("{BEGIN}\nfunction claude\n    if test -x {}; and not set -q SD_SYNC\n        {all} claude $argv\n    else\n        command claude $argv\n    end\nend\n{END}\n", q(&cmd[0]))
+        }
+        Kind::Posix => {
+            // Git Bash takes C:/x paths
+            let q = |s: &str| format!("'{}'", s.replace('\\', "/").replace('\'', "'\\''"));
+            let all = cmd.iter().map(|a| q(a)).collect::<Vec<_>>().join(" ");
+            format!("{BEGIN}\nclaude() {{ if [ -x {} ] && [ -z \"$SD_SYNC\" ]; then {all} claude \"$@\"; else command claude \"$@\"; fi; }}\n{END}\n", q(&cmd[0]))
+        }
     }
 }
 
@@ -222,23 +110,34 @@ fn strip(text: &str) -> String {
     out
 }
 
+/// Windows PowerShell's default policy (Restricted) skips profiles: say what to run.
+fn policy_note() -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let o = crate::sys::output_timeout(crate::sys::command("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Get-ExecutionPolicy"]), 8)?;
+    let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+    (p.eq_ignore_ascii_case("Restricted") || p.eq_ignore_ascii_case("AllSigned"))
+        .then(|| "PowerShell runs no profile scripts with its current execution policy. Run once in PowerShell: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned".to_string())
+}
+
 /// Whether `claude` in your shells runs through the wrapper.
 pub fn status() -> serde_json::Value {
     let files: Vec<String> = rc_files().iter().filter(|(p, _)| std::fs::read_to_string(p).map(|t| t.contains(BEGIN)).unwrap_or(false)).map(|(p, _)| p.to_string_lossy().to_string()).collect();
-    serde_json::json!({ "on": !files.is_empty(), "files": files, "bin": app_bin() })
+    serde_json::json!({ "on": !files.is_empty(), "files": files, "wrapper": wrapper_cmd(), "note": policy_note() })
 }
 
-/// Add (or remove) the shell function in your shells' startup files. New terminals pick it up.
+/// Add (or remove) the shell functions in your shells' startup files. New terminals pick them up.
 pub fn set(on: bool) -> Result<serde_json::Value, String> {
-    let bin = app_bin();
-    for (p, fish) in rc_files() {
+    let cmd = wrapper_cmd();
+    for (p, kind) in rc_files() {
         let text = std::fs::read_to_string(&p).unwrap_or_default();
         let mut next = strip(&text);
         if on {
             if !next.is_empty() && !next.ends_with("\n\n") {
                 next.push('\n');
             }
-            next.push_str(&block(&bin, fish));
+            next.push_str(&block(&cmd, kind));
         }
         if next == text {
             continue;
@@ -246,7 +145,7 @@ pub fn set(on: bool) -> Result<serde_json::Value, String> {
         if let Some(d) = p.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
-        if fish && !on && next.trim().is_empty() {
+        if kind == Kind::Fish && !on && next.trim().is_empty() {
             let _ = std::fs::remove_file(&p);
             continue;
         }
@@ -260,11 +159,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn block_round_trip() {
+    fn blocks_round_trip() {
         let rc = "export A=1\nalias ll='ls -l'\n";
-        let with = format!("{rc}\n{}", block("/opt/app/bin", false));
-        assert!(with.contains("wrap claude \"$@\""));
+        let cmd = vec!["/opt/app/sd-wrap".to_string()];
+        let with = format!("{rc}\n{}", block(&cmd, Kind::Posix));
+        assert!(with.contains("'/opt/app/sd-wrap' claude \"$@\""));
         assert_eq!(strip(&with).trim_end(), rc.trim_end());
-        assert!(block("/x", true).contains("$argv"));
+        assert!(block(&cmd, Kind::Fish).contains("$argv"));
+        let ps = block(&["C:\\Program Files\\SD\\sd-wrap.exe".to_string()], Kind::PowerShell);
+        assert!(ps.contains("& 'C:\\Program Files\\SD\\sd-wrap.exe'  claude @args") || ps.contains("& 'C:\\Program Files\\SD\\sd-wrap.exe' claude @args"));
+        let img = block(&["/x/App.AppImage".to_string(), "wrap".to_string()], Kind::Posix);
+        assert!(img.contains("'/x/App.AppImage' 'wrap' claude"));
     }
 }

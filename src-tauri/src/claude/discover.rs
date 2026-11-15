@@ -107,7 +107,18 @@ static HELPERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// A claude the built-in terminal opened only for one of its menus (`SD_HIDE=1 claude /mcp`): not a
 /// session to list.
 fn hidden(pid: u64) -> bool {
-    crate::sys::env_of(pid as u32).get("SD_HIDE").map(|v| v == "1").unwrap_or(false)
+    if crate::sys::env_of(pid as u32).get("SD_HIDE").map(|v| v == "1").unwrap_or(false) {
+        return true;
+    }
+    // macOS hides other processes' environment: a claude opened on a slash command (`claude /mcp`) is
+    // one of those menus too
+    if cfg!(not(target_os = "linux")) {
+        let cmd = crate::sys::cmdline(pid as u32);
+        if let Some(arg) = cmd.split_whitespace().nth(1) {
+            return arg.len() > 1 && arg.starts_with('/') && !arg[1..].contains('/') && !arg[1..].contains('\\');
+        }
+    }
+    false
 }
 
 fn is_helper(pid: u64) -> bool {

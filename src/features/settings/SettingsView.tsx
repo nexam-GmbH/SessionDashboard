@@ -187,17 +187,17 @@ export function ReposPage() {
  * (Zed's, GNOME Terminal, …) takes replies from the app as if you typed them there.
  */
 function TerminalSync() {
-  const [st, setSt] = useState<{ on: boolean; files?: string[]; unsupported?: boolean } | null>(null)
+  const [st, setSt] = useState<{ on: boolean; files?: string[]; note?: string | null } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const live = IN_TAURI && REAL
   useEffect(() => {
     if (!live) return
-    void import("@tauri-apps/api/core").then(({ invoke }) => invoke<{ on: boolean; files?: string[]; unsupported?: boolean }>("sync_status").then(setSt))
+    void import("@tauri-apps/api/core").then(({ invoke }) => invoke<{ on: boolean; files?: string[]; note?: string | null }>("sync_status").then(setSt))
   }, [live])
   if (!live || !st) return null
   const set = (on: boolean) =>
     void import("@tauri-apps/api/core")
-      .then(({ invoke }) => invoke<{ on: boolean; files?: string[] }>("sync_set", { on }))
+      .then(({ invoke }) => invoke<{ on: boolean; files?: string[]; note?: string | null }>("sync_set", { on }))
       .then((v) => {
         setSt(v)
         setErr(null)
@@ -206,16 +206,16 @@ function TerminalSync() {
   return (
     <SettingRow
       title="Sync terminal sessions"
-      hint={st.unsupported ? "not on Windows yet" : st.on ? "on" : undefined}
-      disabled={st.unsupported}
+      hint={st.on ? "on" : undefined}
       description={
         <>
-          Claude Code sessions you start in any terminal (Zed, GNOME Terminal, Konsole, …) stay in full sync with the app: replies you write here are typed into that terminal, and the terminal keeps running. It adds a small <Code>claude</Code> function to your shell's startup file{st.files?.length ? ` (${st.files.map((f) => f.split("/").pop()).join(", ")})` : ""}; turning it off removes it. Applies to terminals opened afterwards.
+          Claude Code sessions you start in any terminal (Zed, VS Code, GNOME Terminal, iTerm, Windows Terminal, …) stay in full sync with the app: replies you write here are typed into that terminal, and the terminal keeps running. It adds a small <Code>claude</Code> function to your shell's startup file (bash, zsh, fish, PowerShell, Git Bash){st.files?.length ? `: ${st.files.map((f) => f.split(/[\\/]/).pop()).join(", ")}` : ""}; turning it off removes it. Applies to terminals opened afterwards.
+          {st.note && <span className="mt-1 block text-st-input-fg">{st.note}</span>}
           {err && <span className="mt-1 block text-st-error-fg">{err}</span>}
         </>
       }
     >
-      <RowSwitch checked={st.on} disabled={st.unsupported} onCheckedChange={set} />
+      <RowSwitch checked={st.on} onCheckedChange={set} />
     </SettingRow>
   )
 }

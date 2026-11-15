@@ -9,8 +9,10 @@ use std::time::{Duration, Instant};
 /// A command for a background helper (git, gh, claude, ssh): on Windows without a console window
 /// flashing up for every call.
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    #[allow(unused_mut)]
     let mut c = Command::new(program);
+    if let Some(p) = helper_path() {
+        c.env("PATH", p);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -141,24 +143,14 @@ mod tests {
 
 /// The user's home folder (HOME; Windows: USERPROFILE).
 pub fn home() -> std::path::PathBuf {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+    sdwrap::home()
 }
 
 /// Where the app keeps its own files (usage ledger, hook token, prefs): ~/.config/session-dashboard
 /// (XDG_CONFIG_HOME when set; Windows: %APPDATA%\session-dashboard).
 pub fn config_dir() -> std::path::PathBuf {
-    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
-        return std::path::PathBuf::from(x).join("session-dashboard");
-    }
-    #[cfg(windows)]
-    if let Some(a) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(a).join("session-dashboard");
-    }
-    home().join(".config").join("session-dashboard")
+    // shared with the sync wrapper, which must find the same folder
+    sdwrap::config_dir()
 }
 
 /// A path as the UI keeps it: forward slashes and an upper-case drive letter on Windows (Claude Code
@@ -274,29 +266,41 @@ pub fn hostname() -> String {
         .unwrap_or_else(|| "localhost".into())
 }
 
+/// The PATH a login shell has, once known (fix_path): every helper the app starts gets it.
+static SHELL_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// An app opened from the Dock or Finder (macOS), or some Linux launchers, gets a bare PATH without
-/// the folders where `claude`, `gh` and `git` live: take the login shell's PATH, once, at start.
+/// the folders where `claude`, `gh` and `git` live. Ask the user's shell once, in the background
+/// (login + interactive: .zprofile for Homebrew, .zshrc for nvm/asdf; a 6 s limit; banners printed by
+/// rc files are cut away by markers), and give that PATH to every helper the app starts.
 pub fn fix_path() {
     #[cfg(unix)]
-    {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| if cfg!(target_os = "macos") { "/bin/zsh".into() } else { "/bin/sh".into() });
-        let Some(out) = output_timeout(command(&shell).args(["-l", "-c", "printf '__SDPATH__%s' \"$PATH\""]), 4) else { return };
-        let text = String::from_utf8_lossy(&out.stdout);
-        let Some(found) = text.rsplit("__SDPATH__").next().map(str::trim).filter(|p| !p.is_empty() && text.contains("__SDPATH__")) else { return };
+    std::thread::spawn(|| {
+        let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| if cfg!(target_os = "macos") { "/bin/zsh".into() } else { "/bin/sh".into() });
+        let mut c = command(&shell);
+        c.args(["-ilc", "printf '__SDPATH__%s__SDPATH__' \"$PATH\""]).env("DISABLE_AUTO_UPDATE", "true").env("ZSH_DISABLE_COMPFIX", "true");
+        let found = output_timeout(&mut c, 6).and_then(|o| {
+            let t = String::from_utf8_lossy(&o.stdout).to_string();
+            let parts: Vec<&str> = t.split("__SDPATH__").collect();
+            (parts.len() >= 3).then(|| parts[parts.len() - 2].trim().to_string())
+        });
         let cur = std::env::var("PATH").unwrap_or_default();
-        let mut parts: Vec<&str> = found.split(':').collect();
-        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] {
-            if std::path::Path::new(extra).is_dir() {
+        let home = home().to_string_lossy().to_string();
+        let mut parts: Vec<String> = found.as_deref().unwrap_or("").split(':').map(str::to_string).collect();
+        // where claude, Homebrew and npm usually are, in case the shell said nothing useful
+        for extra in [format!("{home}/.local/bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into(), format!("{home}/.npm-global/bin"), format!("{home}/.bun/bin")] {
+            if std::path::Path::new(&extra).is_dir() {
                 parts.push(extra);
             }
         }
-        for p in cur.split(':') {
-            if !parts.contains(&p) {
-                parts.push(p);
-            }
-        }
-        let merged = parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(":");
-        // SAFETY: called at start, before any other thread runs
-        unsafe { std::env::set_var("PATH", merged) };
-    }
+        parts.extend(cur.split(':').map(str::to_string));
+        let mut seen = std::collections::HashSet::new();
+        let merged = parts.into_iter().filter(|p| !p.is_empty() && seen.insert(p.clone())).collect::<Vec<_>>().join(":");
+        let _ = SHELL_PATH.set(merged);
+    });
+}
+
+/// The PATH helpers get: the shell's, once known.
+pub fn helper_path() -> Option<&'static str> {
+    SHELL_PATH.get().map(String::as_str)
 }

@@ -84,6 +84,9 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
     } else {
         cmd.cwd(crate::sys::home());
     }
+    if let Some(p) = crate::sys::helper_path() {
+        cmd.env("PATH", p);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "session-dashboard");
