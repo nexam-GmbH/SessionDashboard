@@ -1551,14 +1551,14 @@ function onEvent({ key, event, exit }: EventPayload) {
       // the commands that need Claude Code's own terminal UI, as this claude reports them
       if (event.subtype === "init") {
         void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
-        // MCP servers that did not connect: said once per server, with the way to fix it
+        // MCP servers of yours that did not connect: one line, once per session. The claude.ai
+        // connectors you never set up (they all come along, unauthorized) are not news.
         const servers = (event.mcp_servers as { name?: string; status?: string }[] | undefined) ?? []
-        const failed = servers.filter((x) => x.name && (x.status === "failed" || x.status === "needs-auth"))
-        for (const x of failed) {
-          const k = `${key}:${x.name}:${x.status}`
-          if (mcpWarned.has(k)) continue
+        const broken = servers.filter((x) => x.name && !/^claude\.ai /i.test(x.name) && (x.status === "failed" || x.status === "needs-auth")).map((x) => x.name!)
+        const k = `${key}:${broken.sort().join(",")}`
+        if (broken.length && !mcpWarned.has(k)) {
           mcpWarned.add(k)
-          noticeInfo(key, `MCP server ${x.name} ${x.status === "needs-auth" ? "needs you to sign in" : "did not connect"}. Run /mcp to ${x.status === "needs-auth" ? "sign in" : "see why and reconnect"}.`)
+          noticeInfo(key, `${broken.length === 1 ? `MCP server ${broken[0]} is` : `MCP servers ${broken.join(", ")} are`} not connected. Run /mcp to see why and reconnect.`)
         }
       }
       // an API error Claude Code is retrying: say when it tries again instead of looking stuck
