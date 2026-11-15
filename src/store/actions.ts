@@ -12,7 +12,7 @@ import { getApp, setApp, type Settings } from "./app"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway } from "./away"
-import { realRename, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver } from "@/backend/real"
+import { realRename, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
 
 /**
  * Store actions — plain functions so components, palette commands, the mock
@@ -332,7 +332,7 @@ export function resumeSession(id: ID) {
 export function continueSession(id: ID) {
   const s = getApp().sessions[id]
   if (!s) return
-  if (REAL && s.control === "observed") void realTakeOver(id, "continue")
+  if (REAL && s.control === "observed") void realInject(id, "continue").catch(() => realTakeOver(id, "continue"))
   else sendMessage(id, "continue", "now")
 }
 
@@ -351,11 +351,11 @@ export function resumeMany(ids: ID[]) {
 let seq = 0
 const newId = (p: string) => `${p}_${Date.now().toString(36)}${(seq++).toString(36)}`
 
-export function forkSession(id: ID) {
+export function forkSession(id: ID, prompt?: string) {
   const s = getApp().sessions[id]
   if (!s) return
   if (REAL) {
-    const fid = realStart({ cwd: s.startCwd ?? s.cwd, resume: id, fork: true, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+    const fid = realStart({ cwd: s.startCwd ?? s.cwd, resume: id, fork: true, prompt, name: `${s.title.replace(/ \(copy\)$/, "")} (copy)`, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
     openSession(fid)
     return
   }

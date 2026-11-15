@@ -351,6 +351,22 @@ function liveFor(id: ID): Live | undefined {
   return pidLive.get(id) ?? bgLive.get(id)
 }
 
+/** How a reply reaches this terminal session without stopping it ("Konsole", "tmux", …), or null. */
+export async function realInjectWay(id: ID): Promise<string | null> {
+  const s = getApp().sessions[id]
+  const pid = liveFor(id)?.pid
+  if (!s || s.machine || !pid) return null
+  return invoke<string | null>("claude_inject_check", { pid }).catch(() => null)
+}
+
+/** Type a reply into the terminal the session runs in; it keeps running there. */
+export async function realInject(id: ID, text: string): Promise<void> {
+  const pid = liveFor(id)?.pid
+  if (!pid) throw new Error("its process is not visible")
+  await invoke<string>("claude_inject", { pid, text })
+  setStatusLocal(id, "working", { activity: "Your reply, typed into its terminal", waitingFor: undefined })
+}
+
 function liveStatus(l: Live, meta?: Meta, prev?: Session): { status: SessionStatus; waiting?: Session["waitingFor"] } {
   const s = (l.status ?? l.state ?? "").toLowerCase()
   // a slash-command dialog you opened in that terminal (/model, /config): you are already there, it

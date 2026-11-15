@@ -3,11 +3,11 @@
 // Claude Code CLI: Enter queues while Claude is working (the queue above stays
 // editable), Ctrl/⌘+Enter sends now, ↑ edits the last queued message, Esc in an empty box stops,
 // Esc Esc opens Rewind, Shift+Tab cycles the permission mode.
-import { memo, useMemo, useRef } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { addSessionFolder, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
+import { addSessionFolder, forkSession, removeSessionFolder, sendMessage, setSessionSettings } from "@/store/actions"
 import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals"
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
@@ -21,6 +21,17 @@ import { getUiValue, interruptSession, takeLastQueued } from "../sessionStore"
 
 const MODE_CYCLE: PermissionMode[] = ["default", "acceptEdits", "plan", "auto"]
 const EMPTY_FILES: string[] = []
+
+/** A reply to a terminal session: typed into its terminal, or (when that can't be done) a copy here. */
+function replyToTerminal(id: ID, text: string, way: string | null) {
+  if (way) {
+    void import("@/backend/real").then((r) =>
+      r.realInject(id, text).catch(() => forkSession(id, text)),
+    )
+    return
+  }
+  forkSession(id, text)
+}
 
 export const Composer = memo(function Composer({ sessionId }: { sessionId: ID }) {
   const control = useApp((s) => s.sessions[sessionId]?.control)
@@ -39,6 +50,16 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const lastEsc = useRef(0)
   // Rewind puts the prompt back here; the session view remounts the composer with a new key
   const initialText = useMemo(() => getUiValue<{ text: string } | null>(`prefill:${sessionId}`, null)?.text ?? "", [sessionId])
+  // a terminal session: whether a reply can be typed into its terminal
+  const [injectWay, setInjectWay] = useState<string | null>(null)
+  useEffect(() => {
+    if (!(REAL && control === "observed")) return
+    let alive = true
+    void import("@/backend/real").then((r) => r.realInjectWay(sessionId).then((w) => alive && setInjectWay(w)))
+    return () => {
+      alive = false
+    }
+  }, [sessionId, control])
 
   const folders = useMemo(() => {
     const added = repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))
@@ -54,7 +75,9 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
 
   if (!control || !mode || !model || !effort) return null
   const caps = capabilities(control)
-  // a session in a terminal: typing here takes it over (it closes there, continues here)
+  // a session in a terminal never closes because you replied here: the reply is typed into that
+  // terminal when it allows it (Konsole, tmux, kitty, WezTerm, the app's terminal), else it continues
+  // in a copy in this app while the terminal keeps its own. Take over (the banner) moves it on purpose.
   const takeOver = REAL && control === "observed"
   // a past session: the banner above offers Resume; nothing to type into until then
   if (!caps.send && !takeOver) return null
@@ -69,12 +92,12 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
       <PromptBox
         files={files}
         initialText={initialText}
-        placeholder={takeOver ? "Reply here: the session moves from your terminal to this app" : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
+        placeholder={takeOver ? (injectWay ? `Reply: typed into its terminal (${injectWay}); it keeps running there` : "Reply: continues in a copy here; the terminal keeps running its own") : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
         keysHint={`${working ? `Enter queues, ${MOD}+Enter sends now, Escape stops.` : "Enter sends, Shift+Enter adds a line."} Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
-        sendHint={takeOver ? "Take over and send · Enter" : working ? `Enter: after this step · ${MOD}+Enter: send now${observedNote}` : `Send · Enter${observedNote}`}
+        sendHint={takeOver ? (injectWay ? `Send to ${injectWay} · Enter` : "Continue in a copy · Enter") : working ? `Enter: after this step · ${MOD}+Enter: send now${observedNote}` : `Send · Enter${observedNote}`}
         busy={working && caps.interrupt}
         onStop={() => interruptSession(sessionId)}
-        onSubmit={(text, attachments, how) => (/^!\s*\S/.test(text) && !attachments.length ? void runInTerminal(text.replace(/^!\s*/, "").trim()) : !attachments.length && runSlashInTerminal(text, sessionId) ? undefined : takeOver ? takeOverSession(sessionId, attachments.length ? `${text}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : text) : sendMessage(sessionId, text, how, attachments))}
+        onSubmit={(text, attachments, how) => (/^!\s*\S/.test(text) && !attachments.length ? void runInTerminal(text.replace(/^!\s*/, "").trim()) : !attachments.length && runSlashInTerminal(text, sessionId) ? undefined : takeOver ? replyToTerminal(sessionId, attachments.length ? `${text}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : text, injectWay) : sendMessage(sessionId, text, how, attachments))}
         onEscapeEmpty={(e) => {
           if (working && caps.interrupt) {
             e.preventDefault()

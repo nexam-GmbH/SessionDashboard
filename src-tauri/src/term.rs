@@ -141,6 +141,30 @@ pub fn write(terms: &Terms, key: &str, data: &str) -> Result<(), String> {
     t.writer.flush().map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
+impl Terms {
+    pub fn insert_for_test(&self, key: &str, master: Box<dyn portable_pty::MasterPty + Send>, writer: Box<dyn Write + Send>, child: Box<dyn portable_pty::Child + Send + Sync>) {
+        self.0.lock().unwrap().insert(key.to_string(), Term { master, writer, child });
+    }
+}
+
+/// The app terminal whose shell `pid` runs under (a claude started in the built-in terminal).
+pub fn key_of_descendant(terms: &Terms, pid: u32) -> Option<String> {
+    let shells: Vec<(String, u32)> = terms.0.lock().unwrap().iter().filter_map(|(k, t)| Some((k.clone(), t.child.process_id()?))).collect();
+    let mut cur = pid;
+    for _ in 0..64 {
+        if let Some((k, _)) = shells.iter().find(|(_, s)| *s == cur) {
+            return Some(k.clone());
+        }
+        let stat = std::fs::read_to_string(format!("/proc/{cur}/stat")).ok()?;
+        cur = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+        if cur <= 1 {
+            return None;
+        }
+    }
+    None
+}
+
 pub fn resize(terms: &Terms, key: &str, cols: u16, rows: u16) -> Result<(), String> {
     let map = terms.0.lock().unwrap();
     let t = map.get(key).ok_or("terminal is closed")?;

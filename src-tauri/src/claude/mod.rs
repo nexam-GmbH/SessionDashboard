@@ -5,6 +5,7 @@ pub mod control;
 pub mod discover;
 pub mod git;
 pub mod hooks;
+pub mod inject;
 pub mod perms;
 pub mod ports;
 pub mod remote;
@@ -307,4 +308,18 @@ pub async fn claude_set_user_setting(key: String, value: Value) -> Result<(), St
 pub async fn claude_set_config_dirs(dirs: Vec<String>) -> Result<(), String> {
     discover::set_extra_dirs(&dirs);
     Ok(())
+}
+
+/// How a reply would reach a terminal session without stopping it ("Konsole", "tmux", …), or null.
+#[tauri::command]
+pub async fn claude_inject_check(terms: State<'_, crate::term::Terms>, pid: u32) -> Result<Option<String>, String> {
+    let terms = terms.inner().clone();
+    blocking(move || Ok(inject::check(&terms, pid))).await
+}
+
+/// Type a reply into the terminal a session runs in (it keeps running there).
+#[tauri::command]
+pub async fn claude_inject(terms: State<'_, crate::term::Terms>, pid: u32, text: String) -> Result<String, String> {
+    let terms = terms.inner().clone();
+    blocking(move || inject::send(&terms, pid, &text)).await
 }

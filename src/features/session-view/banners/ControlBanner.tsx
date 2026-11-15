@@ -63,7 +63,7 @@ export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessio
           </PopoverTrigger>
           <PopoverContent align="end" className="w-[260px] gap-2 rounded-md border border-border p-3 text-xs shadow-lg ring-0">
             <div className="text-muted-foreground">
-              It closes in your terminal (as Ctrl+C twice would) and continues here with the whole conversation. You can also just type below.
+              It closes in your terminal (as Ctrl+C twice would) and continues here with the whole conversation. Typing below never closes it: the reply goes into its terminal when the terminal allows it (Konsole, tmux, kitty, WezTerm), else into a copy here.
             </div>
             <Button size="sm" variant="default" className="self-start" onClick={() => takeOverSession(sessionId)}>
               <Play /> Close there, continue here

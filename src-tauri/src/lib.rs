@@ -118,6 +118,8 @@ pub fn run() {
             claude::claude_user_setting,
             claude::claude_set_user_setting,
             claude::claude_set_config_dirs,
+            claude::claude_inject_check,
+            claude::claude_inject,
             claude::hooks_status,
             claude::hooks_set,
             claude::hooks_answer,
