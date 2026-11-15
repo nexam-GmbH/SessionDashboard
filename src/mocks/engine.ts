@@ -1,6 +1,6 @@
 import type { ID, PendingRequest, Session, SessionStatus } from "@/lib/model"
 import { getApp, setApp, useApp } from "@/store/app"
-import { pushNotification, removeQueued, sendMessage } from "@/store/actions"
+import { addDiscoveredSession, pushNotification, removeQueued, sendMessage } from "@/store/actions"
 import { Rng } from "./rng"
 
 /**
@@ -128,7 +128,7 @@ function flush() {
   }
   for (const n of notify) {
     // don't toast for the session the user is looking at, or one that just picked up its queue
-    if (getApp().activeTab !== `/session/${n.sessionId}` && !delivered.has(n.sessionId)) pushNotification(n)
+    if (getApp().route !== `/session/${n.sessionId}` && !delivered.has(n.sessionId)) pushNotification(n)
   }
   listeners.forEach((l) => l(batch))
 }
@@ -146,9 +146,22 @@ const ACTIVITIES = [
   () => "Waiting on subagent",
 ]
 
+/**
+ * Sessions "started in your terminal" while the app runs (Phase 2 discovers real ones): one in a
+ * tracked project, one in a folder that becomes a new project.
+ */
+const DISCOVERIES = [
+  { afterTicks: 100, path: "~/code/web-app", task: "Fix flaky checkout e2e test" },
+  { afterTicks: 220, path: "~/code/scratch", task: "Try the new streaming API" },
+]
+let ticks = 0
+
 function tick() {
   const s = getApp()
   if (!s.engine.running) return
+  ticks++
+  const found = DISCOVERIES.find((d) => d.afterTicks === ticks)
+  if (found) addDiscoveredSession(found.path, found.task)
   const n = Math.max(1, Math.round((s.engine.rate * TICK_MS) / 1000 + (rng.float() - 0.5)))
   const working = Object.values(s.sessions).filter((x) => x.status === "working" && !x.archived)
   if (!working.length) return

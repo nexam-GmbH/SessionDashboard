@@ -7,8 +7,11 @@ import { ArrowDown } from "lucide-react"
 import type { ID } from "@/lib/model"
 import { getApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
+import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 import { useTranscriptShape } from "../sessionStore"
 import { buildRows, groupBlocks, tailStartIndex, type Block, type Row } from "./rowModel"
+import { DoneLine, LiveSpinner } from "./Spinner"
 import { useTranscriptVirtualizer } from "./useTranscriptVirtualizer"
 import {
   AgentRow,
@@ -20,6 +23,7 @@ import {
   ThoughtRow,
   ToolGroupRow,
   UserRow,
+  FilesRow,
 } from "./rows"
 
 const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail }: { sessionId: ID; row: Row; liveItemId?: ID; inTail?: boolean }) {
@@ -38,10 +42,14 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail }: { 
       return <ToolGroupRow sessionId={sessionId} itemIds={row.itemIds} groupKey={row.key} live={row.live} />
     case "tool":
       return <SingleToolRow sessionId={sessionId} itemId={row.itemId} />
+    case "files":
+      return <FilesRow sessionId={sessionId} itemId={row.itemId} />
     case "compaction":
       return <CompactionRow sessionId={sessionId} itemId={row.itemId} />
     case "notice":
       return <NoticeRow sessionId={sessionId} itemId={row.itemId} />
+    case "done":
+      return <DoneLine turnId={row.turnId} durationMs={row.durationMs} at={row.at} />
     case "receipt":
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
   }
@@ -58,7 +66,7 @@ const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail
   )
 })
 
-const COLUMN = "mx-auto w-full max-w-[860px] px-5"
+const COLUMN = "mx-auto w-full max-w-[var(--chat-w)] px-5"
 
 export const Transcript = memo(function Transcript({ sessionId }: { sessionId: ID }) {
   const { ready, order, turns, liveItemId } = useTranscriptShape(sessionId)
@@ -79,9 +87,13 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
     contentRef,
   })
 
-  // Open at the latest message.
+  // Open at the latest message, once: a kept-mounted chat shown again (<Activity>) re-runs its
+  // effects, and jumping to the bottom then lost the place you were reading
+  const opened = useRef<string | null>(null)
   useLayoutEffect(() => {
-    if (ready) scrollToBottom("auto")
+    if (!ready || opened.current === sessionId) return
+    opened.current = sessionId
+    scrollToBottom("auto")
   }, [ready, sessionId, scrollToBottom])
 
   // The scroll container always renders so the virtualizer's listeners attach on mount.
@@ -98,6 +110,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
         className="absolute inset-0 overflow-y-auto outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
       >
         {ready && !rows.length && <EmptyState>No messages yet.</EmptyState>}
+        {!ready && <TranscriptSkeleton />}
         <div ref={contentRef} className="pt-1 pb-6">
           {head.length > 0 && (
             <div className="relative w-full" style={{ height: totalSize }}>
@@ -124,6 +137,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
             {tail.map((block) => (
               <BlockView key={block.key} sessionId={sessionId} block={block} liveItemId={liveItemId} inTail />
             ))}
+            <LiveSpinner sessionId={sessionId} />
           </div>
         </div>
       </div>
@@ -132,7 +146,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
           type="button"
           onClick={() => scrollToBottom("smooth")}
           aria-label="Jump to latest message"
-          className="absolute bottom-3 left-1/2 inline-flex h-6 -translate-x-1/2 items-center gap-1 rounded-[4px] border border-line bg-elevated px-2 text-[11px] text-fg-muted shadow-md outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
+          className="absolute bottom-3 left-1/2 inline-flex h-6 -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground shadow-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         >
           <ArrowDown size={12} aria-hidden /> Latest
         </button>
@@ -140,3 +154,22 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
     </div>
   )
 })
+
+/** While a chat is read: the shape of its latest messages, at the bottom where the chat opens. */
+function TranscriptSkeleton() {
+  return (
+    <div className={cn(COLUMN, "flex min-h-full flex-col justify-end gap-6 pt-6 pb-6")} aria-busy="true" aria-label="Loading the chat">
+      {[0, 1].map((k) => (
+        <div key={k} className="flex flex-col gap-3">
+          <Skeleton className="h-9 w-64 self-end rounded-lg" />
+          <Skeleton className="h-4 w-40" />
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-4 w-[92%]" />
+            <Skeleton className="h-4 w-[85%]" />
+            <Skeleton className="h-4 w-[60%]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}

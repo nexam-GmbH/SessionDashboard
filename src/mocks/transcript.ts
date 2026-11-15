@@ -1,4 +1,6 @@
 import type { FileChange, ID, Item, PendingRequest, Session, ToolCall, ToolKind, Transcript, Turn } from "@/lib/model"
+import { REAL } from "@/backend/mode"
+import { ensureRealTranscript } from "@/backend/real"
 import { getApp, setApp } from "@/store/app"
 import type { RepoSpec } from "./catalog"
 import { FOLLOW_UPS } from "./catalog"
@@ -534,19 +536,9 @@ function alignTimeline(ctx: Ctx, turns: Turn[], session: Session, rng: Rng) {
   }
 }
 
-function isBig(session: Session) {
-  try {
-    if (new URLSearchParams(location.search).get("big") === session.id) return true
-  } catch {
-    /* no location */
-  }
-  const st = getApp()
-  if (st.fixture !== "stress") return false
-  const first = st.sessionIdsByRepo[st.repoOrder[0]]?.[0]
-  return first === session.id
-}
-
 export function ensureTranscript(sessionId: ID) {
+  // the desktop app reads the real transcript (backend/real.ts)
+  if (REAL) return ensureRealTranscript(sessionId)
   const st = getApp()
   if (st.transcripts[sessionId]) return
   const session = st.sessions[sessionId]
@@ -557,7 +549,7 @@ export function ensureTranscript(sessionId: ID) {
     appendUserMessage(sessionId, session.firstPrompt)
     return
   }
-  const t = generateTranscript(session, isBig(session))
+  const t = generateTranscript(session)
   setApp((s) => ({ transcripts: { ...s.transcripts, [sessionId]: t } }))
 }
 

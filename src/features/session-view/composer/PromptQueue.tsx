@@ -9,7 +9,7 @@ import { removeQueued } from "@/store/actions"
 import { cn } from "@/lib/utils"
 import { editQueued, sendQueuedNow, useQueued } from "../sessionStore"
 
-const ACTION = "inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
+const ACTION = "inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
 
 export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId: ID }) {
   const items = useQueued(sessionId)
@@ -21,7 +21,7 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
     setEditingId(null)
   }
   return (
-    <div className="mx-auto w-full max-w-[860px] px-5 pb-1.5">
+    <div className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-1.5">
       <ul className="flex flex-col gap-px" aria-label="Queued messages">
         {items.map((q) => {
           const editing = editingId === q.id
@@ -29,11 +29,11 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
             <li
               key={q.id}
               className={cn(
-                "group/q flex min-h-7 min-w-0 items-center gap-2 rounded-[4px] border border-line-subtle bg-chrome px-2 text-[12.5px]",
-                editing && "border-brand/50",
+                "group/q flex min-h-7 min-w-0 items-center gap-2 rounded-md border border-border bg-card px-2 text-xs",
+                editing && "border-input",
               )}
             >
-              <Clock3 size={12} className="shrink-0 text-fg-faint" aria-label="Queued" />
+              <Clock3 size={12} className="shrink-0 text-muted-foreground/70" aria-label="Queued" />
               {editing ? (
                 <textarea
                   autoFocus
@@ -50,15 +50,15 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
                       save(q.id)
                     }
                   }}
-                  className="my-1 min-w-0 flex-1 resize-none bg-transparent text-[12.5px] leading-[18px] text-fg outline-none"
+                  className="my-1 min-w-0 flex-1 resize-none bg-transparent text-xs leading-[18px] text-foreground outline-none"
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate text-fg-muted" title={`Queued: sent after this turn\n${q.text}${q.attachments?.length ? `\n${q.attachments.join(", ")}` : ""}`}>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground" title={`Queued: sent after this turn\n${q.text}${q.attachments?.length ? `\n${q.attachments.join(", ")}` : ""}`}>
                   {q.text}
                 </span>
               )}
               {!editing && q.attachments?.length ? (
-                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-fg-faint" aria-label={`${q.attachments.length} attached`}>
+                <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground/70" aria-label={`${q.attachments.length} attached`}>
                   <Paperclip size={11} />
                   <span className="tabular">{q.attachments.length}</span>
                 </span>

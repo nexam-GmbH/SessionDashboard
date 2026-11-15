@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from "react"
+import { REAL } from "@/backend/mode"
 import { useShallow } from "zustand/react/shallow"
 import type { FileChange, ID, Item, PendingRequest, ToolCall, Transcript } from "@/lib/model"
 import { getApp, setApp, useApp } from "@/store/app"
@@ -147,6 +148,8 @@ export function interruptSession(sessionId: ID) {
   const s = getApp().sessions[sessionId]
   if (!s || (s.status !== "working" && s.status !== "starting")) return
   interrupt(sessionId)
+  // real sessions: claude ends the turn itself and the stream says so
+  if (REAL) return
   patchTranscript(sessionId, (t) => {
     const items = { ...t.items }
     const live = t.liveItemId ? items[t.liveItemId] : undefined

@@ -23,7 +23,7 @@ function AskTitle({ verb, subject }: { verb: string; subject?: string }) {
   return (
     <span className="flex min-w-0 items-baseline" title={subject}>
       <span className="shrink-0">{verb}&nbsp;</span>
-      <code className="min-w-0 truncate font-mono text-[12.5px]">{subject}</code>
+      <code className="min-w-0 truncate font-mono text-xs">{subject}</code>
       <span className="shrink-0">?</span>
     </span>
   )
@@ -86,7 +86,7 @@ export const PermissionCard = memo(function PermissionCard({
       meta={
         <>
           {(added > 0 || removed > 0) && <DiffStat added={added} removed={removed} className="shrink-0" />}
-          {subagentLabel && <span className="shrink-0 text-[11.5px] text-fg-muted">{subagentLabel}</span>}
+          {subagentLabel && <span className="shrink-0 text-xs text-muted-foreground">{subagentLabel}</span>}
         </>
       }
       aside={hasDetails ? <DetailsToggle open={details} onToggle={() => setDetails((v) => !v)} /> : undefined}
@@ -142,7 +142,7 @@ export const PermissionCard = memo(function PermissionCard({
                 {optionLabel(o)}
               </OptionButton>
             ))}
-            {!canApprove && <span className="ml-auto text-[11.5px] text-fg-faint">Approve in your terminal</span>}
+            {!canApprove && <span className="ml-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
           </>
         )
       }
@@ -150,14 +150,14 @@ export const PermissionCard = memo(function PermissionCard({
       {(details || (diff && !command)) && (
         <div className="flex flex-col gap-1">
           {details && command && command.length > 60 && (
-            <code className="font-mono text-[12px] leading-[18px] break-all whitespace-pre-wrap text-fg select-text">{command}</code>
+            <code className="font-mono text-xs leading-[18px] break-all whitespace-pre-wrap text-foreground select-text">{command}</code>
           )}
           {details && cwd && (
-            <div className="truncate font-mono text-[11px] text-fg-faint" title={cwd}>
+            <div className="truncate font-mono text-xs text-muted-foreground/70" title={cwd}>
               {homePath(cwd)}
             </div>
           )}
-          {details && request.description && <div className="text-[12px] text-fg-muted">{request.description}</div>}
+          {details && request.description && <div className="text-xs text-muted-foreground">{request.description}</div>}
           {diff && !command && <InlineDiff className={details ? "mt-1" : undefined} path={diff.path} oldText={diff.oldText} newText={diff.newText} maxLines={8} />}
         </div>
       )}

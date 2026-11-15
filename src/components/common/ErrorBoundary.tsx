@@ -18,8 +18,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode; label?: stri
           <div className="flex items-center gap-2 font-medium text-st-error-fg">
             <TriangleAlert size={14} /> {this.props.label ?? "This view"} crashed
           </div>
-          <pre className="mt-2 max-h-32 overflow-auto font-mono text-[11px] whitespace-pre-wrap text-fg-muted">{this.state.error.message}</pre>
-          <button className="mt-2 flex h-6 items-center gap-1 rounded-sm border border-line px-2 text-fg hover:bg-hover" onClick={() => this.setState({ error: null })}>
+          <pre className="mt-2 max-h-32 overflow-auto font-mono text-xs whitespace-pre-wrap text-muted-foreground">{this.state.error.message}</pre>
+          <button className="mt-2 flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-foreground hover:bg-accent" onClick={() => this.setState({ error: null })}>
             <RotateCw size={12} /> Reload view
           </button>
         </div>

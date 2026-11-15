@@ -7,7 +7,7 @@
 // rules (§2.5): user messages are label-less bubbles with the time on hover, receipts
 // show only while hovering their turn, diff stats on hover; notices carry a retry.
 import { memo, useState } from "react"
-import { Check, Copy, FileDiff, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
+import { Check, Copy, FileDiff, History, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
 import type { ID, ToolCall, Turn } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { openReview, sendMessage } from "@/store/actions"
@@ -21,28 +21,46 @@ import { Markdown } from "../markdown/Markdown"
 import { CachedMarkdown } from "../markdown/CachedMarkdown"
 import { useCoalescedItem, useExpanded, useItem, useItems } from "../sessionStore"
 import { ToolRow } from "../tools/ToolRow"
-import { formatWorkDuration } from "../tools/toolSummary"
+import { Pictures, SharedFiles } from "./Media"
+import { formatWorkDuration, summarizeWork } from "../tools/toolSummary"
 
 // ---------- user ----------
 // One shared formatter: toLocaleTimeString per row is slow when many rows mount at once.
 const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" })
 export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   const item = useItem(sessionId, itemId)
+  const canRewind = useApp((s) => {
+    const c = s.sessions[sessionId]?.control
+    return c ? capabilities(c).changeSettings : false
+  })
   if (item?.type !== "user_message") return null
   return (
     <div className="group/user flex items-start justify-end gap-2 pt-3 pb-2">
-      <time
-        className="tabular mt-2 shrink-0 text-[11px] text-fg-faint opacity-0 transition-opacity duration-150 group-hover/user:opacity-100"
-        dateTime={item.at}
-      >
-        {TIME.format(new Date(item.at))}
-      </time>
-      <div className="max-w-[85%] min-w-0 rounded-[6px] bg-elevated px-3 py-1.5">
-        <div className="text-[13px] leading-[20px] whitespace-pre-wrap text-fg select-text">{item.text}</div>
+      {/* on hover: time, Copy and "Rewind to here" (Claude Code desktop's per-message rewind) */}
+      <div className="mt-1.5 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100">
+        <time className="tabular mr-1 text-xs text-muted-foreground/70" dateTime={item.at}>
+          {TIME.format(new Date(item.at))}
+        </time>
+        <CopyButton text={item.text} />
+        {canRewind && (
+          <button
+            type="button"
+            title="Rewind to here"
+            aria-label="Rewind to here"
+            onClick={() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId: item.turnId } }))}
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <History size={11} />
+          </button>
+        )}
+      </div>
+      <div className="max-w-[85%] min-w-0 rounded-md bg-muted px-3 py-1.5">
+        {item.images && item.images.length > 0 && <Pictures pictures={item.images} className={item.text ? "mb-1.5" : "my-0.5"} />}
+        {item.text && <div className="text-sm leading-[20px] whitespace-pre-wrap text-foreground select-text">{item.text}</div>}
         {item.attachments && item.attachments.length > 0 && (
           <div className="mt-1 mb-0.5 flex flex-wrap gap-1">
             {item.attachments.map((a) => (
-              <span key={a} className="inline-flex h-5 items-center gap-1 rounded-[3px] border border-line-subtle px-1.5 font-mono text-[11px] text-fg-muted">
+              <span key={a} className="inline-flex h-5 items-center gap-1 rounded-sm border border-border px-1.5 font-mono text-xs text-muted-foreground">
                 <Paperclip size={10} /> {a}
               </span>
             ))}
@@ -51,6 +69,13 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
       </div>
     </div>
   )
+})
+
+// ---------- files Claude handed you ----------
+export const FilesRow = memo(function FilesRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
+  const item = useItem(sessionId, itemId)
+  if (item?.type !== "tool_call" || !item.call.files?.length) return null
+  return <SharedFiles sessionId={sessionId} files={item.call.files} caption={item.call.caption} />
 })
 
 // ---------- agent message ----------
@@ -66,7 +91,7 @@ function CopyButton({ text }: { text: string }) {
         setDone(true)
         setTimeout(() => setDone(false), 1200)
       }}
-      className="inline-flex size-5 items-center justify-center rounded-[3px] text-fg-faint outline-none hover:bg-hover hover:text-fg focus-visible:ring-1 focus-visible:ring-ring"
+      className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
     >
       {done ? <Check size={11} /> : <Copy size={11} />}
     </button>
@@ -114,13 +139,13 @@ export const ThoughtRow = memo(function ThoughtRow({ sessionId, itemId }: { sess
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="group/th -ml-1 flex h-6 items-center gap-1 rounded-[3px] px-1 text-[12.5px] text-fg-faint outline-none hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
+        className="group/th -ml-1 flex h-7 items-center gap-1.5 rounded-md px-1 text-sm text-muted-foreground/80 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span>{thoughtLabel(item.durationMs)}</span>
         <Chevron open={open} className="opacity-60 group-hover/th:opacity-100" />
       </button>
       {open && (
-        <div className="ml-[3px] border-l border-line-subtle py-1 pl-3">
+        <div className="ml-[3px] border-l border-border py-1 pl-3">
           <Markdown content={item.text} className="sd-markdown-muted" />
         </div>
       )}
@@ -183,30 +208,30 @@ export const ToolGroupRow = memo(function ToolGroupRow({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="group/grp -ml-1 flex h-6 max-w-full min-w-0 items-center gap-1 rounded-[3px] px-1 text-left text-[12.5px] text-fg-faint outline-none hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
+        className="group/grp -ml-1 flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-sm text-muted-foreground/80 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       >
-        <span className="min-w-0 truncate">
-          <span className={cn(active && "text-fg-muted")}>
-            {active ? (st.waiting ? "Waiting" : "Working") : "Worked"} for{" "}
-            {active || !st.end ? <Elapsed since={start} /> : formatWorkDuration(Math.max(0, st.end - start))}
-          </span>
-          <span> · {plural(itemIds.length, "tool")}</span>
+        <span className={cn("min-w-0 truncate", active && "text-muted-foreground")}>
+          {summarizeWork(calls.filter((c): c is ToolCall => !!c))}
+          {active && (
+            <span className="tabular text-muted-foreground/70">
+              {" · "}
+              <Elapsed since={start} />
+            </span>
+          )}
           {st.failed > 0 && <span className="text-st-error-fg"> · {st.failed} failed</span>}
         </span>
-        {(st.added > 0 || st.removed > 0) && (
-          <DiffStat added={st.added} removed={st.removed} className="ml-1 hidden shrink-0 group-hover/grp:inline-flex" />
-        )}
+        {(st.added > 0 || st.removed > 0) && <DiffStat added={st.added} removed={st.removed} className="ml-1 shrink-0" />}
         <Chevron open={open} className="opacity-60 group-hover/grp:opacity-100" />
       </button>
       {open ? (
-        <div className="ml-[3px] flex flex-col border-l border-line-subtle pl-2">
+        <div className="ml-[3px] flex flex-col border-l border-border pl-2">
           {itemIds.map((id) => (
             <ToolRow key={id} sessionId={sessionId} itemId={id} />
           ))}
         </div>
       ) : (
         lastId && (
-          <div className="ml-[3px] flex flex-col border-l border-line-subtle pl-2">
+          <div className="ml-[3px] flex flex-col border-l border-border pl-2">
             <ToolRow sessionId={sessionId} itemId={lastId} />
           </div>
         )
@@ -228,10 +253,10 @@ export const CompactionRow = memo(function CompactionRow({ sessionId, itemId }: 
   const item = useItem(sessionId, itemId)
   if (item?.type !== "compaction") return null
   return (
-    <div className="flex items-center gap-3 py-3 text-[11px] text-fg-faint">
-      <div className="h-px flex-1 bg-line-subtle" />
+    <div className="flex items-center gap-3 py-3 text-xs text-muted-foreground/70">
+      <div className="h-px flex-1 bg-border" />
       <span title={`${item.trigger === "auto" ? "Automatic" : "Manual"} · ${compact(item.preTokens)} tokens summarized`}>Context compacted</span>
-      <div className="h-px flex-1 bg-line-subtle" />
+      <div className="h-px flex-1 bg-border" />
     </div>
   )
 })
@@ -245,14 +270,14 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
   })
   if (item?.type !== "notice") return null
   if (item.severity === "info") {
-    return <div className="py-1 text-[12px] text-fg-faint select-text">{item.text}</div>
+    return <div className="py-1 text-xs text-muted-foreground/70 select-text">{item.text}</div>
   }
   const Icon = item.severity === "error" ? OctagonX : TriangleAlert
   return (
     <div className="py-1.5">
       <div
         className={cn(
-          "flex items-start gap-2 rounded-[4px] border px-2.5 py-1.5 text-[12.5px]",
+          "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
           item.severity === "error" ? "border-st-error/35 bg-st-error-tint text-st-error-fg" : "border-st-input/30 bg-st-input-tint text-st-input-fg",
         )}
       >
@@ -262,7 +287,7 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
           <button
             type="button"
             onClick={() => sendMessage(sessionId, "continue", "now")}
-            className="h-5 shrink-0 rounded-[3px] border border-st-error/40 px-1.5 text-[11px] text-st-error-fg outline-none hover:border-st-error/70 focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-5 shrink-0 rounded-sm border border-st-error/40 px-1.5 text-xs text-st-error-fg outline-none hover:border-st-error/70 focus-visible:ring-1 focus-visible:ring-ring"
           >
             Retry
           </button>
@@ -277,7 +302,7 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
 export const ReceiptRow = memo(function ReceiptRow({ sessionId, receipt }: { sessionId: ID; receipt: NonNullable<Turn["receipt"]> }) {
   return (
     <div
-      className="flex h-6 items-center gap-1.5 text-[11px] text-fg-faint opacity-0 transition-opacity duration-150 group-hover/turn:opacity-100 focus-within:opacity-100"
+      className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/turn:opacity-100 focus-within:opacity-100"
       title={`${compact(receipt.tokens)} tokens`}
     >
       <span className="tabular">{formatWorkDuration(receipt.durationMs)}</span>
@@ -289,7 +314,7 @@ export const ReceiptRow = memo(function ReceiptRow({ sessionId, receipt }: { ses
           <button
             type="button"
             onClick={() => openReview(sessionId)}
-            className="inline-flex items-center gap-1 rounded-[3px] px-1 outline-none hover:bg-hover hover:text-fg-muted focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex items-center gap-1 rounded-sm px-1 outline-none hover:bg-accent hover:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
           >
             <FileDiff size={11} />
             {plural(receipt.filesChanged, "file")}

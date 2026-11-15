@@ -83,19 +83,19 @@ export const InlineDiff = memo(function InlineDiff({
   if (!fileDiff) return null
   const clamped = !expanded && totalLines > maxLines
   return (
-    <div className={cn("relative overflow-hidden rounded-[4px] border border-line-subtle bg-canvas", className)}>
+    <div className={cn("relative overflow-hidden rounded-md border border-border bg-background", className)}>
       <div style={{ maxHeight: clamped ? maxLines * LINE_PX + 4 : undefined }} className="overflow-hidden">
         <FileDiff
           fileDiff={fileDiff}
           options={options}
           style={
             {
-              "--diffs-font-family": "var(--font-code)",
-              "--diffs-header-font-family": "var(--font-ui)",
+              "--diffs-font-family": "var(--font-mono)",
+              "--diffs-header-font-family": "var(--font-sans)",
               "--diffs-font-size": "12px",
               "--diffs-line-height": `${LINE_PX}px`,
-              "--diffs-dark-bg": "var(--bg-canvas)",
-              "--diffs-light-bg": "var(--bg-canvas)",
+              "--diffs-dark-bg": "var(--background)",
+              "--diffs-light-bg": "var(--background)",
               "--diffs-tab-size": "2",
               colorScheme: "dark",
             } as CSSProperties
@@ -106,7 +106,7 @@ export const InlineDiff = memo(function InlineDiff({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="flex h-6 w-full items-center justify-center gap-1 border-t border-line-subtle bg-chrome text-[11px] text-fg-faint hover:bg-hover hover:text-fg-muted"
+          className="flex h-6 w-full items-center justify-center gap-1 border-t border-border bg-card text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground"
         >
           {expanded ? <ChevronsDownUp size={12} /> : <ChevronsUpDown size={12} />}
           {expanded ? "Collapse" : `Show all ${totalLines} lines`}

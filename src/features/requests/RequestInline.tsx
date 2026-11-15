@@ -1,10 +1,10 @@
-import { memo, useState } from "react"
+import { memo } from "react"
 import { MessageCircleQuestion, ShieldAlert, ListChecks, Terminal, FilePen } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
-import { resolveRequest } from "@/features/session-view/sessionStore"
+import { capabilities } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
+import { onceOptions, OnceButtons } from "./OnceAnswers"
 
 /**
  * Compact waiting-request block for the inspector. Only *once* options are offered inline
@@ -25,19 +25,15 @@ export const RequestInline = memo(function RequestInline({
     const rid = s.sessions[sessionId]?.waitingFor?.requestId
     return rid ? s.requests[rid] : undefined
   })
-  const canApprove = session?.control === "owned" || session?.control === "pty"
-  // per request: a new request on the same session gets fresh, enabled buttons
-  const [busyFor, setBusyFor] = useState<ID | null>(null)
-  const busy = !!req && busyFor === req.id
   if (!session?.waitingFor) return null
+  const canApprove = capabilities(session.control).approve
   const w = session.waitingFor
   const tone =
     w.kind === "permission"
       ? "border-st-perm/35 bg-st-perm-tint text-st-perm-fg"
       : "border-st-input/30 bg-st-input-tint text-st-input-fg"
   const Icon = w.kind === "permission" ? ShieldAlert : w.kind === "plan" ? ListChecks : MessageCircleQuestion
-  const allowOnce = req && req.type === "permission" ? req.options.find((o) => o.kind === "allow_once") : undefined
-  const rejectOnce = req && req.type === "permission" ? req.options.find((o) => o.kind === "reject_once") : undefined
+  const once = onceOptions(req)
   const subject = req && req.type === "permission" ? req.subject : undefined
   const SubjectIcon = subject?.type === "command" ? Terminal : FilePen
   return (
@@ -48,12 +44,12 @@ export const RequestInline = memo(function RequestInline({
           {subject ? (
             <div className="flex min-w-0 items-center gap-1.5">
               <SubjectIcon size={11} className="shrink-0 opacity-80" />
-              <span className="truncate font-mono text-[11px] text-fg">
+              <span className="truncate font-mono text-xs text-foreground">
                 {subject.type === "command" ? subject.command : (subject.path ?? w.summary)}
               </span>
             </div>
           ) : (
-            <div className={cn("text-xs text-fg", compact ? "truncate" : "line-clamp-2")}>{w.summary}</div>
+            <div className={cn("text-xs text-foreground", compact ? "truncate" : "line-clamp-2")}>{w.summary}</div>
           )}
         </div>
       </div>
@@ -61,33 +57,10 @@ export const RequestInline = memo(function RequestInline({
           primary "Answer" / "Review plan" button), so there is one button per action */}
       {w.kind === "permission" && (
         <div className="mt-1.5 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {allowOnce && rejectOnce && canApprove ? (
-            <>
-              <Button
-                size="xs"
-                variant="perm"
-                disabled={busy}
-                onClick={() => {
-                  setBusyFor(req!.id)
-                  resolveRequest(req!, allowOnce.id)
-                }}
-              >
-                Allow once
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  setBusyFor(req!.id)
-                  resolveRequest(req!, rejectOnce.id)
-                }}
-              >
-                Deny
-              </Button>
-            </>
+          {once && canApprove ? (
+            <OnceButtons once={once} />
           ) : !canApprove ? (
-            <span className="text-[11px] text-fg-faint">Approve in terminal</span>
+            <span className="text-xs text-muted-foreground/70">Approve in terminal</span>
           ) : null}
         </div>
       )}

@@ -9,7 +9,7 @@
   max-width: 100%;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--fg);
+  color: var(--foreground);
   overflow-wrap: anywhere;
   user-select: text;
 }
@@ -26,7 +26,7 @@
   margin-block: 0.9rem 0.35rem;
   line-height: 1.35;
   font-weight: 600;
-  color: var(--fg);
+  color: var(--foreground);
 }
 .sd-markdown > :first-child {
   margin-block-start: 0;
@@ -43,12 +43,12 @@
 
 .sd-markdown strong {
   font-weight: 600;
-  color: var(--fg);
+  color: var(--foreground);
 }
 
 .sd-markdown hr {
   margin-block: 0.75rem;
-  border-color: var(--border-subtle);
+  border-color: var(--border);
 }
 
 /* Outside markers so wrapped list lines align with their first line. */
@@ -67,7 +67,7 @@
   padding-block: 0.05rem;
 }
 .sd-markdown li::marker {
-  color: var(--fg-faint);
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
 
 .sd-markdown [data-streamdown="link"],
@@ -83,10 +83,10 @@
   padding: 0.1em 0.3em;
   border-radius: 3px;
   border: 0;
-  background: var(--bg-hover);
-  font-family: var(--font-code);
+  background: var(--accent);
+  font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--fg);
+  color: var(--foreground);
 }
 
 /* Code blocks: collapse streamdown's double box into one quiet bordered block. */
@@ -103,11 +103,11 @@
   display: none;
 }
 .sd-markdown [data-streamdown="code-block-body"] {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg-chrome);
+  background: var(--card);
   padding: 0.5rem 0.75rem;
-  font-family: var(--font-code);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -146,7 +146,7 @@
   padding: 0;
   gap: 0;
   overflow-x: auto;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
 }
@@ -156,25 +156,25 @@
 }
 .sd-markdown [data-streamdown="table"] :is(th, td) {
   padding: 4px 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   text-align: left;
 }
 .sd-markdown [data-streamdown="table"] th {
   font-weight: 600;
-  color: var(--fg-muted);
-  background: var(--bg-chrome);
+  color: var(--muted-foreground);
+  background: var(--card);
 }
 
 .sd-markdown blockquote {
   margin: 0;
   padding-inline-start: 0.75rem;
-  border-inline-start: 2px solid var(--border-default);
-  color: var(--fg-muted);
+  border-inline-start: 2px solid var(--border);
+  color: var(--muted-foreground);
 }
 
 /* Muted variant for thoughts and secondary prose. */
 .sd-markdown.sd-markdown-muted {
-  color: var(--fg-muted);
+  color: var(--muted-foreground);
   font-size: 12.5px;
 }
 
@@ -189,6 +189,6 @@
 .sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
 .sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(ul, ol):last-child > li:last-child::after {
   content: var(--streamdown-caret);
-  color: var(--fg-muted);
+  color: var(--muted-foreground);
   margin-left: 1px;
 }

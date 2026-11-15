@@ -10,20 +10,59 @@ export interface Repo {
   id: ID
   name: string
   rootPath: string
+  /** where the folder is: undefined = this computer, "cloud" = claude.ai, else an ssh host */
+  machine?: string
+  /** git as last read (Phase 2): branch, what is not committed or pushed, forgotten worktrees */
+  git?: RepoGit
+  /** a repo found in a workspace folder: shown even with no session running */
+  inWorkspace?: boolean
+  /** the workspace (Settings → Workspaces) this folder belongs to */
+  workspace?: string
+  /** "owner/name" as GitHub spells it ("acme/api"), when known */
+  slug?: string
+  /** a workspace's main folder (its sessions work across all the workspace's repos) */
+  isHome?: boolean
   defaultBranch: string
   language: string
   worktrees: Worktree[]
-  graphify?: {
-    state: "none" | "building" | "fresh" | "stale"
-    builtAtCommit?: string
-    builtAt?: string
-    nodes?: number
-    edges?: number
-    communities?: number
-  }
   sharedRuleFiles: string[]
   pinned: boolean
   addedAt: string
+}
+
+export interface RepoGit {
+  isRepo: boolean
+  /** the main worktree of the repository this folder belongs to */
+  root?: string
+  /** who the repository is: its remote as "github.com/owner/name" (lowercase), whatever the folder */
+  remote?: string
+  /** the repository's name as its remote spells it ("api") */
+  remoteName?: string
+  /** "owner/name" as the remote spells it ("acme/api") */
+  slug?: string
+  hasRemote: boolean
+  branch?: string
+  changed: number
+  untracked: number
+  ahead: number
+  behind: number
+  /** commits on the checked-out branch that are on no remote */
+  unpushed: number
+  /** worktrees and branches with work that is not committed or not pushed */
+  looseEnds: LooseEnd[]
+  observedAt: string
+  error?: string
+}
+
+export interface LooseEnd {
+  kind: "worktree" | "branch"
+  name: string
+  path?: string
+  changed: number
+  unpushed: number
+  /** upstream deleted (merged and cleaned up on the remote?) */
+  gone?: boolean
+  lastCommitMs: number
 }
 
 /** id = `${repoId}::${path}` (Orca) */
@@ -54,16 +93,6 @@ export interface GitSnapshot {
   observedAt: string
 }
 
-/** Map cross-links: Graphify global graph (calls) or shared rules/code. */
-export interface RepoLink {
-  id: ID
-  from: ID
-  to: ID
-  kind: "shared-code" | "shared-rules" | "calls" | "manual"
-  label: string
-  weight?: number
-}
-
 // ---------- sessions ----------
 export type SessionStatus =
   | "starting"
@@ -76,7 +105,8 @@ export type SessionStatus =
   | "stopped"
 
 /** RESEARCH §1.4 */
-export type ControlMode = "owned" | "pty" | "observed" | "history"
+/** owned: the app runs it · observed: a terminal runs it · history: not running · cloud: claude.ai runs it */
+export type ControlMode = "owned" | "pty" | "observed" | "history" | "cloud"
 
 export type PermissionMode =
   | "default"
@@ -105,6 +135,14 @@ export interface Session {
   cwd: string
   /** --add-dir: multi-repo scope */
   additionalDirs: string[]
+  /** where it runs: undefined = this computer, "cloud" = claude.ai, else an ssh host */
+  machine?: string
+  /** the folder it was started in (resume runs there); `cwd` is where it works now */
+  startCwd?: string
+  /** folders it worked in */
+  cwds?: string[]
+  /** claude.ai/code link (cloud sessions) */
+  url?: string
   control: ControlMode
   kind: "interactive" | "background" | "sdk"
   status: SessionStatus
@@ -116,12 +154,28 @@ export interface Session {
   }
   /** one line: "Editing src/auth/retry.ts" (Xum status_update, Jean set_status) */
   activity?: string
+  /** the last thing you asked and the last thing Claude said (hover preview) */
+  lastPrompt?: string
+  lastText?: string
   lastStopReason?: "end_turn" | "max_tokens" | "refusal" | "cancelled" | "error"
   errorMessage?: string
   model: string
   effort: Effort
   permissionMode: PermissionMode
-  usage: { contextPct: number; inputTokens: number; outputTokens: number; costUsd: number }
+  /** Claude Code fast mode (same model, faster output) */
+  fastMode?: boolean
+  /** Claude Code ultracode (multi-agent orchestration) */
+  ultracode?: boolean
+  /** output style ("default", "Explanatory", …) */
+  outputStyle?: string
+  usage: {
+    contextPct: number
+    inputTokens: number
+    outputTokens: number
+    costUsd: number
+    /** what fills the context window, by category (sessions the app runs: get_context_usage) */
+    context?: { used: number; max: number; categories: { name: string; tokens: number; kind: string; deferred?: boolean }[] }
+  }
   /** files changed by this session (its worktree diff) */
   diff: { filesChanged: number; linesAdded: number; linesRemoved: number; unpushed: number }
   backgroundTasks: number
@@ -170,6 +224,8 @@ export interface Turn {
   startedAt: string
   completedAt?: string
   itemIds: ID[]
+  /** how long the turn took, as Claude Code recorded it (system turn_duration) */
+  durationMs?: number
   receipt?: { durationMs: number; tokens: number; costUsd: number; filesChanged: number }
 }
 
@@ -196,9 +252,30 @@ export interface FileChange {
   review?: "unreviewed" | "kept" | "rejected"
 }
 
+/** A picture in a message or a tool result: a data: URL or a link. */
+export interface Picture {
+  src: string
+  mediaType?: string
+}
+
+/** A file Claude handed you (SendUserFile): on this computer at `path`, or kept by claude.ai. */
+export interface SharedFile {
+  path: string
+  name: string
+  size?: number
+  mediaType?: string
+  /** claude.ai's id for it (cloud sessions) */
+  fileUuid?: string
+}
+
 export interface ToolCall {
   id: string
   name: string
+  /** pictures in its result (Read of an image, a screenshot) */
+  images?: Picture[]
+  /** files it handed you (SendUserFile), with the caption */
+  files?: SharedFile[]
+  caption?: string
   kind: ToolKind
   title: string
   status: "pending" | "in_progress" | "completed" | "failed" | "cancelled"
@@ -214,7 +291,7 @@ export interface ToolCall {
 }
 
 export type Item =
-  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[] }
+  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[]; images?: Picture[] }
   | { type: "agent_message"; id: ID; turnId: ID; at: string; text: string; streaming: boolean }
   | { type: "thought"; id: ID; turnId: ID; at: string; text: string; durationMs?: number }
   | { type: "tool_call"; id: ID; turnId: ID; at: string; call: ToolCall }
@@ -223,6 +300,8 @@ export type Item =
 
 export interface Transcript {
   sessionId: ID
+  /** the newest thing Claude produced is a thinking block (the live line says "thinking") */
+  thinkingNow?: boolean
   turns: Turn[]
   order: ID[]
   items: Record<ID, Item>

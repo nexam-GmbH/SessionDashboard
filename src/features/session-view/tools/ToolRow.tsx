@@ -22,7 +22,7 @@ function LabelParts({ parts }: { parts: ToolLabelPart[] }) {
       {parts.map((p, i) => (
         <span
           key={i}
-          className={cn(p.code && "font-mono text-[12px]", p.muted ? "text-fg-faint" : "text-fg-muted group-hover/tool:text-fg")}
+          className={cn(p.code && "font-mono text-xs", p.muted ? "text-muted-foreground/70" : "text-muted-foreground group-hover/tool:text-foreground")}
         >
           {p.text}
         </span>
@@ -37,8 +37,8 @@ export const ToolRow = memo(function ToolRow({ sessionId, itemId }: { sessionId:
   return <ToolRowInner call={item.call} itemId={itemId} />
 })
 
-/** Shown only while the row is hovered or focused. */
-const ON_HOVER = "hidden group-hover/tool:inline group-focus-visible/tool:inline"
+/** Shown only while the row is hovered or focused; it keeps its space, so the label never reflows. */
+const ON_HOVER = "opacity-0 transition-opacity duration-100 group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100"
 
 const ToolRowInner = memo(function ToolRowInner({ call, itemId }: { call: ToolCall; itemId: ID }) {
   const summary = buildToolSummary(call)
@@ -58,21 +58,21 @@ const ToolRowInner = memo(function ToolRowInner({ call, itemId }: { call: ToolCa
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         title={waiting ? (asks ? "Waiting for your answer" : "Waiting for your approval") : undefined}
-        className="group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60 focus-visible:ring-1 focus-visible:ring-ring/60"
+        className="group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-sm pr-1.5 pl-0.5 text-left text-xs outline-none hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:ring-1 focus-visible:ring-ring/60"
       >
         <ToolStatusDot display={call.display} tone={asks ? "input" : undefined} />
-        <span className="w-[52px] shrink-0 truncate text-[12px] text-fg-faint">{summary.name}</span>
+        <span className="w-[52px] shrink-0 truncate text-xs text-muted-foreground/70">{summary.name}</span>
         <span className="min-w-0 flex-1 truncate">
           <LabelParts parts={summary.parts} />
         </span>
         {(call.display === "rejected" || call.display === "cancelled") && (
-          <span className="shrink-0 text-[11px] text-fg-faint">{call.display === "rejected" ? "denied" : "cancelled"}</span>
+          <span className="shrink-0 text-xs text-muted-foreground/70">{call.display === "rejected" ? "denied" : "cancelled"}</span>
         )}
         {summary.meta && (
-          <span className={cn("tabular shrink-0 text-[11px]", errorMeta ? "text-st-error-fg" : cn("text-fg-faint", ON_HOVER))}>{summary.meta}</span>
+          <span className={cn("tabular shrink-0 text-xs", errorMeta ? "text-st-error-fg" : cn("text-muted-foreground/70", ON_HOVER))}>{summary.meta}</span>
         )}
-        {summary.diff && <DiffStat added={summary.diff.added} removed={summary.diff.removed} className={cn("shrink-0", "hidden group-hover/tool:inline-flex group-focus-visible/tool:inline-flex")} />}
-        {ms !== undefined && <span className={cn("tabular shrink-0 text-[11px] whitespace-nowrap text-fg-faint", ON_HOVER)}>{duration(ms)}</span>}
+        {summary.diff && <DiffStat added={summary.diff.added} removed={summary.diff.removed} className={cn("shrink-0", ON_HOVER)} />}
+        {ms !== undefined && <span className={cn("tabular shrink-0 text-xs whitespace-nowrap text-muted-foreground/70", ON_HOVER)}>{duration(ms)}</span>}
         <Chevron open={open} className={open ? undefined : "opacity-0 group-hover/tool:opacity-100"} />
       </button>
       {open && (

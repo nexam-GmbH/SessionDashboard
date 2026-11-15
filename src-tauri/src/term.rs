@@ -1,0 +1,231 @@
+//! The built-in terminal: a real shell in a pseudo-terminal (portable-pty, MIT, from WezTerm) per
+//! folder. Output goes to the UI as raw bytes over a Tauri channel (no JSON, no base64), read in
+//! 64 KiB chunks on its own thread; input, resize and close are plain commands.
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
+
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use tauri::ipc::{Channel, InvokeResponseBody};
+
+struct Term {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    child: Box<dyn Child + Send + Sync>,
+}
+
+/// Open terminals by the UI's key (one per folder).
+#[derive(Default, Clone)]
+pub struct Terms(Arc<Mutex<HashMap<String, Term>>>);
+
+fn size(cols: u16, rows: u16) -> PtySize {
+    PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 }
+}
+
+/// The user's login shell (interactive), like a terminal emulator starts it.
+fn shell() -> CommandBuilder {
+    #[cfg(windows)]
+    {
+        let sh = std::env::var("COMSPEC").unwrap_or_else(|_| "powershell.exe".into());
+        CommandBuilder::new(sh)
+    }
+    #[cfg(not(windows))]
+    {
+        let sh = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/bash".into());
+        let mut c = CommandBuilder::new(sh);
+        c.arg("-l");
+        c
+    }
+}
+
+/// Quote for a remote POSIX shell, keeping a leading ~ so it still expands there.
+fn shell_quote(p: &str) -> String {
+    let (head, rest) = if p == "~" {
+        ("~", "")
+    } else if let Some(r) = p.strip_prefix("~/") {
+        ("~/", r)
+    } else {
+        ("", p)
+    };
+    if rest.is_empty() {
+        return head.to_string();
+    }
+    format!("{head}'{}'", rest.replace('\'', "'\\''"))
+}
+
+fn expand(p: &str) -> String {
+    match (p.strip_prefix("~"), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) => format!("{home}{rest}"),
+        _ => p.to_string(),
+    }
+}
+
+/// Start a shell in `cwd` and stream what it prints to `on_data`. An empty message means it exited.
+/// A key that is already open is kept (the UI re-attaches to it).
+pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
+    if terms.0.lock().unwrap().contains_key(&key) {
+        return Ok(false);
+    }
+    let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
+    let mut cmd = match host.as_deref().filter(|h| !h.is_empty()) {
+        // a session on a VPS: a login shell there, in its folder
+        Some(h) => {
+            let mut c = CommandBuilder::new(std::env::var("SD_SSH").unwrap_or_else(|_| "ssh".into()));
+            let dir = if cwd.starts_with('/') || cwd.starts_with('~') { cwd.clone() } else { "~".into() };
+            c.args(["-t", h, &format!("cd {} 2>/dev/null; exec \"$SHELL\" -l", shell_quote(&dir))]);
+            c
+        }
+        None => shell(),
+    };
+    let dir = expand(&cwd);
+    if host.is_none() && std::path::Path::new(&dir).is_dir() {
+        cmd.cwd(dir);
+    } else if let Ok(home) = std::env::var("HOME") {
+        cmd.cwd(home);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "session-dashboard");
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    terms.0.lock().unwrap().insert(key.clone(), Term { master: pair.master, writer, child });
+    let all = terms.clone();
+    // reader: the pty's bytes as they come
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    // sender: what came within ~5 ms (or 64 KiB) goes to the UI as one message, so a burst of
+    // output (a build log, `cat`) is a few messages instead of thousands
+    std::thread::spawn(move || {
+        while let Ok(first) = rx.recv() {
+            let mut out = first;
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(5);
+            while out.len() < 64 * 1024 {
+                let left = until.saturating_duration_since(std::time::Instant::now());
+                match rx.recv_timeout(left) {
+                    Ok(more) => out.extend_from_slice(&more),
+                    Err(_) => break,
+                }
+            }
+            if on_data.send(InvokeResponseBody::Raw(out)).is_err() {
+                break;
+            }
+        }
+        // the shell ended (exit, or closed): forget it and tell the UI
+        if let Some(mut t) = all.0.lock().unwrap().remove(&key) {
+            let _ = t.child.wait();
+        }
+        let _ = on_data.send(InvokeResponseBody::Raw(Vec::new()));
+    });
+    Ok(true)
+}
+
+pub fn write(terms: &Terms, key: &str, data: &str) -> Result<(), String> {
+    let mut map = terms.0.lock().unwrap();
+    let t = map.get_mut(key).ok_or("terminal is closed")?;
+    t.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    t.writer.flush().map_err(|e| e.to_string())
+}
+
+pub fn resize(terms: &Terms, key: &str, cols: u16, rows: u16) -> Result<(), String> {
+    let map = terms.0.lock().unwrap();
+    let t = map.get(key).ok_or("terminal is closed")?;
+    t.master.resize(size(cols, rows)).map_err(|e| e.to_string())
+}
+
+pub fn close(terms: &Terms, key: &str) {
+    if let Some(mut t) = terms.0.lock().unwrap().remove(key) {
+        let _ = t.child.kill();
+    }
+}
+
+/// Every shell ends with the app.
+pub fn close_all(terms: &Terms) {
+    for (_, mut t) in terms.0.lock().unwrap().drain() {
+        let _ = t.child.kill();
+    }
+}
+
+// async: off the main thread, so typing in the terminal never holds up the window
+#[tauri::command]
+pub async fn term_open(terms: tauri::State<'_, Terms>, key: String, cwd: String, host: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
+    open(&terms, key, cwd, host, cols, rows, on_data)
+}
+
+#[tauri::command]
+pub async fn term_write(terms: tauri::State<'_, Terms>, key: String, data: String) -> Result<(), String> {
+    write(&terms, &key, &data)
+}
+
+#[tauri::command]
+pub async fn term_resize(terms: tauri::State<'_, Terms>, key: String, cols: u16, rows: u16) -> Result<(), String> {
+    resize(&terms, &key, cols, rows)
+}
+
+#[tauri::command]
+pub async fn term_close(terms: tauri::State<'_, Terms>, key: String) -> Result<(), String> {
+    close(&terms, &key);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A real shell in a pty: what we type runs, its output comes back, close ends it.
+    #[test]
+    fn quotes_remote_folders() {
+        assert_eq!(shell_quote("~"), "~");
+        assert_eq!(shell_quote("~/my repo"), "~/'my repo'");
+        assert_eq!(shell_quote("/srv/it's"), "'/srv/it'\\''s'");
+    }
+
+    #[test]
+    fn shell_round_trip() {
+        let pair = native_pty_system().openpty(size(80, 24)).unwrap();
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.cwd("/tmp");
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+        writer.write_all(b"echo sd-$((40+2)); pwd\n").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let mut out = String::new();
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                out.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if out.contains("sd-42") && out.contains("/tmp\r\n") {
+                    let _ = tx.send(out.clone());
+                    break;
+                }
+            }
+        });
+        let out = rx.recv_timeout(Duration::from_secs(5)).expect("no output from the shell");
+        assert!(out.contains("sd-42"), "{out}");
+        pair.master.resize(size(120, 40)).unwrap();
+        child.kill().unwrap();
+        let t = Instant::now();
+        let _ = child.wait();
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
+}

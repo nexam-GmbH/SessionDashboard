@@ -6,9 +6,9 @@
 // (§2.5): descriptions in tooltips, exit code only when non-zero, no "waiting" prose
 // (the attention dock says it).
 import { memo, useState, type ReactNode } from "react"
-import { Check, Circle, CircleDot, ExternalLink, SquareTerminal } from "lucide-react"
+import { Pictures } from "../transcript/Media"
+import { Check, Circle, CircleDot, ExternalLink } from "lucide-react"
 import type { ToolCall } from "@/lib/model"
-import { setBottomTab } from "@/store/actions"
 import { cn } from "@/lib/utils"
 import { CodeBlock, MicroLabel } from "../common"
 import { InlineDiff } from "./InlineDiff"
@@ -39,7 +39,7 @@ function ClampedOutput({ text, running, tone }: { text: string; running?: boolea
           {"\n"}
           <button
             type="button"
-            className="my-0.5 inline-flex rounded-[3px] border border-line-subtle px-1.5 font-sans text-[11px] leading-4 text-fg-faint hover:bg-hover hover:text-fg-muted"
+            className="my-0.5 inline-flex rounded-sm border border-border px-1.5 font-sans text-xs leading-4 text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground"
             onClick={() => setAll(true)}
           >
             {ht.hidden} more lines
@@ -48,7 +48,7 @@ function ClampedOutput({ text, running, tone }: { text: string; running?: boolea
           {ht.tail.join("\n")}
         </>
       )}
-      {running && <span aria-hidden className="ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 animate-pulse bg-fg-muted" />}
+      {running && <span aria-hidden className="ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 animate-pulse bg-muted-foreground" />}
     </CodeBlock>
   )
 }
@@ -62,27 +62,19 @@ export const CommandBody = memo(function CommandBody({ call }: { call: ToolCall 
   return (
     <div className="group/cmd flex flex-col gap-1.5">
       <div className="flex items-start gap-2">
-        <code className="min-w-0 flex-1 font-mono text-[12px] leading-[18px] whitespace-pre-wrap text-fg select-text" title={description}>
-          <span className="text-fg-faint select-none">$ </span>
+        <code className="min-w-0 flex-1 font-mono text-xs leading-[18px] whitespace-pre-wrap text-foreground select-text" title={description}>
+          <span className="text-muted-foreground/70 select-none">$ </span>
           {command}
         </code>
-        <button
-          type="button"
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded-[3px] px-1.5 text-[11px] text-fg-faint opacity-0 group-hover/cmd:opacity-100 hover:bg-hover hover:text-fg-muted focus-visible:opacity-100"
-          onClick={() => setBottomTab("terminal")}
-          title="Open in the terminal panel"
-        >
-          <SquareTerminal size={11} /> Terminal
-        </button>
       </div>
       {call.display === "rejected" ? (
         <Denied call={call} />
       ) : call.output ? (
         <ClampedOutput text={call.output} running={running} tone={exit !== undefined && exit !== 0 ? "error" : undefined} />
       ) : running ? (
-        <div className="text-[12px] text-fg-faint">Running…</div>
+        <div className="text-xs text-muted-foreground/70">Running…</div>
       ) : null}
-      {exit !== undefined && exit !== 0 && <div className="font-mono text-[11px] text-st-error-fg">exit {exit}</div>}
+      {exit !== undefined && exit !== 0 && <div className="font-mono text-xs text-st-error-fg">exit {exit}</div>}
     </div>
   )
 })
@@ -93,7 +85,7 @@ export const EditBody = memo(function EditBody({ call }: { call: ToolCall }) {
     const inp = input(call)
     if (typeof inp.new_string === "string")
       return <InlineDiff path={String(inp.file_path ?? call.title)} oldText={String(inp.old_string ?? "")} newText={inp.new_string} />
-    return <div className="text-[12px] text-fg-faint">No diff</div>
+    return <div className="text-xs text-muted-foreground/70">No diff</div>
   }
   return (
     <div className="flex flex-col gap-1.5">
@@ -109,12 +101,12 @@ export const EditBody = memo(function EditBody({ call }: { call: ToolCall }) {
 function Denied({ call }: { call: ToolCall }) {
   const feedback = call.output?.startsWith("Rejected: ") ? call.output.slice("Rejected: ".length) : undefined
   return (
-    <div className="text-[12px] text-fg-faint">
+    <div className="text-xs text-muted-foreground/70">
       Denied
       {feedback && (
         <>
           {" · "}
-          <span className="text-fg-muted select-text">“{feedback}”</span>
+          <span className="text-muted-foreground select-text">“{feedback}”</span>
         </>
       )}
     </div>
@@ -122,14 +114,14 @@ function Denied({ call }: { call: ToolCall }) {
 }
 
 export const ReadBody = memo(function ReadBody({ call }: { call: ToolCall }) {
-  if (!call.output) return <div className="text-[12px] text-fg-faint">No output</div>
+  if (!call.output) return <div className="text-xs text-muted-foreground/70">No output</div>
   return <CodeBlock className="max-h-[234px]">{call.output}</CodeBlock>
 })
 
 /** Grep/Glob: `path:line: text` rows with the path emphasized. */
 export const SearchBody = memo(function SearchBody({ call }: { call: ToolCall }) {
   const lines = (call.output ?? "").split("\n").filter(Boolean)
-  if (!lines.length) return <div className="text-[12px] text-fg-faint">No matches</div>
+  if (!lines.length) return <div className="text-xs text-muted-foreground/70">No matches</div>
   return (
     <CodeBlock className="max-h-[234px]">
       {lines.map((l, i) => {
@@ -139,8 +131,8 @@ export const SearchBody = memo(function SearchBody({ call }: { call: ToolCall })
             {m ? (
               <>
                 <span className="text-link">{m[1]}</span>
-                <span className="text-fg-faint">:{m[2]}</span>
-                <span className="text-fg-muted">{m[3]}</span>
+                <span className="text-muted-foreground/70">:{m[2]}</span>
+                <span className="text-muted-foreground">{m[3]}</span>
               </>
             ) : (
               <span className="text-link">{l}</span>
@@ -158,19 +150,19 @@ export const GraphBody = memo(function GraphBody({ call }: { call: ToolCall }) {
   const lines = (call.output ?? "").split("\n")
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-fg-faint">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/70">
         <span>
-          query <span className="text-fg-muted">{String(inp.query ?? call.title)}</span>
+          query <span className="text-muted-foreground">{String(inp.query ?? call.title)}</span>
         </span>
         {inp.depth !== undefined && (
           <span>
-            depth <span className="tabular text-fg-muted">{String(inp.depth)}</span>
+            depth <span className="tabular text-muted-foreground">{String(inp.depth)}</span>
           </span>
         )}
       </div>
       <CodeBlock className="max-h-[234px]">
         {lines.map((l, i) => (
-          <div key={i} className={cn(i === 0 ? "text-fg" : l.includes("cross-repo") ? "text-st-input-fg" : l.startsWith("God node") ? "text-fg-faint" : undefined)}>
+          <div key={i} className={cn(i === 0 ? "text-foreground" : l.includes("cross-repo") ? "text-st-input-fg" : l.startsWith("God node") ? "text-muted-foreground/70" : undefined)}>
             {l || " "}
           </div>
         ))}
@@ -185,12 +177,12 @@ export const WebBody = memo(function WebBody({ call }: { call: ToolCall }) {
   return (
     <div className="flex flex-col gap-1.5">
       {url && (
-        <a href={url} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 font-mono text-[12px] text-link hover:underline">
+        <a href={url} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-link hover:underline">
           <span className="truncate">{url}</span>
           <ExternalLink size={11} className="shrink-0" />
         </a>
       )}
-      {typeof inp.prompt === "string" && <div className="text-[12px] text-fg-faint">“{inp.prompt}”</div>}
+      {typeof inp.prompt === "string" && <div className="text-xs text-muted-foreground/70">“{inp.prompt}”</div>}
       {call.output && <CodeBlock className="max-h-[200px] whitespace-pre-wrap">{call.output}</CodeBlock>}
     </div>
   )
@@ -199,16 +191,16 @@ export const WebBody = memo(function WebBody({ call }: { call: ToolCall }) {
 const TODO_ICON = {
   completed: <Check size={12} className="text-st-done" />,
   in_progress: <CircleDot size={12} className="text-st-working" />,
-  pending: <Circle size={12} className="text-fg-faint" />,
+  pending: <Circle size={12} className="text-muted-foreground/70" />,
 }
 
 export function TodoList({ todos, className }: { todos: { content: string; status: keyof typeof TODO_ICON }[]; className?: string }) {
   return (
     <ul className={cn("flex flex-col gap-0.5", className)}>
       {todos.map((t, i) => (
-        <li key={`${i}:${t.content}`} className="flex items-start gap-2 text-[12.5px] leading-[18px]">
+        <li key={`${i}:${t.content}`} className="flex items-start gap-2 text-xs leading-[18px]">
           <span className="mt-[3px] inline-flex size-3 shrink-0 items-center justify-center">{TODO_ICON[t.status] ?? TODO_ICON.pending}</span>
-          <span className={cn(t.status === "completed" ? "text-fg-faint" : t.status === "in_progress" ? "text-fg" : "text-fg-muted")}>{t.content}</span>
+          <span className={cn(t.status === "completed" ? "text-muted-foreground/70" : t.status === "in_progress" ? "text-foreground" : "text-muted-foreground")}>{t.content}</span>
         </li>
       ))}
     </ul>
@@ -222,9 +214,9 @@ export const TodoBody = memo(function TodoBody({ call }: { call: ToolCall }) {
 
 export const QuestionBody = memo(function QuestionBody({ call }: { call: ToolCall }) {
   return call.display === "awaiting_permission" ? (
-    <div className="text-[12px] text-fg-faint">Waiting for your answer</div>
+    <div className="text-xs text-muted-foreground/70">Waiting for your answer</div>
   ) : (
-    <div className="text-[12px] whitespace-pre-wrap text-fg-muted">{call.output ?? "Answered"}</div>
+    <div className="text-xs whitespace-pre-wrap text-muted-foreground">{call.output ?? "Answered"}</div>
   )
 })
 
@@ -235,8 +227,8 @@ export const GenericBody = memo(function GenericBody({ call }: { call: ToolCall 
   return (
     <div className="flex flex-col gap-1.5">
       {isMcp && (
-        <div className="text-[12px] text-fg-faint">
-          MCP server <span className="font-mono text-fg-muted">{server}</span> · tool <span className="font-mono text-fg-muted">{tool}</span>
+        <div className="text-xs text-muted-foreground/70">
+          MCP server <span className="font-mono text-muted-foreground">{server}</span> · tool <span className="font-mono text-muted-foreground">{tool}</span>
         </div>
       )}
       <div>
@@ -254,6 +246,8 @@ export const GenericBody = memo(function GenericBody({ call }: { call: ToolCall 
 })
 
 export function ToolBody({ call, family }: { call: ToolCall; family: string }): ReactNode {
+  // a picture the tool read (an image file, a screenshot) shows as the picture
+  if (call.images?.length) return <Pictures pictures={call.images} className="py-1.5" />
   switch (family) {
     case "command":
       return <CommandBody call={call} />

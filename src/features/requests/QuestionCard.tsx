@@ -75,12 +75,12 @@ export const QuestionCard = memo(function QuestionCard({
             aria-selected={i === tab}
             onClick={() => setTab(i)}
             className={cn(
-              "inline-flex h-5 items-center gap-1 rounded-[3px] px-1.5 text-[11.5px]",
+              "inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-xs",
               FOCUS,
-              i === tab ? "bg-selected text-fg" : "text-fg-faint hover:bg-hover hover:text-fg-muted",
+              i === tab ? "bg-accent text-foreground" : "text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground",
             )}
           >
-            {answered[i] && <Check size={10} className="text-fg-muted" aria-label="answered" />}
+            {answered[i] && <Check size={10} className="text-muted-foreground" aria-label="answered" />}
             {qq.header}
           </button>
         ))}
@@ -124,7 +124,7 @@ export const QuestionCard = memo(function QuestionCard({
             disabled={!allAnswered || !canAnswer}
             onClick={submit}
             title="Enter"
-            className={cn("inline-flex h-6 items-center rounded-[4px] bg-brand px-2.5 text-[12px] font-medium text-white hover:bg-[#0588f0] disabled:opacity-40", FOCUS, "focus-visible:ring-offset-1 focus-visible:ring-offset-elevated")}
+            className={cn("inline-flex h-6 items-center rounded-md bg-foreground px-2.5 text-xs font-medium text-background hover:bg-foreground/88 disabled:opacity-40", FOCUS, "focus-visible:ring-offset-1 focus-visible:ring-offset-muted")}
           >
             Submit
           </button>
@@ -132,12 +132,12 @@ export const QuestionCard = memo(function QuestionCard({
             <button
               type="button"
               onClick={() => setTab(tab + 1)}
-              className={cn("inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:bg-hover", FOCUS)}
+              className={cn("inline-flex h-6 items-center rounded-md border border-border bg-muted px-2 text-xs text-foreground hover:bg-accent", FOCUS)}
             >
               Next
             </button>
           )}
-          {!canAnswer && <span className="ml-auto text-[11.5px] text-fg-faint">Answer in your terminal</span>}
+          {!canAnswer && <span className="ml-auto text-xs text-muted-foreground/70">Answer in your terminal</span>}
         </>
       }
     >
@@ -154,23 +154,23 @@ export const QuestionCard = memo(function QuestionCard({
               onClick={() => pick(o.label)}
               title={`${o.description ? `${o.description} · ` : ""}${i + 1} or ${String.fromCharCode(65 + i)}`}
               className={cn(
-                "flex min-w-0 flex-col rounded-[4px] px-1 py-1 text-left disabled:opacity-60",
+                "flex min-w-0 flex-col rounded-md px-1 py-1 text-left disabled:opacity-60",
                 FOCUS,
-                on ? "bg-brand/10" : "hover:bg-hover/60",
+                on ? "bg-accent" : "hover:bg-accent/60",
               )}
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Mark on={on} multi={q.multiSelect} />
-                <span className="shrink-0 text-[12.5px] leading-[18px] font-medium text-fg">{o.label}</span>
-                {o.description && <span className="min-w-0 truncate text-[12px] text-fg-faint">{o.description}</span>}
+                <span className="shrink-0 text-xs leading-[18px] font-medium text-foreground">{o.label}</span>
+                {o.description && <span className="min-w-0 truncate text-xs text-muted-foreground/70">{o.description}</span>}
               </span>
               {o.preview && on && (
-                <pre className="mt-1 ml-[22px] max-h-32 overflow-auto rounded-[3px] border border-line-subtle bg-canvas p-1.5 font-mono text-[11px] whitespace-pre-wrap text-fg-muted">{o.preview}</pre>
+                <pre className="mt-1 ml-[22px] max-h-32 overflow-auto rounded-sm border border-border bg-background p-1.5 font-mono text-xs whitespace-pre-wrap text-muted-foreground">{o.preview}</pre>
               )}
             </button>
           )
         })}
-        <div className={cn("flex min-w-0 items-center gap-2 rounded-[4px] px-1 py-1", a.otherOn ? "bg-brand/10" : "hover:bg-hover/60")}>
+        <div className={cn("flex min-w-0 items-center gap-2 rounded-md px-1 py-1", a.otherOn ? "bg-accent" : "hover:bg-accent/60")}>
           <button
             type="button"
             role={q.multiSelect ? "checkbox" : "radio"}
@@ -178,7 +178,7 @@ export const QuestionCard = memo(function QuestionCard({
             aria-label="Other"
             disabled={!canAnswer}
             onClick={() => patch(tab, { otherOn: !a.otherOn, picked: q.multiSelect ? a.picked : [] })}
-            className={cn("inline-flex rounded-[3px]", FOCUS)}
+            className={cn("inline-flex rounded-sm", FOCUS)}
           >
             <Mark on={a.otherOn} multi={q.multiSelect} />
           </button>
@@ -197,7 +197,7 @@ export const QuestionCard = memo(function QuestionCard({
                 else setTab(tab + 1)
               }
             }}
-            className="h-[18px] min-w-0 flex-1 bg-transparent text-[12.5px] text-fg outline-none placeholder:text-fg-faint"
+            className="h-[18px] min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/70"
           />
         </div>
       </div>
@@ -210,8 +210,8 @@ function Mark({ on, multi }: { on: boolean; multi: boolean }) {
     <span
       className={cn(
         "inline-flex size-3.5 shrink-0 items-center justify-center border",
-        multi ? "rounded-[3px]" : "rounded-full",
-        on ? "border-brand bg-brand text-white" : "border-line-strong",
+        multi ? "rounded-sm" : "rounded-full",
+        on ? "border-foreground bg-foreground text-background" : "border-input",
       )}
     >
       {on && (multi ? <Check size={10} strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />)}

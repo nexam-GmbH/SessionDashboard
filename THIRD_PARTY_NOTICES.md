@@ -8,53 +8,40 @@ Code from copyleft or source-available projects (GPL/AGPL/SUL/PolyForm) was used
 
 | Project | Repository | Commit | License | Copyright | Used for |
 |---|---|---|---|---|---|
-| create-tauri-ui | https://github.com/agmmnn/tauri-ui | 1.2.1 (npm) | MIT | Copyright (c) agmmnn | Project scaffold, desktop defaults, debug panel (src/components/debug-panel.tsx, external-link-guard.tsx, lib/tauri.ts) |
-| shadcn/ui | https://github.com/shadcn-ui/ui | CLI 4.23.0 | MIT | Copyright (c) 2023 shadcn | src/components/ui/* (restyled) |
-| Radix Colors | https://github.com/radix-ui/colors | — | MIT | Copyright (c) 2022 WorkOS | Design tokens: slateDark + status scales (src/styles/tokens.css), community colors |
+| create-tauri-ui | https://github.com/agmmnn/tauri-ui | 6270d76 / 1.2.1 (npm) | MIT | Copyright (c) agmmnn | Project scaffold, desktop defaults, debug panel (src/components/debug-panel.tsx, external-link-guard.tsx, lib/tauri.ts); the starter layout (inset sidebar + site header: src/app/Shell.tsx, AppSidebar.tsx, SiteHeader.tsx) and its theme (src/index.css) |
+| shadcn/ui | https://github.com/shadcn-ui/ui | registry radix-nova, CLI 4.23.0 | MIT | Copyright (c) 2023 shadcn | src/components/ui/* (stock radix-nova; sidebar.tsx: Ctrl+B on the physical key), src/hooks/use-mobile.ts (useSyncExternalStore) |
+| Radix Colors | https://github.com/radix-ui/colors | — | MIT | Copyright (c) 2022 WorkOS | Status colours (src/index.css) |
 | VS Code themes | https://github.com/microsoft/vscode | — | MIT | Copyright (c) 2015 - present Microsoft Corporation | Diff gutter colors (Dark Modern), density references |
-| Orca | https://github.com/stablyai/orca | 3bb91aa | MIT | Copyright (c) 2026 Lovecast Inc. | StatusGlyph (AgentStateDot), toast stack behavior, status bar, inspector layout |
+| Orca | https://github.com/stablyai/orca | 3bb91aa | MIT | Copyright (c) 2026 Lovecast Inc. | StatusGlyph (AgentStateDot) |
 | Yaak | https://github.com/mountain-loop/yaak | 6a34d0a | MIT | Copyright (c) 2024 Yaak | WindowControls, titlebar per OS, settings rows/sections, EmptyState |
-| Trigger.dev | https://github.com/triggerdotdev/trigger.dev | 2fbd5c7 | Apache-2.0 | Copyright Trigger.dev contributors | PropertyTable, tree/side-menu patterns, type scale |
-| Langfuse (outside ee/) | https://github.com/langfuse/langfuse | 48a3181 | MIT | Copyright (c) 2023-2026 ClickHouse, Inc. | Sessions table mechanics (CSS-variable column widths, sort cycle) |
-| Agent of Empires | https://github.com/agent-of-empires/agent-of-empires | d134cfd | MIT | Copyright (c) 2026 Nathan Brake | Attention tiers, sidebar row model, approval/question card patterns |
+| Trigger.dev | https://github.com/triggerdotdev/trigger.dev | 2fbd5c7 | Apache-2.0 | Copyright Trigger.dev contributors | PropertyTable, type scale |
+| Agent of Empires | https://github.com/agent-of-empires/agent-of-empires | d134cfd | MIT | Copyright (c) 2026 Nathan Brake | Attention tiers, approval/question card patterns |
 | Jean | https://github.com/coollabsio/jean | 1d53d3c | Apache-2.0 | Copyright coollabsio contributors | Settings section/row structure, session settings fields; review screen (GitDiffModal comment bar, file tree, memoized diffs) |
-| Vibe Kanban | https://github.com/BloopAI/vibe-kanban | 5f06193 | Apache-2.0 | Copyright BloopAI contributors | RepoCard/GitPanel patterns, conversation virtualizer, tool summaries, approval entry |
-| Crystal | https://github.com/stravu/crystal | 1e18e0b | MIT | Copyright (c) 2024 Stravu | ProjectDashboard worktree table, GitStatus model |
-| Nimbalyst | https://github.com/nimbalyst/nimbalyst | ab6a549 | MIT | Copyright (c) 2024-2026 Nimbalyst Inc. | Session schema ideas, canvas card LOD |
+| Vibe Kanban | https://github.com/BloopAI/vibe-kanban | 5f06193 | Apache-2.0 | Copyright BloopAI contributors | Conversation virtualizer, tool summaries, subagent entry, approval entry |
+| Crystal | https://github.com/stravu/crystal | 1e18e0b | MIT | Copyright (c) 2024 Stravu | GitStatus model (ahead/behind) |
 | claude-code-viewer | https://github.com/d-kimuson/claude-code-viewer | 9367cf0 | MIT | Copyright (c) 2025 Claude Code Viewer | JSONL entry schema reference |
 | Emdash | https://github.com/generalaction/emdash | ccc6cce | Apache-2.0 | Copyright 2026 General Action, Inc. | Notification coalescing model, Session vs Conversation glossary |
-| Cline | https://github.com/cline/cline | 72b3d71 | Apache-2.0 | Copyright Cline Bot Inc. and contributors | Tool activity/work blocks, approval card, composer, prompt queue, changes panel, terminal panel wiring; review screen (changes panel, tool diff) |
+| Cline | https://github.com/cline/cline | 72b3d71 | Apache-2.0 | Copyright Cline Bot Inc. and contributors | Tool activity/work blocks, approval card, composer, prompt queue; review screen (changes panel, tool diff) |
 | T3 Code | https://github.com/pingdotgg/t3code | be5f805 | MIT | Copyright (c) 2026 T3 Tools Inc. | Timeline, work log, pending approval row, composer menu; review screen (DiffPanel, worker pool readiness) |
 | Vercel AI Elements | https://github.com/vercel/ai-elements | ca8be60 | Apache-2.0 | Copyright 2023 Vercel, Inc. | Queue/plan/confirmation component patterns |
-| Headlamp | https://github.com/kubernetes-sigs/headlamp | e16a575 | Apache-2.0 | Copyright The Kubernetes Authors | Map architecture: id-only nodes, group nodes, layout cache |
-| Argo CD | https://github.com/argoproj/argo-cd | ae2e784 | Apache-2.0 | Copyright The Argo Authors | Resource-tree card anatomy, collapsed sibling groups, update flash |
-| Dagster | https://github.com/dagster-io/dagster | 56029e3 | Apache-2.0 | Copyright Dagster Labs | Graph level-of-detail thresholds |
-| React Flow / React Flow UI | https://github.com/xyflow/xyflow | @xyflow/react 12.12.1 | MIT | Copyright (c) 2019-2025 webkid GmbH | Agent map canvas; src/components/flow/* (React Flow UI components) |
-| xyflow examples (contextual zoom, simple floating edges) | https://example-apps.xyflow.com | fetched 2026-11-14 | MIT | Copyright (c) 2019-2025 webkid GmbH | Map LOD selector pattern, floating link edges (src/features/map) |
-| shadcn/ui slider (radix-nova) | https://github.com/shadcn-ui/ui | registry 2026-11-14 | MIT | Copyright (c) 2023 shadcn | src/components/flow/slider.tsx (zoom slider) |
-| LightRAG WebUI | https://github.com/HKUDS/LightRAG | 377cd24 | MIT | Copyright (c) 2025 LightRAG Team | Code graph viewer patterns (FA2 worker budget, highlight reducers, search/focus) |
-| Graphify | https://github.com/Graphify-Labs/graphify | v8 | Apache-2.0 | Copyright Graphify Labs | graph.json format; src/mocks/fixtures/httpx-graph.json (unmodified example graph) |
 
 ## Runtime dependencies (npm, unmodified)
 
 | Package | License |
 |---|---|
-| @xyflow/react | MIT |
-| @dagrejs/dagre | MIT |
-| sigma, graphology, graphology-layout-forceatlas2, @react-sigma/core | MIT |
+| @xterm/xterm, @xterm/addon-fit (built-in terminal) | MIT |
+| portable-pty (Rust crate, from WezTerm; built-in terminal) | MIT |
+| @fontsource-variable/inter | OFL-1.1 (font), MIT (package) |
 | @pierre/diffs | Apache-2.0 |
 | streamdown, @streamdown/code | Apache-2.0 |
 | shiki | MIT |
-| @xterm/xterm + addons | MIT |
-| @tanstack/react-router, react-table, react-virtual | MIT |
+| @tanstack/react-router, react-virtual | MIT |
 | zustand | MIT |
 | cmdk | MIT |
 | tinykeys | MIT |
-| react-resizable-panels | MIT |
 | radix-ui | MIT |
 | lucide-react | ISC |
 | @tauri-apps/* (api, plugins) | MIT OR Apache-2.0 |
-| @fontsource-variable/ibm-plex-sans (IBM Plex Sans) | OFL-1.1 |
 | @fontsource-variable/jetbrains-mono (JetBrains Mono) | OFL-1.1 |
 
 Fonts are distributed under the SIL Open Font License 1.1 (https://openfontlicense.org); the license texts ship inside the @fontsource packages.

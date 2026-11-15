@@ -1,4 +1,3 @@
-"use client"
 
 import * as React from "react"
 import { cn } from "cn"
@@ -37,7 +36,7 @@ function SheetOverlay({
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/55 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-black/40 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -75,8 +74,7 @@ function SheetContent({
               className="absolute top-3 right-3"
               size="icon-sm"
             >
-              <XIcon
-              />
+              <XIcon />
               <span className="sr-only">Close</span>
             </Button>
           </SheetPrimitive.Close>
@@ -114,7 +112,7 @@ function SheetTitle({
     <SheetPrimitive.Title
       data-slot="sheet-title"
       className={cn(
-        "font-heading text-base font-medium text-foreground",
+        "cn-font-heading text-base font-medium text-foreground",
         className
       )}
       {...props}

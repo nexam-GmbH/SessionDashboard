@@ -74,7 +74,7 @@ export function DiffList({
       fallback={<DiffLoading label="Starting the highlighter" />}
     >
       <Virtualizer
-        className="h-full overflow-x-hidden overflow-y-auto bg-canvas"
+        className="h-full overflow-x-hidden overflow-y-auto bg-background"
         contentClassName="pb-[45vh]"
         config={{ overscrollSize: 600, intersectionObserverMargin: 2000 }}
       >
@@ -279,7 +279,7 @@ const FileBlock = memo(function FileBlock({
   )
 
   return (
-    <div data-review-file={file.key} className="border-b border-line-subtle">
+    <div data-review-file={file.key} className="border-b border-border">
       <MultiFileDiff<AnnotationMeta>
         {...input}
         options={options}
@@ -321,7 +321,7 @@ const FileHeader = memo(function FileHeader({
   const toggle = () => toggleCollapsed(file.key)
   return (
     <div
-      className="group/fh flex items-center gap-1.5 border-b border-line-subtle bg-chrome pr-2 pl-1 font-sans"
+      className="group/fh flex items-center gap-1.5 border-b border-border bg-card pr-2 pl-1 font-sans"
       style={{ height: HEADER_PX }}
       onPointerDown={(e) => e.stopPropagation()}
     >
@@ -330,7 +330,7 @@ const FileHeader = memo(function FileHeader({
         aria-expanded={!collapsed}
         aria-label={collapsed ? `Expand ${file.path}` : `Collapse ${file.path}`}
         onClick={toggle}
-        className="flex size-5 shrink-0 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg"
+        className="flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-accent hover:text-foreground"
       >
         <ChevronRight
           size={13}
@@ -344,17 +344,17 @@ const FileHeader = memo(function FileHeader({
         type="button"
         onClick={toggle}
         title={`${repo ? `${repo} · ` : ""}${file.path}${OP_TITLE[file.op] ?? ""}`}
-        className="flex min-w-0 items-baseline gap-0 text-left font-mono text-[12px]"
+        className="flex min-w-0 items-baseline gap-0 text-left font-mono text-xs"
       >
-        {repo && <span className="shrink-0 text-fg-muted">{repo}</span>}
-        {repo && <span className="shrink-0 px-1 text-fg-faint">·</span>}
+        {repo && <span className="shrink-0 text-muted-foreground">{repo}</span>}
+        {repo && <span className="shrink-0 px-1 text-muted-foreground/70">·</span>}
         {file.dir && (
-          <span className="min-w-0 truncate text-fg-faint">{file.dir}/</span>
+          <span className="min-w-0 truncate text-muted-foreground/70">{file.dir}/</span>
         )}
         <span
           className={cn(
             "shrink-0",
-            mark === "rejected" ? "text-fg-faint line-through" : "text-fg"
+            mark === "rejected" ? "text-muted-foreground/70 line-through" : "text-foreground"
           )}
         >
           {file.name}
@@ -369,7 +369,7 @@ const FileHeader = memo(function FileHeader({
       />
       {comments > 0 && (
         <span
-          className="flex shrink-0 items-center gap-1 text-[11px] text-fg-muted"
+          className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
           title={`${comments} pending comment${comments === 1 ? "" : "s"}`}
         >
           <MessageSquare size={11} />
@@ -426,10 +426,10 @@ function MarkButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "inline-flex h-[22px] shrink-0 items-center gap-1 rounded-[4px] border px-1.5 text-[11.5px] font-medium transition-colors [&_svg]:size-3",
+        "inline-flex h-[22px] shrink-0 items-center gap-1 rounded-md border px-1.5 text-xs font-medium transition-colors [&_svg]:size-3",
         pressed
-          ? "border-line-strong bg-selected text-fg"
-          : "border-line bg-elevated text-fg-muted hover:border-line-strong hover:bg-hover hover:text-fg"
+          ? "border-input bg-accent text-foreground"
+          : "border-border bg-muted text-muted-foreground hover:border-input hover:bg-accent hover:text-foreground"
       )}
     >
       {children}
@@ -439,13 +439,13 @@ function MarkButton({
 
 // Loading skeleton after T3 Code's DiffPanelLoadingState: file header, separator, a few code lines.
 export function DiffLoading({ label }: { label: string }) {
-  const bar = "h-2.5 rounded-[2px] bg-elevated"
+  const bar = "h-2.5 rounded-sm bg-muted"
   const header = (w: string) => (
     <div
-      className="flex items-center gap-2 border-b border-line-subtle bg-chrome px-2"
+      className="flex items-center gap-2 border-b border-border bg-card px-2"
       style={{ height: HEADER_PX }}
     >
-      <div className="size-3 rounded-[2px] bg-elevated" />
+      <div className="size-3 rounded-sm bg-muted" />
       <div className={cn(bar, w)} />
       <div className="ml-auto flex gap-1.5">
         <div className={cn(bar, "w-6")} />
@@ -455,7 +455,7 @@ export function DiffLoading({ label }: { label: string }) {
   )
   return (
     <div
-      className="h-full overflow-hidden bg-canvas"
+      className="h-full overflow-hidden bg-background"
       role="status"
       aria-live="polite"
       aria-label={label}

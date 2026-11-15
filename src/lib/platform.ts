@@ -16,3 +16,5 @@ export const OS: OsType = (() => {
   if (/Win/.test(ua)) return "windows"
   return "linux"
 })()
+
+export const IS_MAC = OS === "macos"

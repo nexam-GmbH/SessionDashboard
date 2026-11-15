@@ -11,10 +11,29 @@ import {
   MessageCircleQuestion,
   OctagonX,
   ShieldAlert,
+  type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SessionStatus } from "@/lib/model"
 import { STATUS_COLOR, STATUS_LABEL } from "@/lib/status"
+
+/**
+ * The one status glyph set (UI_PLAN §2.3), shared with the map's CompactGlyph. `inset` draws the
+ * quiet round glyphs (idle, stopped) a little smaller so they don't outweigh the attention ones.
+ */
+export const STATUS_GLYPH: Record<SessionStatus, { icon: LucideIcon; stroke: number; inset?: number }> = {
+  waiting_permission: { icon: ShieldAlert, stroke: 2 },
+  waiting_input: { icon: MessageCircleQuestion, stroke: 2 },
+  error: { icon: OctagonX, stroke: 2 },
+  done_unseen: { icon: CircleCheck, stroke: 2.25 },
+  working: { icon: LoaderCircle, stroke: 2.5 },
+  starting: { icon: CircleDashed, stroke: 2 },
+  idle: { icon: Circle, stroke: 2.25, inset: 2 },
+  stopped: { icon: CircleSlash, stroke: 1.75, inset: 1 },
+}
+
+export const glyphColor = (status: SessionStatus) => (status === "stopped" ? "color-mix(in oklab, var(--muted-foreground) 70%, transparent)" : STATUS_COLOR[status])
+export const glyphFill = (status: SessionStatus) => (status === "done_unseen" ? "var(--st-done-tint)" : "none")
 
 type Props = {
   status: SessionStatus
@@ -36,43 +55,9 @@ export const StatusGlyph = memo(function StatusGlyph({
   title,
   animate = true,
 }: Props) {
-  const px = ICON[size]
-  const color = STATUS_COLOR[status]
+  const g = STATUS_GLYPH[status]
+  const Icon = g.icon
   const label = title === null ? undefined : (title ?? STATUS_LABEL[status])
-  let icon: React.ReactNode
-  switch (status) {
-    case "waiting_permission":
-      icon = <ShieldAlert size={px} strokeWidth={2} color={color} />
-      break
-    case "waiting_input":
-      icon = <MessageCircleQuestion size={px} strokeWidth={2} color={color} />
-      break
-    case "error":
-      icon = <OctagonX size={px} strokeWidth={2} color={color} />
-      break
-    case "done_unseen":
-      icon = <CircleCheck size={px} strokeWidth={2.25} color={color} fill="var(--st-done-tint)" />
-      break
-    case "working":
-      icon = (
-        <LoaderCircle
-          size={px}
-          strokeWidth={2.5}
-          color={color}
-          className={animate ? "animate-spin-slow" : undefined}
-        />
-      )
-      break
-    case "starting":
-      icon = <CircleDashed size={px} strokeWidth={2} color={color} />
-      break
-    case "idle":
-      icon = <Circle size={px - 2} strokeWidth={2.25} color={color} />
-      break
-    case "stopped":
-      icon = <CircleSlash size={px - 1} strokeWidth={1.75} color="var(--fg-faint)" />
-      break
-  }
   return (
     <span
       role="img"
@@ -80,7 +65,13 @@ export const StatusGlyph = memo(function StatusGlyph({
       title={label}
       className={cn("inline-flex shrink-0 items-center justify-center", BOX[size], className)}
     >
-      {icon}
+      <Icon
+        size={ICON[size] - (g.inset ?? 0)}
+        strokeWidth={g.stroke}
+        color={glyphColor(status)}
+        fill={glyphFill(status)}
+        className={status === "working" && animate ? "animate-spin-steps" : undefined}
+      />
     </span>
   )
 })

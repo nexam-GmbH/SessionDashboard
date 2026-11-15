@@ -6,7 +6,6 @@ import type {
   PendingRequest,
   PermissionMode,
   Repo,
-  RepoLink,
   Session,
   SessionStatus,
   Subagent,
@@ -14,7 +13,6 @@ import type {
 } from "@/lib/model"
 import {
   CITY_HANDLES,
-  EXTRA_REPO_WORDS,
   HISTORY_TASKS,
   REPO_CATALOG,
   SUBAGENT_TYPES,
@@ -22,10 +20,10 @@ import {
 } from "./catalog"
 import { Rng } from "./rng"
 
-export type FixtureName = "normal" | "stress"
+/** The owner's real scale: 5–6 repos, 2–4 live sessions each (PRODUCT.md). */
+const REPOS = ["api-gateway", "web-app", "ticketing", "llm-router", "infra"]
 
 export interface World {
-  fixture: FixtureName
   repos: Record<ID, Repo>
   repoOrder: ID[]
   repoSpecs: Record<ID, RepoSpec>
@@ -34,7 +32,6 @@ export interface World {
   mainSessionId: ID
   subagents: Record<ID, Subagent>
   subagentIdsBySession: Record<ID, ID[]>
-  links: RepoLink[]
   requests: Record<ID, PendingRequest>
   notifications: AppNotification[]
 }
@@ -59,32 +56,20 @@ type Script = {
   bg?: number
 }
 
-/** Hand-placed live sessions so the default fixture shows every state. */
+/** Hand-placed live sessions: every state once, 2–4 per repo. */
 const SCRIPT: Script[] = [
   { repo: "api-gateway", task: "Fix auth retry double-counting attempts", status: "waiting_permission", control: "pty", request: "bash", subagents: 1 },
   { repo: "api-gateway", task: "Add rate limiter to /v2/completions", status: "working", activity: "Editing src/middleware/rate-limit.ts" },
   { repo: "api-gateway", task: "Accept ticket v3 payloads on /v2/tickets", status: "done_unseen", delegated: true },
-  { repo: "api-gateway", task: "Expose Prometheus metrics endpoint", status: "idle", control: "observed" },
   { repo: "web-app", task: "Ticket schema v3 in the dashboard", status: "working", delegated: true, subagents: 2, activity: "Editing components/TicketTable.tsx" },
   { repo: "web-app", task: "Rewrite pricing page copy", status: "waiting_input", request: "question", model: "claude-sonnet-5-5" },
   { repo: "web-app", task: "Fix hydration warning on tickets page", status: "idle" },
-  { repo: "billing-service", task: "Fix invoice rounding for zero-decimal currencies", status: "done_unseen" },
-  { repo: "billing-service", task: "Idempotent Stripe webhook handling", status: "working", activity: "Running go test ./internal/stripe/...", bg: 1 },
   { repo: "ticketing", task: "Roll out ticket-schema v3", status: "working", delegated: true, subagents: 3, activity: "Waiting on 2 subagents" },
   { repo: "ticketing", task: "SLA breach notifications", status: "error", error: "API error 529: overloaded (gave up after 3 retries)" },
   { repo: "llm-router", task: "Update model mapping for opus-5.5", status: "waiting_permission", request: "edit" },
   { repo: "llm-router", task: "Fallback chain per tenant", status: "working", activity: "Reading router/fallbacks.py", model: "claude-sonnet-5-5" },
-  { repo: "shared-rules", task: "Tighten security rules for secrets", status: "idle" },
-  { repo: "auth-service", task: "Rotate signing keys without downtime", status: "working", activity: "Writing internal/session/store.go" },
-  { repo: "auth-service", task: "TOTP recovery codes", status: "idle", control: "observed" },
-  { repo: "mobile-app", task: "Ticket schema v3 in mobile", status: "working", delegated: true, activity: "Editing src/screens/TicketDetail.tsx" },
   { repo: "infra", task: "Bump Postgres to 17 in staging", status: "waiting_input", request: "plan", perm: "plan" },
-  { repo: "infra", task: "PodDisruptionBudget for the gateway", status: "idle" },
-  { repo: "analytics-pipeline", task: "Daily LLM cost rollup", status: "working", activity: "Running dbt build --select llm_costs" },
-  { repo: "analytics-pipeline", task: "Fix late-arriving events", status: "done_unseen" },
-  { repo: "notifications", task: "Slack routing per team", status: "idle" },
-  { repo: "design-system", task: "Dense variant for DataTable", status: "working", activity: "Editing src/components/DataTable.tsx", model: "claude-sonnet-5-5" },
-  { repo: "design-system", task: "Fix focus ring contrast", status: "idle" },
+  { repo: "infra", task: "PodDisruptionBudget for the gateway", status: "idle", control: "observed" },
 ]
 
 function slugify(s: string) {
@@ -101,8 +86,8 @@ function iso(t: number) {
   return new Date(t).toISOString()
 }
 
-export function generateWorld(fixture: FixtureName, now = Date.now()): World {
-  const rng = new Rng(fixture === "normal" ? 20261114 : 777)
+export function generateWorld(now = Date.now()): World {
+  const rng = new Rng(20261114)
   const repos: Record<ID, Repo> = {}
   const repoSpecs: Record<ID, RepoSpec> = {}
   const repoOrder: ID[] = []
@@ -115,25 +100,12 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
   const usedHandles = new Set<string>()
 
   // ---------- repos ----------
-  const specs: RepoSpec[] = [...REPO_CATALOG]
-  if (fixture === "stress") {
-    const suffixes = ["service", "api", "web", "worker", "sdk"]
-    let i = 0
-    while (specs.length < 60) {
-      const base = REPO_CATALOG[i % REPO_CATALOG.length]
-      const word = EXTRA_REPO_WORDS[i % EXTRA_REPO_WORDS.length]
-      const suffix = suffixes[Math.floor(i / EXTRA_REPO_WORDS.length) % suffixes.length]
-      specs.push({ ...base, name: `${word}-${suffix}` })
-      i++
-    }
-  }
-
+  const specs: RepoSpec[] = REPOS.map((name) => REPO_CATALOG.find((r) => r.name === name)!)
   for (const spec of specs) {
     const id = `repo_${spec.name}`
     const rootPath = `${HOME}/${spec.name}`
     const defaultBranch = spec.language === "Go" ? "master" : "main"
     const mainGit = makeGit(rng, now, rng.chance(0.6) ? "clean" : "modified", true)
-    const graphState = rng.chance(0.8) ? "fresh" : rng.chance(0.5) ? "stale" : "building"
     repos[id] = {
       id,
       name: spec.name,
@@ -143,17 +115,6 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
       worktrees: [
         { id: `${id}::${rootPath}`, repoId: id, path: rootPath, branch: defaultBranch, isMain: true, git: mainGit },
       ],
-      graphify:
-        spec.name === "shared-rules"
-          ? { state: "none" }
-          : {
-              state: graphState,
-              builtAtCommit: rng.hex(7),
-              builtAt: iso(now - rng.int(1, 72) * HOUR),
-              nodes: rng.int(400, 6000),
-              edges: rng.int(1500, 22000),
-              communities: rng.int(8, 40),
-            },
       sharedRuleFiles:
         spec.name === "shared-rules"
           ? ["rules/CLAUDE.base.md"]
@@ -179,7 +140,7 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
 
   // ---------- main agent ----------
   const mainSessionId = "s_main"
-  const delegatedRepos = ["ticketing", "web-app", "api-gateway", "mobile-app"].map((n) => `repo_${n}`)
+  const delegatedRepos = ["ticketing", "web-app", "api-gateway"].map((n) => `repo_${n}`)
   sessions[mainSessionId] = {
     id: mainSessionId,
     provider: "claude-code",
@@ -189,7 +150,7 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
     titleSource: "custom",
     titleLocked: true,
     firstPrompt:
-      "Ticket schema v3 is merged in ticketing. Roll it out to every repo that reads tickets: web-app, mobile-app and api-gateway. Delegate one session per repo, keep the public API backwards compatible for one release, and report back when all PRs are green.",
+      "Ticket schema v3 is merged in ticketing. Roll it out to every repo that reads tickets: web-app and api-gateway. Delegate one session per repo, keep the public API backwards compatible for one release, and report back when all PRs are green.",
     repoId: null,
     worktreeId: null,
     cwd: "/home/dev/.session-dashboard/main",
@@ -198,7 +159,7 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
     kind: "interactive",
     status: "working",
     statusObservedAt: iso(now - 40_000),
-    activity: "Waiting on web-app and mobile-app",
+    activity: "Waiting on web-app",
     model: "claude-opus-5-5",
     effort: "high",
     permissionMode: "default",
@@ -279,6 +240,21 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
       permissionMode: opts.perm ?? rng.pick(["default", "default", "default", "acceptEdits", "auto"] as const),
       usage: {
         contextPct: isHistory ? rng.int(10, 95) : rng.int(6, 88),
+        // what get_context_usage reports for sessions the app runs (details panel)
+        context: (() => {
+          const max = 1_000_000
+          const msgs = rng.int(40_000, 600_000)
+          const cats = [
+            { name: "Messages", tokens: msgs, kind: "used" },
+            { name: "System tools", tokens: 28_400, kind: "used" },
+            { name: "MCP tools", tokens: 14_000, kind: "used" },
+            { name: "System prompt", tokens: 10_500, kind: "used" },
+            { name: "Skills", tokens: 4_800, kind: "used" },
+            { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" },
+          ]
+          const used = cats.filter((c) => c.kind === "used").reduce((n, c) => n + c.tokens, 0)
+          return { used, max, categories: [...cats, { name: "Free space", tokens: max - used - 33_000, kind: "free" }] }
+        })(),
         inputTokens: rng.int(20_000, 900_000),
         outputTokens: rng.int(2_000, 80_000),
         costUsd: Math.round(rng.float() * (working ? 4 : 2.5) * 100) / 100 + 0.08,
@@ -337,7 +313,7 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
     return ids
   }
 
-  if (fixture === "normal") {
+  {
     for (const s of SCRIPT) {
       const repoId = `repo_${s.repo}`
       const session = makeSession(repoId, s.task, s.status, {
@@ -380,50 +356,6 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
         addRequest(requests, rng, session, now, s.request)
       }
     }
-    // fill repos to 3-4 live sessions
-    for (const repoId of repoOrder) {
-      const spec = repoSpecs[repoId]
-      const target = rng.int(3, 4)
-      const used = new Set(sessionIdsByRepo[repoId].map((id) => sessions[id].title))
-      for (const task of spec.tasks) {
-        if (sessionIdsByRepo[repoId].length >= target) break
-        if (used.has(task)) continue
-        const st: SessionStatus = rng.chance(0.75) ? "idle" : "done_unseen"
-        const s = makeSession(repoId, task, st, { createdAgo: rng.int(60, 2000) * MIN })
-        if (rng.chance(0.4)) addSubagents(s, rng.int(1, 2), ["completed", "completed"])
-      }
-    }
-  } else {
-    // stress: ~400 live sessions across 60 repos, every status
-    const statuses: SessionStatus[] = [
-      "working", "working", "working", "idle", "idle", "idle", "idle", "done_unseen",
-      "waiting_permission", "waiting_input", "error", "starting",
-    ]
-    let live = 0
-    for (const repoId of repoOrder) {
-      const n = rng.int(5, 8)
-      for (let i = 0; i < n && live < 400; i++) {
-        const spec = repoSpecs[repoId]
-        const status = rng.pick(statuses)
-        const s = makeSession(repoId, rng.pick([...spec.tasks, ...HISTORY_TASKS]), status, {
-          createdAgo: rng.int(10, 3000) * MIN,
-          activity: status === "working" ? `Editing ${rng.pick(spec.files)}` : undefined,
-          error: status === "error" ? "API error 529: overloaded" : undefined,
-        })
-        if (status === "waiting_permission") addRequest(requests, rng, s, now, rng.pick(["bash", "edit"] as const))
-        if (status === "waiting_input") addRequest(requests, rng, s, now, "question")
-        live++
-      }
-    }
-    // ~1200 subagents
-    const liveIds = Object.keys(sessions).filter((id) => id !== mainSessionId)
-    let made = 0
-    while (made < 1200) {
-      const s = sessions[rng.pick(liveIds)]
-      const k = rng.int(1, 4)
-      addSubagents(s, k)
-      made += k
-    }
   }
 
   // delegated children for the main agent: make sure each delegated repo has one
@@ -435,7 +367,7 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
   }
 
   // a forked session (web-app pricing → fork)
-  if (fixture === "normal") {
+  {
     const pricing = Object.values(sessions).find((s) => s.title === "Rewrite pricing page copy")
     if (pricing) {
       const fork = makeSession(pricing.repoId!, "Rewrite pricing page copy (shorter variant)", "idle", {
@@ -447,8 +379,8 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
   }
 
   // ---------- history ----------
-  const historyCount = fixture === "normal" ? 400 : 5000
-  const archivedCount = fixture === "normal" ? 32 : 300
+  const historyCount = 14
+  const archivedCount = 4
   for (let i = 0; i < historyCount; i++) {
     const repoId = rng.pick(repoOrder)
     const spec = repoSpecs[repoId]
@@ -461,39 +393,8 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
   }
 
   // a "yesterday" session to find and resume (usability walkthrough task)
-  if (fixture === "normal") {
+  {
     makeSession("repo_api-gateway", "Rate limiting for /v1/chat", "stopped", { history: true, createdAgo: 26 * HOUR })
-  }
-
-  // ---------- links ----------
-  const links: RepoLink[] = []
-  const link = (from: string, to: string, kind: RepoLink["kind"], label: string, weight?: number) => {
-    const f = `repo_${from}`
-    const t = `repo_${to}`
-    if (!repos[f] || !repos[t]) return
-    links.push({ id: `l_${from}_${to}_${kind}`, from: f, to: t, kind, label, weight })
-  }
-  for (const r of ["api-gateway", "web-app", "ticketing", "llm-router", "billing-service", "auth-service"]) {
-    link("shared-rules", r, "shared-rules", "rules/CLAUDE.base.md")
-  }
-  link("ticketing", "web-app", "shared-code", "@acme/schema ticket types")
-  link("ticketing", "mobile-app", "shared-code", "@acme/schema ticket types")
-  link("api-gateway", "llm-router", "calls", "37 cross-repo calls", 37)
-  link("api-gateway", "billing-service", "calls", "12 cross-repo calls", 12)
-  link("api-gateway", "auth-service", "calls", "21 cross-repo calls", 21)
-  link("design-system", "web-app", "shared-code", "@acme/ui components")
-  link("design-system", "mobile-app", "shared-code", "@acme/ui tokens")
-  link("analytics-pipeline", "llm-router", "calls", "6 cross-repo calls", 6)
-  link("notifications", "ticketing", "calls", "9 cross-repo calls", 9)
-  if (fixture === "stress") {
-    for (let i = 0; i < 80; i++) {
-      const a = rng.pick(repoOrder)
-      const b = rng.pick(repoOrder)
-      if (a !== b) {
-        const w = rng.int(2, 40)
-        links.push({ id: `l_${i}`, from: a, to: b, kind: "calls", label: `${w} cross-repo calls`, weight: w })
-      }
-    }
   }
 
   // ---------- notifications ----------
@@ -524,7 +425,6 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
   notifications.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
   return {
-    fixture,
     repos,
     repoOrder,
     repoSpecs,
@@ -533,7 +433,6 @@ export function generateWorld(fixture: FixtureName, now = Date.now()): World {
     mainSessionId,
     subagents,
     subagentIdsBySession,
-    links,
     requests,
     notifications,
   }

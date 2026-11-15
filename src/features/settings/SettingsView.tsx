@@ -1,108 +1,54 @@
-// Settings — UI_PLAN §5.11. Layout adapted from mountain-loop/yaak@6a34d0a:
-// packages/ui/src/components/settings/{SettingsDialog,SettingRow}.tsx (MIT) — left section
-// list, rows with title/description left and control right — and coollabsio/jean@1d53d3c:
-// src/components/preferences/SettingsSection.tsx (Apache-2.0). Modified: our tokens/density,
-// rendered as a tab instead of a dialog.
-import { createContext, useContext, useId, useMemo, useState, type ComponentProps, type ReactNode } from "react"
-import {
-  Bell,
-  Check,
-  FolderGit2,
-  Info,
-  Keyboard,
-  LayoutTemplate,
-  Palette,
-  Plus,
-  Search,
-  Terminal,
-  Trash2,
-  Waypoints,
-} from "lucide-react"
+// Settings: one page, four short sections (repos, new sessions, notifications, window) and the
+// open-source notices. Row layout adapted from mountain-loop/yaak@6a34d0a:
+// packages/ui/src/components/settings/SettingRow.tsx (MIT) — title left, control right — and
+// coollabsio/jean@1d53d3c: src/components/preferences/SettingsSection.tsx (Apache-2.0).
+// Modified for session-dashboard: our tokens, a single scrolling page instead of a dialog.
+import { createContext, useContext, useId, useState, type ComponentProps, type ReactNode } from "react"
+import { FolderGit2, Plus, Server, Trash2 } from "lucide-react"
 import { useApp } from "@/store/app"
-import { patchSettings, pushNotification, setLayoutPreset } from "@/store/actions"
+import { patchSettings, pushNotification } from "@/store/actions"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Shortcut } from "@/components/common/bits"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { COMMANDS } from "@/features/palette/commands"
-import { homePath, compact } from "@/lib/format"
+import { homePath } from "@/lib/format"
 import { IN_TAURI, OS } from "@/lib/platform"
 import { cn } from "@/lib/utils"
 import { AddReposDialog } from "./AddReposDialog"
+import { ZOOM_STEPS } from "@/app/zoom"
+import { EFFORTS, MODES } from "@/features/composer/options"
+import { MOD } from "@/components/common/bits"
+import { REAL } from "@/backend/mode"
+import { setHooks } from "@/backend/real"
+import { WorkspaceDialog } from "@/features/workspaces/WorkspaceDialog"
+import { probeMachine } from "@/backend/machines"
+import { pollCloud } from "@/backend/cloud"
+import { Input } from "@/components/ui/input"
 import { NOTICES } from "./notices"
 
-type Page = "repos" | "claude" | "appearance" | "notifications" | "keys" | "graphify" | "layouts" | "about"
-
-const PAGES: { id: Page; label: string; icon: typeof FolderGit2 }[] = [
-  { id: "repos", label: "Repos", icon: FolderGit2 },
-  { id: "claude", label: "Claude Code", icon: Terminal },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "keys", label: "Keybindings", icon: Keyboard },
-  { id: "graphify", label: "Graphify", icon: Waypoints },
-  { id: "layouts", label: "Layouts", icon: LayoutTemplate },
-  { id: "about", label: "About", icon: Info },
-]
-
 export default function SettingsView() {
-  const [page, setPage] = useState<Page>("repos")
   return (
-    <div className="flex h-full min-h-0 bg-canvas">
-      <nav
-        className="w-52 shrink-0 border-r border-line-subtle bg-chrome py-2"
-        aria-label="Settings sections"
-        onKeyDown={(e) => {
-          if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
-          e.preventDefault()
-          const i = PAGES.findIndex((p) => p.id === page)
-          const next = PAGES[(i + (e.key === "ArrowDown" ? 1 : PAGES.length - 1)) % PAGES.length]
-          setPage(next.id)
-          ;(e.currentTarget.querySelector(`[data-page="${next.id}"]`) as HTMLElement | null)?.focus()
-        }}
-      >
-        <div className="section-label px-4 pb-2">Settings</div>
-        {PAGES.map((p) => (
-          <button
-            key={p.id}
-            data-page={p.id}
-            aria-current={page === p.id ? "page" : undefined}
-            onClick={() => setPage(p.id)}
-            className={cn(
-              "flex h-7 w-full items-center gap-2 px-4 text-left text-[12.5px] transition-colors",
-              page === p.id ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
-            )}
-          >
-            <p.icon size={14} className="text-fg-faint" />
-            {p.label}
-          </button>
-        ))}
-      </nav>
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[760px] px-8 py-6">
-          {page === "repos" && <ReposPage />}
-          {page === "claude" && <ClaudePage />}
-          {page === "appearance" && <AppearancePage />}
-          {page === "notifications" && <NotificationsPage />}
-          {page === "keys" && <KeysPage />}
-          {page === "graphify" && <GraphifyPage />}
-          {page === "layouts" && <LayoutsPage />}
-          {page === "about" && <AboutPage />}
-        </div>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-[960px] px-8 pt-10 pb-16">
+        {REAL ? <SourcesPage /> : <ReposPage />}
+        <ClaudePage />
+        <NotificationsPage />
+        <WindowPage />
+        <AboutPage />
       </div>
     </div>
   )
 }
 
 function Code({ children }: { children: ReactNode }) {
-  return <code className="rounded-sm bg-elevated px-1 py-px font-mono text-[11px] text-fg-muted">{children}</code>
+  return <code className="rounded-sm bg-muted px-1 py-px font-mono text-xs text-muted-foreground">{children}</code>
 }
 
 /** Page heading. Long explanations live in the tooltip, not on screen (§2.5 copy budget). */
 function PageTitle({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-4 flex h-7 items-center gap-3">
-      <h2 className="text-base font-semibold text-fg" title={description}>
+    <div className="mb-2 flex h-7 items-center gap-3">
+      <h2 className="text-base font-medium text-foreground" title={description}>
         {title}
       </h2>
       {actions && <div className="ml-auto flex items-center gap-1.5">{actions}</div>}
@@ -112,13 +58,11 @@ function PageTitle({ title, description, actions }: { title: string; description
 
 function SettingsSection({ title, description, children }: { title?: string; description?: string; children: ReactNode }) {
   return (
-    <section className="mb-6">
+    <section className="mb-10">
       {title && (
-        <div className="border-b border-line-subtle pb-2">
-          <span className="section-label" title={description}>
-            {title}
-          </span>
-        </div>
+        <h3 className="border-b border-border pb-2 text-xs font-medium text-muted-foreground/70" title={description}>
+          {title}
+        </h3>
       )}
       <div className="[&>*:last-child]:border-b-0">{children}</div>
     </section>
@@ -135,21 +79,21 @@ const RowLabel = createContext<string | undefined>(undefined)
 function SettingRow({ title, description, hint, children, disabled }: { title: ReactNode; description?: ReactNode; hint?: string; children: ReactNode; disabled?: boolean }) {
   const labelId = useId()
   return (
-    <div className={cn("grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-line-subtle py-1.5", disabled && "opacity-50")}>
+    <div className={cn("grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border py-2", disabled && "opacity-50")}>
       <div className="flex min-w-0 items-center gap-2">
         {description ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span id={labelId} className="cursor-default text-[13px] text-fg decoration-line-strong decoration-dotted underline-offset-4 hover:underline">{title}</span>
+              <span id={labelId} className="cursor-default text-sm text-foreground decoration-input decoration-dotted underline-offset-4 hover:underline">{title}</span>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="start" className="max-w-80 text-xs leading-relaxed">
               {description}
             </TooltipContent>
           </Tooltip>
         ) : (
-          <span id={labelId} className="text-[13px] text-fg">{title}</span>
+          <span id={labelId} className="text-sm text-foreground">{title}</span>
         )}
-        {hint && <span className="text-[11px] text-fg-faint">{hint}</span>}
+        {hint && <span className="text-xs text-muted-foreground/70">{hint}</span>}
       </div>
       <div className="flex min-w-0 items-center justify-end gap-2">
         <RowLabel.Provider value={labelId}>{children}</RowLabel.Provider>
@@ -184,7 +128,7 @@ function SmallSelect<T extends string>({ value, onChange, options, width = "w-44
   )
 }
 
-// ---------- pages ----------
+// ---------- sections ----------
 function ReposPage() {
   const order = useApp((s) => s.repoOrder)
   const repos = useApp((s) => s.repos)
@@ -201,19 +145,19 @@ function ReposPage() {
           </Button>
         }
       />
-      <div className="overflow-hidden rounded-md border border-line-subtle">
+      <div className="overflow-hidden rounded-md border border-border">
         {order.map((id) => {
           const r = repos[id]
           return (
             <div
               key={id}
-              className="group flex h-8 items-center gap-3 border-b border-line-subtle px-3 last:border-0 hover:bg-hover/50"
+              className="group flex h-8 items-center gap-3 border-b border-border px-3 last:border-0 hover:bg-accent/50"
               title={`${r.language} · ${counts[id]?.length ?? 0} sessions`}
             >
-              <FolderGit2 size={14} className="shrink-0 text-fg-faint" />
-              <span className="w-44 shrink-0 truncate text-[13px] text-fg">{r.name}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-faint">{homePath(r.rootPath)}</span>
-              <button className="flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-faint opacity-0 outline-none group-hover:opacity-100 hover:bg-selected hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring" title="Stop tracking (sessions are kept)" aria-label={`Stop tracking ${r.name}`}>
+              <FolderGit2 size={14} className="shrink-0 text-muted-foreground/70" />
+              <span className="w-44 shrink-0 truncate text-sm text-foreground">{r.name}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground/70">{homePath(r.rootPath)}</span>
+              <button className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 opacity-0 outline-none group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring" title="Stop tracking (sessions are kept)" aria-label={`Stop tracking ${r.name}`}>
                 <Trash2 size={13} />
               </button>
             </div>
@@ -221,7 +165,197 @@ function ReposPage() {
         })}
       </div>
       {adding && <AddReposDialog onClose={() => setAdding(false)} />}
+      <div className="mb-10" />
     </>
+  )
+}
+
+/** Where sessions come from: hooks on this computer, the cloud, VPS machines over ssh. */
+function SourcesPage() {
+  const recentPer = useApp((s) => s.settings.recentPerRepo ?? 5)
+  const hooks = useApp((s) => s.hooks)
+  const cloud = useApp((s) => s.settings.cloud)
+  const cloudStatus = useApp((s) => s.cloudStatus)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string>()
+  const toggleHooks = async (on: boolean) => {
+    setBusy(true)
+    setErr(undefined)
+    try {
+      await setHooks(on)
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <PageTitle title="Sessions" description="Sessions on this computer are found by themselves. Hooks make their states exact; the cloud and VPS machines add sessions that run elsewhere." />
+      <Workspace />
+      <SettingsSection>
+        <SettingRow title="Recent sessions per project" description="How many sessions each project shows on the overview and in the list: every running one, then the ones you used last. Older ones are a search away (Ctrl+K).">
+          <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
+        </SettingRow>
+        <SettingRow
+          title="Exact states from hooks"
+          hint={err ? "failed" : hooks?.installed ? "on" : undefined}
+          description={
+            <>
+              Adds a small hook to <Code>~/.claude/settings.json</Code> (the first change keeps a backup next to it). Every session then tells the dashboard what it waits for and what it runs, with the folder's git status. The hook runs in the background: Claude never waits for it. Turning this off removes it again.
+              {err && <span className="mt-1 block text-st-error-fg">{err}</span>}
+            </>
+          }
+        >
+          <RowSwitch checked={!!hooks?.installed} disabled={busy} onCheckedChange={(v) => void toggleHooks(v)} />
+        </SettingRow>
+        <SettingRow
+          title="Cloud sessions"
+          hint={cloud && cloudStatus ? (cloudStatus.ok ? plural0(cloudStatus.count ?? 0, "session") : "unavailable") : undefined}
+          description={
+            <>
+              Your sessions on claude.ai/code and Remote Control, read with your Claude Code sign-in. Messages go in from here; permission prompts in a cloud session are answered on claude.ai.
+              {cloudStatus && !cloudStatus.ok && cloudStatus.message && <span className="mt-1 block text-muted-foreground/70">{cloudStatus.message}</span>}
+            </>
+          }
+        >
+          <RowSwitch
+            checked={cloud}
+            onCheckedChange={(v) => {
+              patchSettings({ cloud: v })
+              if (v) void pollCloud()
+            }}
+          />
+        </SettingRow>
+      </SettingsSection>
+      <Machines />
+    </>
+  )
+}
+
+/** Workspaces: named sets of repositories, switched in the top bar. */
+function Workspace() {
+  const list = useApp((s) => s.settings.workspaces)
+  const active = useApp((s) => s.settings.workspace)
+  const repos = useApp((s) => s.repos)
+  const [dialog, setDialog] = useState<{ edit?: (typeof list)[number] } | null>(null)
+  return (
+    <SettingsSection
+      title="Workspaces"
+      description="A workspace is a set of repositories (Work = the repos of your job). The top bar switches between them; each shows its repos' sessions wherever they run: here, on a VPS or in the cloud."
+    >
+      {list.map((w) => {
+        const names = w.repos?.map((r) => r.name) ?? (w.folders ?? []).map((f) => `${f}/*`)
+        const n = Object.values(repos).filter((r) => r.workspace === w.id).length
+        return (
+          <div key={w.id} className="group flex min-h-12 items-center gap-3 border-b border-border py-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-medium text-foreground">{w.name}</span>
+                <span className="text-xs text-muted-foreground/70">
+                  {plural0(n, "repo")}
+                  {w.id === active ? " · shown" : ""}
+                </span>
+              </div>
+              <div className="truncate text-xs text-muted-foreground">{names.join(", ") || "No repositories"}</div>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setDialog({ edit: w })}>
+              Edit
+            </Button>
+            <button
+              onClick={() => patchSettings({ workspaces: list.filter((x) => x.id !== w.id), workspace: active === w.id ? "" : active })}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 outline-none group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
+              title="Delete this workspace (its sessions keep running)"
+              aria-label={`Delete ${w.name}`}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )
+      })}
+      <div className="py-3">
+        <Button size="sm" variant="outline" onClick={() => setDialog({})}>
+          <Plus /> New workspace
+        </Button>
+      </div>
+      <WorkspaceDialog open={!!dialog} onOpenChange={(o) => !o && setDialog(null)} edit={dialog?.edit} />
+    </SettingsSection>
+  )
+}
+
+const plural0 = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
+
+function Machines() {
+  const machines = useApp((s) => s.settings.machines)
+  const status = useApp((s) => s.machineStatus)
+  const [host, setHost] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [working, setWorking] = useState<string>()
+  const add = async () => {
+    const h = host.trim()
+    if (!h || machines.some((m) => m.host === h)) return
+    setAdding(true)
+    const r = await probeMachine(h).catch((e) => ({ ok: false, error: String(e) }))
+    setAdding(false)
+    if (r.ok) {
+      patchSettings({ machines: [...machines, { host: h }] })
+      setHost("")
+    }
+  }
+  const hooks = async (h: string, install: boolean) => {
+    setWorking(h)
+    try {
+      await setHooks(install, h)
+      await probeMachine(h)
+    } catch (e) {
+      useApp.setState((s) => ({ machineStatus: { ...s.machineStatus, [h]: { ...s.machineStatus[h], host: h, error: String(e) } } }))
+    } finally {
+      setWorking(undefined)
+    }
+  }
+  const pending = host.trim() ? status[host.trim()] : undefined
+  return (
+    <SettingsSection title="Machines" description="A VPS or another computer where repos live. The app reaches it with your ssh (keys and ~/.ssh/config aliases; it never asks for a password), keeps a tunnel so the hook there can report, and starts sessions there.">
+      {machines.map(({ host: h }) => {
+        const st = status[h]
+        const line = st?.error ?? (st?.ok ? [st.hostname, st.version ? `claude ${st.version.replace(/ \(.*\)$/, "")}` : "claude not found", st.tunnel === false ? `tunnel: ${st.tunnelError ?? "down"}` : undefined].filter(Boolean).join(" · ") : "checking…")
+        return (
+          <div key={h} className="group flex min-h-10 items-center gap-3 border-b border-border py-1.5">
+            <Server size={14} className={cn("shrink-0", st?.ok ? "text-muted-foreground" : "text-muted-foreground/70")} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-mono text-xs text-foreground">{h}</div>
+              <div className={cn("truncate text-xs", st?.error ? "text-st-error-fg" : "text-muted-foreground/70")}>{line}</div>
+            </div>
+            {st?.ok && (
+              <Button size="sm" variant={st.hooks ? "ghost" : "default"} disabled={working === h} onClick={() => void hooks(h, !st.hooks)} title={st.hooks ? "Remove the hook from this machine's ~/.claude/settings.json" : "Add the hook to this machine's ~/.claude/settings.json (a backup is kept)"}>
+                {st.hooks ? "Remove hooks" : "Install hooks"}
+              </Button>
+            )}
+            <button
+              onClick={() => patchSettings({ machines: machines.filter((m) => m.host !== h) })}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 outline-none group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
+              title="Remove this machine (its sessions keep running)"
+              aria-label={`Remove ${h}`}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )
+      })}
+      <form
+        className="flex items-center gap-2 py-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void add()
+        }}
+      >
+        <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="ssh alias or user@host" className="h-8 flex-1 font-mono text-xs" aria-label="Machine to add" spellCheck={false} autoCapitalize="off" />
+        <Button size="sm" variant="outline" type="submit" disabled={!host.trim() || adding}>
+          {adding ? "Checking…" : "Add"}
+        </Button>
+      </form>
+      {pending && !pending.ok && pending.error && !adding && <p className="-mt-1 pb-3 text-xs text-st-error-fg">{pending.error}</p>}
+    </SettingsSection>
   )
 }
 
@@ -231,53 +365,22 @@ function ClaudePage() {
   const setD = (patch: Partial<typeof d>) => patchSettings({ defaults: { ...d, ...patch } })
   return (
     <>
-      <PageTitle title="Claude Code" description="Where sessions are read from and the defaults for new sessions." />
-      <SettingsSection title="Installation">
-        <SettingRow title="Binary" description="The real claude CLI is driven directly (stream-json or PTY), so subscription logins work.">
-          <span className="font-mono text-xs text-fg-muted">claude · 2.1.330</span>
-        </SettingRow>
-        <SettingRow title="Config directory" description={<><Code>CLAUDE_CONFIG_DIR</Code>. Transcripts live in <Code>&lt;dir&gt;/projects/&lt;slug&gt;/&lt;session&gt;.jsonl</Code>.</>}>
-          <span className="font-mono text-xs text-fg-muted">{settings.claudeConfigDir}</span>
-        </SettingRow>
-        <SettingRow title="Status source" description={<>Live status comes from <Code>claude agents --json</Code>, falling back to <Code>~/.claude/sessions/&lt;pid&gt;.json</Code> and global hooks.</>}>
-          <span className="text-xs text-fg-muted">Connected</span>
-        </SettingRow>
-      </SettingsSection>
-      <SettingsSection title="Defaults" description="Defaults for new sessions">
+      <PageTitle title="New sessions" description="Defaults for new sessions. Sessions are read from the Claude Code config directory." />
+      <SettingsSection>
         <SettingRow title="Model">
           <SmallSelect value={d.model} onChange={(v) => setD({ model: v })} options={[{ value: "claude-opus-5-5", label: "Opus 5.5" }, { value: "claude-sonnet-5-5", label: "Sonnet 5.5" }, { value: "claude-haiku-5-5", label: "Haiku 5.5" }, { value: "claude-fable-5-2", label: "Fable 5.2" }]} />
         </SettingRow>
         <SettingRow title="Effort">
-          <SmallSelect value={d.effort} onChange={(v) => setD({ effort: v })} options={(["low", "medium", "high", "xhigh", "max"] as const).map((v) => ({ value: v, label: v }))} />
+          <SmallSelect value={d.effort} onChange={(v) => setD({ effort: v })} options={EFFORTS.map((e) => ({ value: e.value, label: e.label }))} />
         </SettingRow>
         <SettingRow title="Permissions" description="bypassPermissions is never used as a default.">
-          <SmallSelect value={d.permissionMode} onChange={(v) => setD({ permissionMode: v })} options={[{ value: "default", label: "Default (ask)" }, { value: "acceptEdits", label: "Accept edits" }, { value: "plan", label: "Plan" }, { value: "auto", label: "Auto" }]} />
+          <SmallSelect value={d.permissionMode} onChange={(v) => setD({ permissionMode: v })} options={MODES.filter((m) => m.value !== "bypassPermissions" && m.value !== "dontAsk").map((m) => ({ value: m.value, label: m.label }))} />
         </SettingRow>
         <SettingRow title="Worktree" description={<>Start new sessions in <Code>.claude/worktrees/&lt;name&gt;</Code> (<Code>claude --worktree</Code>).</>}>
           <RowSwitch checked={d.worktree} onCheckedChange={(v) => setD({ worktree: v })} />
         </SettingRow>
-      </SettingsSection>
-    </>
-  )
-}
-
-function AppearancePage() {
-  const s = useApp((st) => st.settings)
-  return (
-    <>
-      <PageTitle title="Appearance" description="Dark only in this phase. Density applies to the sidebar, tables and lists." />
-      <SettingsSection>
-        <SettingRow title="Density">
-          <SmallSelect value={s.density} onChange={(v) => patchSettings({ density: v })} options={[{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }]} />
-        </SettingRow>
-        <SettingRow title="Reduce motion" description="Disables the status-change flash and spinners.">
-          <RowSwitch checked={s.reduceMotion} onCheckedChange={(v) => patchSettings({ reduceMotion: v })} />
-        </SettingRow>
-        <SettingRow title="Native title bar" description="Use the window manager's title bar (recommended on Linux)." hint={OS !== "linux" ? "Linux only" : undefined} disabled={OS !== "linux"}>
-          <RowSwitch checked={s.nativeTitlebar} onCheckedChange={(v) => patchSettings({ nativeTitlebar: v })} disabled={OS !== "linux"} />
-        </SettingRow>
-        <SettingRow title="Map detail" description="Automatic switches between full cards, compact pills and repo-only overview by zoom.">
-          <SmallSelect value={s.mapDefaultLod} onChange={(v) => patchSettings({ mapDefaultLod: v })} options={[{ value: "auto", label: "By zoom" }, { value: "full", label: "Full cards" }, { value: "compact", label: "Compact" }]} />
+        <SettingRow title="Allow bypass permissions mode" description="Adds Bypass permissions to the mode picker. Claude then never asks before acting; use it only in a sandbox.">
+          <RowSwitch checked={settings.allowBypass} onCheckedChange={(v) => patchSettings({ allowBypass: v })} />
         </SettingRow>
       </SettingsSection>
     </>
@@ -307,15 +410,15 @@ function NotificationsPage() {
   }
   return (
     <>
-      <PageTitle title="Notifications" description="System notifications fire only when the window is unfocused or the session is not visible. In-app toasts always show." actions={<Button size="sm" onClick={() => void test()} title="Send a test notification">Test</Button>} />
+      <PageTitle title="Notifications" description="System notifications fire only when the window is in the background." actions={<Button size="sm" variant="outline" onClick={() => void test()} title="Send a test notification">Test</Button>} />
       <SettingsSection title="Notify when">
         {rule("permission", "Needs permission", "A tool call is waiting for approval.")}
         {rule("question", "Asks a question", "AskUserQuestion, plan approval or idle prompt.")}
         {rule("finished", "Finishes", "Turn ended; the session is done and unseen.")}
         {rule("error", "Fails", "API errors, crashes, rate limits.")}
-        {rule("sound", "Sound", "Short chime for permission and question events.")}
+        {rule("sound", "Sound", "Short chime when a session needs you.")}
       </SettingsSection>
-      <SettingsSection title="Muted repos" description="No toasts or system notifications for these repos. They still appear in Needs you.">
+      <SettingsSection title="Muted repos" description="No system notifications for these repos. They still count as needing you.">
         <div className="flex flex-wrap gap-1.5 py-3">
           {order.map((id) => {
             const muted = s.mutedRepos.includes(id)
@@ -323,7 +426,7 @@ function NotificationsPage() {
               <button
                 key={id}
                 onClick={() => patchSettings({ mutedRepos: muted ? s.mutedRepos.filter((x) => x !== id) : [...s.mutedRepos, id] })}
-                className={cn("h-6 rounded-sm border px-2 text-xs", muted ? "border-line bg-selected text-fg" : "border-line-subtle text-fg-faint hover:text-fg-muted")}
+                className={cn("h-6 rounded-sm border px-2 text-xs", muted ? "border-border bg-accent text-foreground" : "border-border text-muted-foreground/70 hover:text-muted-foreground")}
               >
                 {repos[id].name}
               </button>
@@ -335,110 +438,44 @@ function NotificationsPage() {
   )
 }
 
-function KeysPage() {
-  const [q, setQ] = useState("")
-  const list = useMemo(() => COMMANDS.filter((c) => c.shortcut && `${c.title} ${c.group}`.toLowerCase().includes(q.toLowerCase())), [q])
-  return (
-    <>
-      <PageTitle title="Keybindings" description="Single-key shortcuts are ignored while typing in inputs, the composer or the terminal." />
-      <div className="relative mb-3 flex h-7 w-72 items-center">
-        <Search size={13} className="absolute left-2 text-fg-faint" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter" aria-label="Filter shortcuts" className="h-full w-full rounded-md border border-line-subtle bg-chrome pl-7 text-xs outline-none placeholder:text-fg-faint focus:border-line-strong" />
-      </div>
-      <div className="overflow-hidden rounded-md border border-line-subtle">
-        {list.map((c) => (
-          <div key={c.id} className="flex h-7 items-center gap-3 border-b border-line-subtle px-3 text-xs last:border-0">
-            <span className="truncate text-fg" title={c.group}>{c.title}</span>
-            <Shortcut keys={c.shortcut!} className="ml-auto" />
-          </div>
-        ))}
-      </div>
-    </>
-  )
-}
-
-function GraphifyPage() {
+function WindowPage() {
   const s = useApp((st) => st.settings)
-  // Phase 1: not persisted (the Settings model has no field for it yet)
-  const repos = useApp((st) => st.repos)
-  const order = useApp((st) => st.repoOrder)
   return (
     <>
-      <PageTitle title="Graphify" description="Code knowledge graphs per repo (graphify-out/graph.json) plus the global cross-repo graph used for map links. Agents query it through the Graphify MCP server." />
+      <PageTitle title="Window" />
       <SettingsSection>
-        <SettingRow title="Rebuild on commit" description="Installs Graphify's git hooks (post-commit, post-checkout, post-merge).">
-          <RowSwitch checked={s.graphifyAutoBuild} onCheckedChange={(v) => patchSettings({ graphifyAutoBuild: v })} />
+        <SettingRow title="Interface size" description={`Everything in the window, larger or smaller. ${MOD}+= and ${MOD}+− change it from anywhere.`}>
+          <SmallSelect value={String(s.uiScale ?? 1)} onChange={(v) => patchSettings({ uiScale: Number(v) })} options={ZOOM_STEPS.map((z) => ({ value: String(z), label: `${Math.round(z * 100)}%` }))} width="w-24" />
         </SettingRow>
-        <SettingRow title="Global graph" description={<><Code>~/.graphify/global-graph.json</Code> with cross-repo calls edges.</>}>
-          <span className="text-xs text-fg-muted">Fresh</span>
+        <SettingRow title="Native title bar" description="Use the window manager's title bar (recommended on Linux)." hint={OS !== "linux" ? "Linux only" : undefined} disabled={OS !== "linux"}>
+          <RowSwitch checked={s.nativeTitlebar} onCheckedChange={(v) => patchSettings({ nativeTitlebar: v })} disabled={OS !== "linux"} />
         </SettingRow>
-        <SettingRow title="Expose to agents" description={<>Adds the graphify MCP server (<Code>query_graph</Code>, <Code>get_neighbors</Code>, <Code>shortest_path</Code>…) to new sessions.</>}>
-          <RowSwitch checked={s.graphifyExposeMcp} onCheckedChange={(v) => patchSettings({ graphifyExposeMcp: v })} />
+        <SettingRow title="Reduce motion" description="Stops the working spinner.">
+          <RowSwitch checked={s.reduceMotion} onCheckedChange={(v) => patchSettings({ reduceMotion: v })} />
         </SettingRow>
       </SettingsSection>
-      <SettingsSection title="Repos">
-        {order.map((id) => {
-          const g = repos[id].graphify
-          return (
-            <div key={id} className="flex h-7 items-center gap-3 border-b border-line-subtle text-xs">
-              <span className="w-40 truncate text-fg">{repos[id].name}</span>
-              <span className={cn("w-16", g?.state && g.state !== "none" ? "text-fg-muted" : "text-fg-faint")}>{g?.state ?? "none"}</span>
-              <span
-                className="tabular ml-auto text-[11px] text-fg-faint"
-                title={g?.nodes ? `${compact(g.nodes)} nodes · ${g.communities} communities · built at ${g.builtAtCommit}` : undefined}
-              >
-                {g?.nodes ? compact(g.nodes) : ""}
-              </span>
-            </div>
-          )
-        })}
-      </SettingsSection>
-    </>
-  )
-}
-
-function LayoutsPage() {
-  const preset = useApp((s) => s.layoutPreset)
-  const items = [
-    { id: "default" as const, label: "Default", description: "Sidebar, center, inspector. Bottom panel on demand." },
-    { id: "focus" as const, label: "Focus", description: "Center only: for working inside one session." },
-    { id: "review" as const, label: "Review", description: "Center + inspector: for reviewing changes and approvals." },
-  ]
-  return (
-    <>
-      <PageTitle title="Layouts" description="Panel sizes are saved per layout automatically." />
-      <div className="overflow-hidden rounded-md border border-line-subtle">
-        {items.map((it) => (
-          <button
-            key={it.id}
-            onClick={() => setLayoutPreset(it.id)}
-            title={it.description}
-            aria-pressed={preset === it.id}
-            className={cn("flex h-8 w-full items-center gap-3 border-b border-line-subtle px-3 text-left last:border-0", preset === it.id ? "bg-selected" : "hover:bg-hover/50")}
-          >
-            <LayoutTemplate size={14} className="text-fg-faint" />
-            <span className="text-[13px] text-fg">{it.label}</span>
-            {preset === it.id && <Check size={13} className="ml-auto text-fg-muted" aria-label="Current" />}
-          </button>
-        ))}
-      </div>
     </>
   )
 }
 
 function AboutPage() {
+  const [open, setOpen] = useState(false)
   return (
-    <>
-      <PageTitle title="About" description="Phase 1 (UI with mock data) · Tauri 2 + React 19" actions={<span className="text-xs text-fg-faint">0.1.0</span>} />
-      <SettingsSection title="Third-party" description="Code adapted from these projects keeps its license header; full texts are in THIRD_PARTY_NOTICES.md.">
-        {NOTICES.map((n) => (
-          <div key={n.name} className="flex h-7 items-center gap-3 border-b border-line-subtle text-xs">
-            <span className="w-48 shrink-0 truncate text-fg" title={n.name}>{n.name}</span>
-            <span className="w-28 shrink-0 truncate font-mono text-[11px] whitespace-nowrap text-fg-muted" title={n.license}>{n.license}</span>
-            <span className="truncate text-fg-faint" title={n.use}>{n.use}</span>
-          </div>
-        ))}
-      </SettingsSection>
-    </>
+    <section className="mt-2 text-xs text-muted-foreground/70">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="hover:text-muted-foreground">
+        Open-source notices ({NOTICES.length})
+      </button>
+      {open && (
+        <div className="mt-3">
+          {NOTICES.map((n) => (
+            <div key={n.name} className="flex h-7 items-center gap-3 border-b border-border">
+              <span className="w-56 shrink-0 truncate text-muted-foreground">{n.name}</span>
+              <span className="w-28 shrink-0 truncate font-mono text-xs">{n.license}</span>
+              <span className="truncate">{n.use}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }

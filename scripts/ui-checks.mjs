@@ -10,7 +10,7 @@
 //   --headed    show the browser window
 //   --out       where failure screenshots go (default $TMPDIR/sd-ui-checks)
 //   --a11y-report  also print every unnamed control / missing focus indicator found on the main
-//               screens, including areas the a11y checks don't gate (map, sidebar, shell)
+//               screens, including areas the a11y checks don't gate (overview, list, shell)
 //
 // Prints one PASS/FAIL line per check (FAIL lines carry the reason, and a screenshot path) and
 // exits non-zero when any check fails. Every check starts from a fresh page load with cleared
@@ -52,7 +52,7 @@ const wait = (ms) => page.waitForTimeout(ms)
  * Full reload at `hash` (fresh mock world). Storage is cleared by an init script before any app
  * code runs on each document, so persisted settings / layouts never leak between checks.
  */
-async function load(hash = "#/map", query = QUERY) {
+async function load(hash = "#/", query = QUERY) {
   await page.goto("about:blank")
   await page.goto(`${BASE}${query}${hash}`, { waitUntil: "networkidle" })
   await page.waitForSelector("header", { timeout: 20000 })
@@ -113,7 +113,7 @@ async function until(fn, timeout = 3000, step = 100) {
 
 /** Session ids by role, discovered in the running app. */
 function discover() {
-  return app((s) => {
+  return app((s, _arg, sel) => {
     const all = Object.values(s.sessions)
     const live = all.filter((x) => !x.archived && x.control !== "history")
     const pend = Object.values(s.requests).filter((r) => r.state === "pending")
@@ -136,6 +136,8 @@ function discover() {
       planReq: plan?.id,
       history: history?.id,
       liveCount: live.length,
+      order: sel.selectSessionOrder(s),
+      needs: sel.selectNeedsYou(s),
     }
   })
 }
@@ -152,7 +154,12 @@ function awaitingTools(sid) {
 }
 
 const visible = (sel) => page.locator(`${sel}:visible`)
-const node = (id) => page.locator(`.react-flow__node[data-id="${id}"]`)
+/** An overview card (main agent or session) by its session title. */
+const card = (title) => page.locator(".ov-item > div, .ov-main-wrap > div").filter({ has: page.getByRole("button", { name: `Open ${title}`, exact: true }) })
+/** The session list row of a session. */
+const row = (title) => visible('nav[aria-label="Sessions"] button').filter({ hasText: title }).first()
+const hash = () => page.evaluate(() => location.hash)
+const titleOf = (id) => app((s, id) => s.sessions[id]?.title, id)
 const dialog = () => page.locator("[role=dialog]:visible").last()
 const transcriptText = () => visible('[role=log][aria-label="Session transcript"]').first().innerText().catch(() => "")
 
@@ -249,60 +256,74 @@ async function tabWalk(max, scope = "body") {
 }
 
 // ---------------------------------------------------------------- checks
-check("boot: app loads without console errors", async () => {
-  await load("#/map")
-  await page.waitForSelector(".react-flow__node", { timeout: 10000 })
-  const nodes = await page.locator(".react-flow__node").count()
-  expect(nodes > 0, "map rendered no nodes")
-  expect(await visible('[role=tree][aria-label="Sessions and repositories"]').count(), "sidebar tree missing")
+check("boot: the overview draws the tree without console errors", async () => {
+  await load("#/")
+  const ids = await discover()
+  await page.waitForSelector(".ov-item", { timeout: 10000 })
+  const cards = await page.locator(".ov-item").count()
+  expect(cards === ids.order.length - 1, `${cards} session cards for ${ids.order.length - 1} live sessions`)
+  expect((await page.locator(".ov-col").count()) === (await app((s) => s.repoOrder.length)), "one column per repo")
+  // the session list sits beside the overview too (Ctrl+B hides it)
+  expect((await visible('nav[aria-label="Sessions"]').count()) === 1, "session list missing beside the overview")
+  await page.keyboard.press("Control+b")
+  // the stock sidebar slides off-canvas (it stays mounted): its state says collapsed
+  expect(await until(async () => ((await page.locator('[data-slot=sidebar][data-state=collapsed]').count()) === 1 ? true : null), 1500), "Ctrl+B didn't hide the session list")
+  await page.keyboard.press("Control+b")
+  expect(await until(async () => ((await page.locator('[data-slot=sidebar][data-state=expanded]').count()) === 1 ? true : null), 1500), "Ctrl+B didn't bring the session list back")
   const errs = problems.filter((p) => p.check === current)
   expect(!errs.length, `console errors: ${errs.map((e) => e.text).join(" | ")}`)
-  return `${nodes} map nodes`
+  return `${cards} cards`
 })
 
-check("needs-you: same count in title bar, sidebar and Sessions inbox", async () => {
-  await load("#/map")
-  // the one definition the UI uses (waiting + errors, subagent permissions included)
-  const store = await app((s, _arg, sel) => sel.selectWaitingCount(s))
-  const title = await page.evaluate(() => {
-    const b = [...document.querySelectorAll("header button")].find((x) => x.querySelector("svg[class*='shield']"))
-    return b?.textContent?.trim()
-  })
-  const sidebar = await page.evaluate(() => {
-    const label = [...document.querySelectorAll("[role=tree] .section-label")].find((x) => x.textContent?.trim() === "Needs you")
-    return label?.parentElement?.querySelector(".tabular")?.textContent?.trim() ?? "0"
-  })
-  await go("#/sessions")
-  const inbox = await page.evaluate(() => {
-    const b = [...document.querySelectorAll("button")].find((x) => x.offsetParent && x.textContent?.trim().startsWith("Needs you"))
-    return b?.querySelector(".tabular")?.textContent?.trim() ?? "0"
-  })
-  expect(title !== undefined, "title bar attention button not found")
-  expect(title === sidebar && sidebar === inbox, `title bar ${title}, sidebar ${sidebar}, Sessions ${inbox}`)
-  expect(Number(title) === store, `UI shows ${title}, store says ${store}`)
-  return `${title} everywhere`
+check("needs-you: the top-bar count matches the store and Ctrl+J visits each one once", async () => {
+  await load("#/")
+  const ids = await discover()
+  const label = await visible("header button").filter({ hasText: "need you" }).first().innerText()
+  const shown = Number(label.replace(/\D+/g, ""))
+  expect(shown === ids.needs.length, `top bar says ${shown}, store has ${ids.needs.length}`)
+  const seen = []
+  for (let i = 0; i < ids.needs.length + 1; i++) {
+    await page.keyboard.press("Control+j")
+    await wait(250)
+    seen.push((await hash()).split("/")[2])
+  }
+  expect(JSON.stringify(seen.slice(0, ids.needs.length)) === JSON.stringify(ids.needs), `Ctrl+J order ${seen.join(",")} vs ${ids.needs.join(",")}`)
+  expect(seen.at(-1) === ids.needs[0], "Ctrl+J doesn't wrap around to the first one")
+  return `${shown} need you`
 })
 
-check("map card: Allow once on a Bash permission", async () => {
-  await load("#/map")
+check("overview card: Allow once on a Bash permission", async () => {
+  await load("#/")
   const ids = await discover()
   expect(ids.bash, "no approvable Bash permission in the fixture")
-  const card = node(ids.bash)
-  await card.waitFor({ timeout: 5000 })
-  await card.getByRole("button", { name: "Allow once" }).click()
+  const c = card(await titleOf(ids.bash))
+  await c.waitFor({ timeout: 5000 })
+  await c.getByRole("button", { name: "Allow once" }).click()
   const st = await until(() => app((s, id) => (s.sessions[id].status !== "waiting_permission" ? s.sessions[id].status : null), ids.bash))
   expect(st, "session still waiting for permission")
-  expect((await card.getByRole("button", { name: "Allow once" }).count()) === 0, "card still shows Allow once")
+  expect((await hash()) === "#/", "answering on the card opened the session")
+  expect((await c.getByRole("button", { name: "Allow once" }).count()) === 0, "card still shows Allow once")
   await go(`#/session/${ids.bash}`)
   await wait(500)
   const waiting = await awaitingTools(ids.bash)
   expect(!waiting.includes("Bash"), "transcript still has a Bash call awaiting approval")
-  expect((await visible('[role=log] [title="Waiting for your approval"]').count()) === 0, "transcript row still shows waiting")
   return `status → ${st}`
 })
 
+check("overview card: clicking a card opens its chat; Ctrl+0 returns", async () => {
+  await load("#/")
+  const ids = await discover()
+  const title = await titleOf(ids.question)
+  await card(title).getByRole("button", { name: `Open ${title}`, exact: true }).click()
+  expect((await hash()) === `#/session/${ids.question}`, `opened ${await hash()}`)
+  expect(await row(title).getAttribute("aria-current") === "page", "list row not marked current")
+  await page.keyboard.press("Control+0")
+  await wait(300)
+  expect((await hash()) === "#/", "Ctrl+0 didn't go to the overview")
+})
+
 check("session dock: Allow once on a Bash permission", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.bash}`)
   const card = visible('[aria-label^="Permission request"]').first()
@@ -317,7 +338,7 @@ check("session dock: Allow once on a Bash permission", async () => {
 })
 
 check("session dock: Enter approves the focused card (keyboard)", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.bash}`)
   await visible('[aria-label^="Permission request"]').first().waitFor({ timeout: 5000 })
@@ -334,7 +355,7 @@ check("session dock: Enter approves the focused card (keyboard)", async () => {
 })
 
 check("deny with feedback", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   expect(ids.edit, "no second approvable permission in the fixture")
   await go(`#/session/${ids.edit}`)
@@ -359,7 +380,7 @@ check("deny with feedback", async () => {
 })
 
 check("answer AskUserQuestion", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   expect(ids.question, "no question request in the fixture")
   await go(`#/session/${ids.question}`)
@@ -382,7 +403,7 @@ check("answer AskUserQuestion", async () => {
 })
 
 check("approve a plan (permission mode changes)", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   expect(ids.plan, "no plan approval in the fixture")
   const before = await app((s, id) => s.sessions[id].permissionMode, ids.plan)
@@ -394,106 +415,79 @@ check("approve a plan (permission mode changes)", async () => {
   expect(mode, `mode stayed ${await app((s, id) => s.sessions[id].permissionMode, ids.plan)}`)
   expect((await visible('[aria-label="Plan approval"]').count()) === 0, "plan card still shown")
   expect(!(await awaitingTools(ids.plan)).includes("ExitPlanMode"), "plan row still awaiting approval")
-  const header = await visible('button[title="Model, effort, permissions"]').first().innerText()
-  expect(/accept edits/i.test(header), `header shows "${header}"`)
+  const picker = await visible('[data-session-view] button[aria-label^="Permissions:"]').first().innerText()
+  expect(/accept edits/i.test(picker), `mode picker shows "${picker}"`)
   return `${before} → acceptEdits`
 })
 
-check("archive from sidebar → Undo toast → Sessions › Archive → restore", async () => {
-  await load("#/map")
-  // a non-main session row in the sidebar tree (hover reveals its Archive button)
-  const row = visible('[role=treeitem]:has(button[aria-label="Archive session"])').first()
-  await row.waitFor({ timeout: 5000 })
-  const title = await row.locator("[title]").first().getAttribute("title")
-  const id = await app((s, t) => Object.values(s.sessions).find((x) => x.title === t && !x.archived)?.id, title)
-  expect(id, `no live session titled "${title}"`)
+check("archive from the session menu → Undo toast → Archive screen → restore", async () => {
+  await load("#/")
+  const ids = await discover()
+  const id = ids.order.find((x) => x !== ids.main && x !== ids.bash)
+  const title = await titleOf(id)
   const archive = async () => {
-    const r = visible(`[role=treeitem]:has([title="${title.replace(/"/g, '\\"')}"])`).first()
-    await r.hover()
-    await r.locator('button[aria-label="Archive session"]').click()
+    await go(`#/session/${id}`)
+    await visible('button[aria-label="More actions"]').first().click()
+    await page.getByRole("menuitem", { name: "Archive" }).click()
     expect(await until(() => app((s, id) => s.sessions[id].archived, id)), "session not archived")
   }
   await archive()
-  const toast = visible("[role=status]", { hasText: "Archived" }).filter({ hasText: "Archived" }).first()
+  expect((await hash()) === "#/", "archiving the open session didn't go back to the overview")
+  expect((await card(title).count()) === 0, "archived session still on the overview")
+  const toast = visible("[role=status]").filter({ hasText: "Archived" }).first()
   await toast.waitFor({ timeout: 2000 })
   expect((await toast.innerText()).includes(title), "Undo toast doesn't name the session")
   await toast.getByRole("button", { name: "Undo" }).click()
   expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "Undo didn't restore")
-  // archive again, find it in Sessions › Archive and restore it there
   await archive()
-  await go("#/sessions")
-  await visible("button", { hasText: /^Archive/ }).filter({ hasText: /^Archive/ }).first().click()
-  await wait(400)
-  const tableRow = visible('[data-qa="sessions-table"] .group\\/tr').filter({ hasText: title }).first()
-  await tableRow.waitFor({ timeout: 3000 })
-  await tableRow.hover()
-  await tableRow.getByRole("button", { name: /Restore/ }).click()
+  await visible('[data-slot=sidebar-footer] button').filter({ hasText: "Archive" }).first().click()
+  const li = visible("li").filter({ hasText: title }).first()
+  await li.waitFor({ timeout: 3000 })
+  await li.hover()
+  await li.getByRole("button", { name: /Restore/ }).click()
   expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "Restore didn't bring it back")
   return title
 })
 
-check("search: History finds 'Rate limiting for /v1/chat' and Resume opens it", async () => {
-  await load("#/sessions")
+check("search: Ctrl+K finds a past session; Resume brings it back to life", async () => {
+  await load("#/")
   const ids = await discover()
   expect(ids.history, "history session missing from the fixture")
-  await page.locator('[data-qa="sessions-search"]:visible').fill("Rate limiting for /v1/chat")
-  await wait(400)
-  const historyTab = visible("button", { hasText: /^History/ }).filter({ hasText: /^History/ }).first()
-  const count = (await historyTab.innerText()).replace(/\D+/g, "")
-  expect(Number(count) >= 1, `History tab shows no matches ("${await historyTab.innerText()}")`)
-  await historyTab.click()
-  await wait(400)
-  const row = visible('[data-qa="sessions-table"] .group\\/tr').filter({ hasText: "Rate limiting for /v1/chat" }).first()
-  await row.waitFor({ timeout: 3000 })
-  await row.hover()
-  await row.getByRole("button", { name: /Resume/ }).click()
-  await wait(500)
-  const hash = await page.evaluate(() => location.hash)
-  expect(hash === `#/session/${ids.history}`, `opened ${hash}`)
-  const control = await app((s, id) => s.sessions[id].control, ids.history)
-  expect(control === "owned", `control is ${control} after Resume`)
-  expect((await visible("button", { hasText: "Rate limiting for /v1/chat" }).count()) > 0, "session header doesn't show the title")
-})
-
-check("palette: Ctrl+K → 'Find withRetry in code graph' focuses the node", async () => {
-  await load("#/map")
-  await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {})
   await page.keyboard.press("Control+k")
-  const input = dialog().getByRole("combobox")
-  await input.waitFor({ timeout: 3000 })
-  expect(await input.evaluate((el) => el === document.activeElement), "palette input not focused")
-  await page.keyboard.type("withRetry")
-  const item = dialog().locator("[cmdk-item]", { hasText: "in code graph" }).first()
+  await dialog().getByRole("combobox").waitFor({ timeout: 3000 })
+  await page.keyboard.type("Rate limiting for /v1/chat")
+  const item = dialog().locator("[cmdk-item]", { hasText: "Rate limiting for /v1/chat" }).first()
   await item.waitFor({ timeout: 3000 })
-  expect((await item.innerText()).includes("withRetry"), "code graph item doesn't name the query")
   await item.click()
-  await page.waitForFunction(() => location.hash.startsWith("#/graph/"), null, { timeout: 5000 })
-  const search = visible('input[placeholder="Find symbol or file…"]').first()
-  await search.waitFor({ timeout: 8000 })
-  expect((await search.inputValue()) === "withRetry", `graph search holds "${await search.inputValue()}"`)
-  // the graph loads and lays out asynchronously: open the first result once it is listed
-  const result = await until(async () => (await page.locator("button", { hasText: "withRetry" }).filter({ has: page.locator("span.rounded-full") }).count()) > 0, 10000, 250)
-  expect(result, "no withRetry result in the graph search")
-  await search.focus()
-  await page.keyboard.press("Enter")
-  const framed = await until(async () => (await visible('button[aria-label="Frame in view"]').count()) > 0, 8000, 250)
-  expect(framed, "node inspector didn't open")
-  const panel = await visible('button[aria-label="Frame in view"]').first().locator("xpath=ancestor::*[contains(@class,'flex-col')][1]").innerText()
-  expect(panel.includes("withRetry"), "node panel doesn't show withRetry")
+  expect((await hash()) === `#/session/${ids.history}`, `opened ${await hash()}`)
+  await visible("[data-session-view]").getByRole("button", { name: "Resume", exact: true }).first().click()
+  const control = await until(() => app((s, id) => (s.sessions[id].control === "owned" ? "owned" : null), ids.history))
+  expect(control === "owned", "Resume didn't take over the session")
+  expect((await row("Rate limiting for /v1/chat").count()) === 1, "resumed session not in the list")
 })
 
-check("new session dialog: creates a session and opens it with only the first prompt", async () => {
-  await load("#/map")
-  await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {})
+check("palette: empty Ctrl+K ⏎ opens the session that needs you most", async () => {
+  await load("#/")
+  const ids = await discover()
+  await page.keyboard.press("Control+k")
+  await dialog().getByRole("combobox").waitFor({ timeout: 3000 })
+  await wait(200)
+  await page.keyboard.press("Enter")
+  await wait(300)
+  expect((await hash()) === `#/session/${ids.needs[0]}`, `opened ${await hash()}, expected ${ids.needs[0]}`)
+})
+
+check("new session screen: Ctrl+N, type, Enter starts the session with only the first prompt", async () => {
+  await load("#/")
   await page.keyboard.press("Control+n")
-  const d = dialog()
-  await d.waitFor({ timeout: 3000 })
+  const screen = visible("[data-new-session]").first()
+  await screen.waitFor({ timeout: 3000 })
+  const box = screen.getByRole("textbox", { name: "Message Claude" })
+  expect(await box.evaluate((el) => el === document.activeElement), "prompt box not focused")
   const prompt = "Add a dark mode toggle to the settings page"
-  const field = d.getByRole("textbox", { name: "Prompt" })
-  await field.fill(prompt)
-  await d.getByRole("button", { name: /^Start/ }).click()
+  await box.fill(prompt)
+  await page.keyboard.press("Enter")
   await page.waitForFunction(() => location.hash.startsWith("#/session/"), null, { timeout: 4000 })
-  expect((await page.locator("[role=dialog]:visible").count()) === 0, "dialog stayed open")
   const id = (await page.evaluate(() => location.hash)).split("/")[2]
   await wait(400)
   const t = await app((s, id) => {
@@ -501,37 +495,129 @@ check("new session dialog: creates a session and opens it with only the first pr
     const items = tr?.order.map((k) => tr.items[k]) ?? []
     return {
       first: s.sessions[id]?.firstPrompt,
+      worktree: s.sessions[id]?.cwd.includes(".claude/worktrees/"),
       items: items.map((it) => (it.type === "agent_message" && it.id === tr.liveItemId ? "live_reply" : it.type)),
       userText: items.find((it) => it.type === "user_message")?.text,
     }
   }, id)
   expect(t.first === prompt, `firstPrompt is "${t.first}"`)
-  // no generated history: the first prompt, then at most the live reply that is starting to stream
+  expect(t.worktree, "default should start in its own worktree")
   const extra = t.items.slice(1).filter((x) => x !== "live_reply")
   expect(t.items[0] === "user_message" && t.userText === prompt && !extra.length, `transcript holds ${JSON.stringify(t.items)}`)
   expect((await transcriptText()).includes(prompt), "prompt not shown in the transcript")
 })
 
-check("preview tab is reused when opening two sessions", async () => {
-  await load("#/map")
-  const pick = await app((s) =>
-    Object.values(s.sessions)
-      .filter((x) => !x.archived && x.control !== "history" && x.role !== "main")
-      .slice(0, 2)
-      .map((x) => x.id),
-  )
-  for (const id of pick) {
-    await action("openSession", id)
-    await wait(500)
-  }
-  const tabs = await app((s) => s.tabs.filter((t) => !t.pinned).map((t) => ({ key: t.key, preview: !!t.preview })))
-  expect(tabs.length === 1, `${tabs.length} session tabs open: ${JSON.stringify(tabs)}`)
-  expect(tabs[0].key === `/session/${pick[1]}` && tabs[0].preview, `tab is ${JSON.stringify(tabs[0])}`)
-  expect((await visible("[role=tab] .italic").count()) === 1, "preview tab not drawn as preview")
+check("new session screen: Open folder adds a folder that isn't a project yet and starts there", async () => {
+  await load("#/new")
+  const before = await app((s) => s.repoOrder.length)
+  await visible('[data-new-session] button[aria-label^="Folder:"]').first().click()
+  await page.keyboard.type("~/code/scratch")
+  await page.locator("[cmdk-item]:visible", { hasText: "~/code/scratch" }).first().click()
+  const repo = await until(() => app((s) => s.repoOrder.map((id) => s.repos[id]).find((r) => r.name === "scratch")?.id))
+  expect(repo, "~/code/scratch was not added as a project")
+  expect((await app((s) => s.repoOrder.length)) === before + 1, "project count did not grow by one")
+  expect((await visible("[data-new-session] h1").first().innerText()).includes("scratch"), "heading doesn't name the new folder")
+  await visible("[data-new-session]").getByRole("textbox", { name: "Message Claude" }).fill("Try the streaming API")
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => location.hash.startsWith("#/session/"), null, { timeout: 4000 })
+  const id = (await hash()).split("/")[2]
+  expect((await app((s, id) => s.sessions[id].repoId, id)) === repo, "session not in the new project")
+  expect((await visible('nav[aria-label="Sessions"] [data-slot=sidebar-group][aria-label="scratch"]').count()) === 1, "new project group missing from the list")
+})
+
+check("keys work while typing: Ctrl+J and Ctrl+Shift+M from a focused prompt box", async () => {
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.main}`)
+  const box = visible("[data-session-view]").getByRole("textbox", { name: "Message Claude" }).first()
+  await box.click()
+  await page.keyboard.type("draft")
+  await page.keyboard.press("Control+Shift+m")
+  // the settings menus are searchable lists (Popover + cmdk), like Zed's agent bar
+  const menu = visible("[data-slot=popover-content] [cmdk-root]").first()
+  await menu.waitFor({ timeout: 1500 })
+  expect((await menu.innerText()).includes("Accept edits"), "mode menu didn't open")
+  await page.keyboard.press("2")
+  const mode = await until(() => app((s, id) => (s.sessions[id].permissionMode === "acceptEdits" ? "acceptEdits" : null), ids.main), 1500)
+  expect(mode === "acceptEdits", "digit 2 didn't pick Accept edits")
+  await box.click()
+  await page.keyboard.press("Control+j")
+  await wait(300)
+  expect((await hash()) === `#/session/${ids.needs[0]}`, `Ctrl+J from the prompt box went to ${await hash()}`)
+})
+
+check("a session started in a terminal shows up by itself, in a new project if needed", async () => {
+  await load("#/")
+  const before = await app((s) => ({ repos: s.repoOrder.length, live: Object.values(s.sessions).filter((x) => !x.archived && x.control !== "history").length }))
+  await action("addDiscoveredSession", "~/code/blog", "Draft the release notes")
+  await wait(400)
+  const after = await app((s) => {
+    const x = Object.values(s.sessions).find((y) => y.title === "Draft the release notes")
+    return { repos: s.repoOrder.length, control: x?.control, repo: x ? s.repos[x.repoId]?.name : null }
+  })
+  expect(after.repos === before.repos + 1 && after.repo === "blog", `project not added (${JSON.stringify(after)})`)
+  expect(after.control === "observed", `control is ${after.control}`)
+  expect((await page.locator(".ov-col", { hasText: "blog" }).count()) === 1, "new project column missing on the overview")
+  expect((await card("Draft the release notes").count()) === 1, "session card missing on the overview")
+})
+
+check("rewind to here: hovering a message offers it and preselects that prompt", async () => {
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.bash}`)
+  await wait(700)
+  const first = await app((s, id) => {
+    const t = s.transcripts[id]
+    const u = t.order.map((k) => t.items[k]).find((it) => it.type === "user_message")
+    return u?.text
+  }, ids.bash)
+  const msg = visible("[data-session-view] .group\\/user").filter({ hasText: first.slice(0, 30) }).first()
+  await msg.scrollIntoViewIfNeeded()
+  await msg.hover()
+  await msg.getByRole("button", { name: "Rewind to here" }).click()
+  const d = page.getByRole("dialog", { name: "Rewind" })
+  await d.waitFor({ timeout: 2000 })
+  const selected = await d.locator("[role=option][aria-selected=true]").innerText()
+  expect(selected.includes(first.slice(0, 20)), `preselected "${selected.slice(0, 40)}"`)
+  await page.keyboard.press("Escape")
+})
+
+check("switching: Ctrl+Tab goes back, holding Ctrl walks the recent list, Ctrl+1–9 and Alt+↓ jump", async () => {
+  await load("#/")
+  const ids = await discover()
+  const [a, b, c] = ids.order.slice(1, 4)
+  for (const id of [a, b, c]) await go(`#/session/${id}`)
+  // quick Ctrl+Tab: back to the previous one, and again: forth
+  await page.keyboard.press("Control+Tab")
+  await wait(250)
+  expect((await hash()) === `#/session/${b}`, `Ctrl+Tab went to ${await hash()}, expected ${b}`)
+  await page.keyboard.press("Control+Tab")
+  await wait(250)
+  expect((await hash()) === `#/session/${c}`, `second Ctrl+Tab went to ${await hash()}, expected ${c}`)
+  // hold Ctrl, Tab twice: the list shows, and releasing opens the second most recent
+  await page.keyboard.down("Control")
+  await page.keyboard.press("Tab")
+  await page.keyboard.press("Tab")
+  await visible('[role=listbox][aria-label="Recent sessions"]').first().waitFor({ timeout: 1500 })
+  await page.keyboard.up("Control")
+  await wait(250)
+  expect((await hash()) === `#/session/${a}`, `held Ctrl+Tab Tab went to ${await hash()}, expected ${a}`)
+  // Ctrl+3: third session in list order
+  await page.keyboard.press("Control+3")
+  await wait(250)
+  expect((await hash()) === `#/session/${ids.order[2]}`, `Ctrl+3 went to ${await hash()}`)
+  await page.keyboard.press("Alt+ArrowDown")
+  await wait(250)
+  expect((await hash()) === `#/session/${ids.order[3]}`, `Alt+↓ went to ${await hash()}`)
+  // switching back is instant: the view was kept mounted
+  const t0 = Date.now()
+  await page.keyboard.press("Control+Tab")
+  await page.locator(`[data-session-view="${ids.order[2]}"]:visible`).waitFor({ timeout: 2000 })
+  return `back in ${Date.now() - t0} ms`
 })
 
 check("rewind: menu → pick a prompt → transcript truncated, prompt back in composer, Undo restores", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   expect(ids.bash, "no session to rewind")
   await go(`#/session/${ids.bash}`)
@@ -563,7 +649,7 @@ check("rewind: menu → pick a prompt → transcript truncated, prompt back in c
 })
 
 check("composer: attachments become chips on the message; a queued message is sent when the turn ends", async () => {
-  await load("#/map")
+  await load("#/")
   const sid = await app((s) => Object.values(s.sessions).find((x) => !x.archived && x.control === "owned" && x.status === "done_unseen")?.id)
   expect(sid, "no finished owned session")
   await go(`#/session/${sid}`)
@@ -590,7 +676,7 @@ check("composer: attachments become chips on the message; a queued message is se
 })
 
 check("? opens the keyboard shortcuts overlay (Esc closes it)", async () => {
-  await load("#/map")
+  await load("#/")
   await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {})
   await page.keyboard.press("Shift+Slash")
   const d = page.getByRole("dialog", { name: "Keyboard shortcuts" })
@@ -599,32 +685,9 @@ check("? opens the keyboard shortcuts overlay (Esc closes it)", async () => {
   await d.waitFor({ state: "hidden", timeout: 2000 })
 })
 
-check("Esc closes the inspector", async () => {
-  await load("#/map")
-  const ids = await discover()
-  await node(ids.bash).click({ position: { x: 30, y: 12 } })
-  expect(await until(() => app((s) => s.panels.inspector)), "selecting a card didn't open the inspector")
-  await visible('button[aria-label="Close inspector"]').first().waitFor({ timeout: 2000 })
-  await page.keyboard.press("Escape")
-  expect(await until(() => app((s) => !s.panels.inspector)), "inspector still open after Esc")
-})
-
-check("stress fixture boots and the map renders", async () => {
-  const t0 = Date.now()
-  await load("#/map", `${QUERY}&fixture=stress`)
-  await page.waitForSelector(".react-flow__node", { timeout: 20000 })
-  const nodes = await page.locator(".react-flow__node").count()
-  const n = await app((s) => Object.keys(s.sessions).length)
-  expect(n > 2000, `stress fixture has only ${n} sessions`)
-  expect(nodes > 0, "map rendered no nodes")
-  const errs = problems.filter((p) => p.check === current)
-  expect(!errs.length, `console errors: ${errs.map((e) => e.text).join(" | ")}`)
-  return `${n} sessions, ${nodes} nodes, ${Date.now() - t0} ms`
-})
-
 // ---------------- accessibility (session view, cards, composer, dialogs, toasts) ----------------
 check("a11y: session view controls are named and the dock is a live region", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.bash}`)
   await visible('[aria-label^="Permission request"]').first().waitFor({ timeout: 5000 })
@@ -643,7 +706,7 @@ check("a11y: session view controls are named and the dock is a live region", asy
 })
 
 check("a11y: keyboard reaches every dock option with a visible focus ring", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.bash}`)
   const card = visible('[aria-label^="Permission request"]').first()
@@ -660,7 +723,7 @@ check("a11y: keyboard reaches every dock option with a visible focus ring", asyn
 })
 
 check("a11y: composer Tab/Shift+Tab move focus (no trap)", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.edit}`)
   const ta = page.getByRole("textbox", { name: "Message Claude" })
@@ -685,7 +748,7 @@ check("a11y: composer Tab/Shift+Tab move focus (no trap)", async () => {
 })
 
 check("a11y: composer / menu is a listbox wired to the textarea; Esc closes it", async () => {
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.edit}`)
   const ta = page.getByRole("textbox", { name: "Message Claude" })
@@ -711,10 +774,11 @@ check("a11y: composer / menu is a listbox wired to the textarea; Esc closes it",
 })
 
 check("a11y: Undo toast is a status message with named buttons", async () => {
-  await load("#/map")
-  const row = visible('[role=treeitem]:has(button[aria-label="Archive session"])').first()
-  await row.hover()
-  await row.locator('button[aria-label="Archive session"]').click()
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.order[1]}`)
+  await visible('button[aria-label="More actions"]').first().click()
+  await page.getByRole("menuitem", { name: "Archive" }).click()
   const toast = visible("[role=status]").filter({ hasText: "Archived" }).first()
   await toast.waitFor({ timeout: 2000 })
   const region = await page.evaluate(() => {
@@ -727,18 +791,13 @@ check("a11y: Undo toast is a status message with named buttons", async () => {
   expect(!bad.length, `unnamed toast controls:\n    ${bad.join("\n    ")}`)
 })
 
-check("a11y: dialogs (new session, palette) label their fields; Esc closes", async () => {
-  await load("#/map")
-  await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {})
-  await page.keyboard.press("Control+n")
-  const d = dialog()
-  await d.waitFor({ timeout: 3000 })
-  await d.getByRole("button", { name: "Options" }).click()
+check("a11y: new session screen and palette label their controls; Esc closes the palette", async () => {
+  await load("#/new")
+  await visible("[data-new-session]").first().waitFor({ timeout: 3000 })
+  await visible("[data-new-session] button").filter({ hasText: "More options" }).first().click()
   await wait(200)
-  let bad = await unnamedControls("[role=dialog]")
-  expect(!bad.length, `new session dialog:\n    ${bad.join("\n    ")}`)
-  await page.keyboard.press("Escape")
-  await page.locator("[role=dialog]").first().waitFor({ state: "hidden", timeout: 2000 })
+  let bad = await unnamedControls("[data-new-session]")
+  expect(!bad.length, `new session screen:\n    ${bad.join("\n    ")}`)
   await page.keyboard.press("Control+k")
   await dialog().waitFor({ timeout: 3000 })
   bad = await unnamedControls("[role=dialog]")
@@ -747,15 +806,15 @@ check("a11y: dialogs (new session, palette) label their fields; Esc closes", asy
   await page.locator("[role=dialog]").first().waitFor({ state: "hidden", timeout: 2000 })
 })
 
-check("a11y: Escape closes the session settings menu and returns focus", async () => {
-  await load("#/map")
+check("a11y: Escape closes the mode menu and returns focus", async () => {
+  await load("#/")
   const ids = await discover()
   await go(`#/session/${ids.edit}`)
-  const trigger = visible('button[title="Model, effort, permissions"]').first()
+  const trigger = visible('[data-session-view] button[aria-label^="Permissions:"]').first()
   await trigger.click()
-  await visible("[role=menu]").first().waitFor({ timeout: 2000 })
+  await visible("[data-slot=popover-content] [cmdk-root]").first().waitFor({ timeout: 2000 })
   await page.keyboard.press("Escape")
-  await page.locator("[role=menu]").first().waitFor({ state: "hidden", timeout: 2000 })
+  await page.locator("[data-slot=popover-content] [cmdk-root]").first().waitFor({ state: "hidden", timeout: 2000 })
   expect(await trigger.evaluate((el) => el === document.activeElement), "focus didn't return to the menu trigger")
 })
 
@@ -767,15 +826,14 @@ check("no uncaught page errors during the run", async () => {
 // ---------------------------------------------------------------- a11y report (optional)
 async function a11yReport() {
   console.log("\n--- a11y report (all areas) ---")
-  await load("#/map")
+  await load("#/")
   const ids = await discover()
   const screens = [
-    ["map + sidebar + shell", "#/map"],
-    ["sessions", "#/sessions"],
-    ["session (permission)", `#/session/${ids.bash}`],
+    ["overview + top bar", "#/"],
+    ["session (permission) + list", `#/session/${ids.bash}`],
     ["session (question)", `#/session/${ids.question}`],
     ["review", `#/review/${ids.edit}`],
-    ["repo", "#/repo/repo_api-gateway"],
+    ["archive", "#/archive"],
     ["settings", "#/settings"],
   ]
   for (const [label, hash] of screens) {
@@ -818,11 +876,6 @@ page.on("console", (m) => {
   else if (m.type() === "warning") notes.push({ check: current, text: m.text().slice(0, 300) })
 })
 page.on("pageerror", (e) => problems.push({ check: current, type: "pageerror", text: e.message.slice(0, 300) }))
-// a pop-out window opened by the app is closed right away
-context.on("page", (p) => {
-  if (p !== page) void p.close().catch(() => {})
-})
-
 try {
   await page.goto(BASE, { timeout: 10000 })
 } catch {

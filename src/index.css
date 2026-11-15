@@ -1,77 +1,29 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
-@import "./styles/tokens.css";
 
 @source "../node_modules/streamdown/dist";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Design system: Radix Colors slateDark + status scales (MIT), mapped onto
- * shadcn's semantic variables so every copied component inherits the same
- * tokens. See UI_PLAN.md §2. Dark only in Phase 1.
+ * Stock create-tauri-ui / shadcn "nova" theme (neutral, Inter, 0.625rem radius), MIT.
+ * The only additions: status colours (what needs you, what is working) and the code font.
  */
 @theme inline {
-  --font-sans: var(--font-ui);
-  --font-heading: var(--font-ui);
-  --font-mono: var(--font-code);
-
-  /* Dense type scale (UI_PLAN §2.4): 13px UI, 12px meta, 11px micro. */
-  --text-3xs: 0.625rem;
-  --text-3xs--line-height: 0.75rem;
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 0.875rem;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.125rem;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.25rem;
-  --text-lg: 1rem;
-  --text-lg--line-height: 1.5rem;
-
-  /* Surfaces, borders, text (slateDark steps) */
-  --color-canvas: var(--bg-canvas);
-  --color-chrome: var(--bg-chrome);
-  --color-elevated: var(--bg-elevated);
-  --color-hover: var(--bg-hover);
-  --color-selected: var(--bg-selected);
-  --color-line-subtle: var(--border-subtle);
-  --color-line: var(--border-default);
-  --color-line-strong: var(--border-strong);
-  --color-fg: var(--fg);
-  --color-fg-muted: var(--fg-muted);
-  --color-fg-faint: var(--fg-faint);
-  --color-link: var(--link);
-  --color-brand: var(--brand);
-
-  /* Status: dot (9) / text (11) / tint (3) */
-  --color-st-working: var(--st-working);
-  --color-st-working-fg: var(--st-working-fg);
-  --color-st-working-tint: var(--st-working-tint);
-  --color-st-input: var(--st-input);
-  --color-st-input-fg: var(--st-input-fg);
-  --color-st-input-tint: var(--st-input-tint);
-  --color-st-perm: var(--st-perm);
-  --color-st-perm-fg: var(--st-perm-fg);
-  --color-st-perm-tint: var(--st-perm-tint);
-  --color-st-error: var(--st-error);
-  --color-st-error-fg: var(--st-error-fg);
-  --color-st-error-tint: var(--st-error-tint);
-  --color-st-done: var(--st-done);
-  --color-st-done-fg: var(--st-done-fg);
-  --color-st-done-tint: var(--st-done-tint);
-  --color-st-idle: var(--st-idle);
-  --color-st-idle-fg: var(--st-idle-fg);
-  --color-diff-add: var(--diff-add);
-  --color-diff-del: var(--diff-del);
-  --color-diff-add-tint: var(--diff-add-tint);
-  --color-diff-del-tint: var(--diff-del-tint);
-
-  /* shadcn semantic colors */
+  --font-heading: var(--font-sans);
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -90,135 +42,179 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --color-sidebar: var(--bg-chrome);
-  --color-sidebar-foreground: var(--fg);
-  --color-sidebar-border: var(--border-subtle);
-  --color-sidebar-accent: var(--bg-hover);
-  --color-sidebar-accent-foreground: var(--fg);
-  --color-sidebar-primary: var(--brand);
-  --color-sidebar-primary-foreground: #fff;
-  --color-sidebar-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Small radii (UI_PLAN §2.1): 4px controls, 6px popovers. */
-  --radius-xs: 2px;
-  --radius-sm: 3px;
-  --radius-md: 4px;
-  --radius-lg: 4px;
-  --radius-xl: 6px;
-  --radius-2xl: 8px;
-  --radius-3xl: 8px;
-  --radius-4xl: 8px;
-
-  --animate-spin-slow: spin 1.4s linear infinite;
-  --animate-flash: status-flash 600ms ease-out 1;
-}
-
-@keyframes status-flash {
-  from {
-    background-color: var(--flash-color, var(--bg-hover));
-  }
-  to {
-    background-color: transparent;
-  }
+  /* status: dot / text / tint. Colour on screen means "needs you" (or blue: working). */
+  --color-st-working: var(--st-working);
+  --color-st-working-fg: var(--st-working-fg);
+  --color-st-working-tint: var(--st-working-tint);
+  --color-st-input: var(--st-input);
+  --color-st-input-fg: var(--st-input-fg);
+  --color-st-input-tint: var(--st-input-tint);
+  --color-st-perm: var(--st-perm);
+  --color-st-perm-fg: var(--st-perm-fg);
+  --color-st-perm-tint: var(--st-perm-tint);
+  --color-st-error: var(--st-error);
+  --color-st-error-fg: var(--st-error-fg);
+  --color-st-error-tint: var(--st-error-tint);
+  --color-st-done: var(--st-done);
+  --color-st-done-fg: var(--st-done-fg);
+  --color-st-done-tint: var(--st-done-tint);
+  --color-st-idle: var(--st-idle);
+  --color-diff-add: var(--diff-add);
+  --color-diff-del: var(--diff-del);
+  --color-diff-add-tint: var(--diff-add-tint);
+  --color-diff-del-tint: var(--diff-del-tint);
+  --color-link: var(--link);
+  /* Claude Code's own spinner colour, only on a working session's live line */
+  --color-spark: #d97757;
 }
 
 :root {
-  --background: var(--bg-canvas);
-  --foreground: var(--fg);
-  --card: var(--bg-elevated);
-  --card-foreground: var(--fg);
-  --popover: var(--bg-elevated);
-  --popover-foreground: var(--fg);
-  --primary: var(--brand);
-  --primary-foreground: #ffffff;
-  --secondary: var(--bg-elevated);
-  --secondary-foreground: var(--fg);
-  --muted: var(--bg-hover);
-  --muted-foreground: var(--fg-muted);
-  --accent: var(--bg-hover);
-  --accent-foreground: var(--fg);
-  --destructive: var(--st-error);
-  --border: var(--border-subtle);
-  --input: var(--border-default);
-  --ring: var(--brand);
-  --radius: 4px;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  /* status (Radix Colors dark scales, MIT © WorkOS): dot 9 / text 11 / tint 3 */
+  --st-working: #0090ff;
+  --st-working-fg: #70b8ff;
+  --st-working-tint: #0d2847;
+  --st-input: #ffc53d;
+  --st-input-fg: #ffca16;
+  --st-input-tint: #302008;
+  --st-perm: #f76b15;
+  --st-perm-fg: #ffa057;
+  --st-perm-tint: #331e0b;
+  --st-error: #e5484d;
+  --st-error-fg: #ff9592;
+  --st-error-tint: #3b1219;
+  --st-done: #30a46c;
+  --st-done-fg: #3dd68c;
+  --st-done-tint: #132d21;
+  --st-idle: oklch(0.556 0 0);
+  /* diff gutters: VS Code Dark Modern, MIT © Microsoft */
+  --diff-add: #2ea043;
+  --diff-del: #f85149;
+  --diff-add-tint: #12261a;
+  --diff-del-tint: #2d1517;
+  --link: #70b8ff;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/60;
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
   }
   html {
     @apply font-sans;
-    color-scheme: dark;
-    font-size: 16px;
-  }
-  body {
-    @apply bg-canvas text-fg;
-    font-size: var(--text-ui);
-    line-height: 1.4;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-    font-feature-settings: "cv05" 1;
-  }
-  code,
-  kbd,
-  pre,
-  samp {
-    font-family: var(--font-code);
   }
   ::selection {
-    background: color-mix(in srgb, var(--brand) 35%, transparent);
+    background: color-mix(in oklab, var(--foreground) 22%, transparent);
   }
 }
 
-/* Thin IDE scrollbars (WebKitGTK and Chromium both honor these). */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-default) transparent;
-}
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--border-default) 70%, transparent);
-  border: 2px solid transparent;
-  background-clip: content-box;
-  border-radius: 6px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--border-strong);
-}
-::-webkit-scrollbar-corner {
-  background: transparent;
+/* Keep native WebView controls, including scrollbars, in sync with the app theme. */
+html {
+  color-scheme: light;
 }
 
-/* Desktop shell defaults from create-tauri-ui. */
+html.dark {
+  color-scheme: dark;
+}
+
+/* Disable page-level overscroll and rubber-band scrolling so the UI feels more desktop-native. */
 html,
 body {
   height: 100%;
 }
+
 body {
   overflow: hidden;
 }
+
+/* Scope the desktop scroll shell to the generated root container only. The app scrolls inside its
+   panes, so the shell itself does not. */
 [data-ui-scroll-container] {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
 }
+
+/* Vite mounts into #root, so it needs to inherit the full-height desktop shell. */
 #root {
   height: 100%;
 }
 
 @layer base {
+  /* Desktop UIs often feel cleaner with accidental text selection disabled by default. */
   body {
     @apply select-none;
   }
+
+  /* Keep editing and code surfaces selectable so inputs and diagnostics still work normally. */
   input,
   textarea,
   [contenteditable="true"],
@@ -228,26 +224,38 @@ body {
   }
 }
 
-@utility ui-selectable {
-  user-select: text;
+@layer utilities {
+  /* Opt back into selection for any generated UI surface that should behave like regular text. */
+  .ui-selectable {
+    @apply select-text;
+  }
 }
+
+/* thin scrollbars that show only while the pointer is over the area that scrolls (a bar at rest
+   read as a stray line at the window's edge); WebKitGTK and Chromium both honour these */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: var(--input);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
 @utility tabular {
   font-variant-numeric: tabular-nums;
-}
-@utility contain-strict {
-  contain: strict;
-}
-@utility contain-content {
-  contain: content;
-}
-/* VS Code style section header: 11px, semibold, muted, uppercase. */
-@utility section-label {
-  font-size: var(--text-micro);
-  line-height: 14px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--fg-faint);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -258,4 +266,20 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* the chat column: one width for the transcript, the prompt box and the bars above it */
+:root {
+  --chat-w: min(1080px, 100%);
+}
+
+/* the working glyph turns in 12 steps a second, not 60 frames: the same look at a fraction of the
+   repaints (WebKitGTK repaints every spinning glyph on every frame) */
+@keyframes sd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@utility animate-spin-steps {
+  animation: sd-spin 1s steps(12) infinite;
 }

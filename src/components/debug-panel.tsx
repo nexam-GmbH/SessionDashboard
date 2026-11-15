@@ -1506,7 +1506,7 @@ export function DebugPanel() {
           <TabsTrigger value="runtime" className="h-9 rounded-none border-r border-border/20 px-2 text-[12px] font-medium">
             Runtime
             {runtimeCount ? (
-              <Badge variant="secondary" className="ml-1 h-4 min-w-4 rounded-sm px-1 text-[10px]">
+              <Badge variant="outline" className="ml-1 h-4 min-w-4 rounded-sm px-1 text-[10px]">
                 {runtimeCount}
               </Badge>
             ) : null}

@@ -1,0 +1,257 @@
+//! Claude Code backend (Phase 2): discovery, transcripts, owned sessions. The UI calls these
+//! commands and listens to `claude-event` (see src/backend/real.ts).
+
+pub mod control;
+pub mod discover;
+pub mod git;
+pub mod hooks;
+pub mod remote;
+pub mod transcript;
+
+use serde_json::Value;
+use tauri::{AppHandle, State};
+
+use control::{Procs, StartOpts};
+use tauri::Manager;
+
+/// Run slow work (ssh, the cloud helper, big files, git) off the async workers, so a slow VPS
+/// never holds up the quick calls (a permission answer, a send).
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+use discover::{ScanCache, SessionMeta};
+use transcript::TranscriptChunk;
+
+#[tauri::command]
+pub async fn claude_live() -> Result<Value, String> {
+    blocking(discover::live_sessions).await
+}
+
+#[tauri::command]
+pub async fn claude_pids() -> Result<Vec<Value>, String> {
+    Ok(discover::pid_sessions())
+}
+
+#[tauri::command]
+pub async fn claude_scan(app: AppHandle) -> Result<Vec<SessionMeta>, String> {
+    blocking(move || Ok(discover::scan(&app.state::<ScanCache>()))).await
+}
+
+#[tauri::command]
+pub async fn claude_transcript(path: String, max: Option<usize>) -> Result<TranscriptChunk, String> {
+    blocking(move || transcript::read_window(&path, max.unwrap_or(3000))).await
+}
+
+#[tauri::command]
+pub async fn claude_transcript_since(path: String, offset: u64, tip: Option<String>) -> Result<TranscriptChunk, String> {
+    blocking(move || transcript::read_since(&path, offset, tip)).await
+}
+
+#[tauri::command]
+pub async fn claude_start(app: AppHandle, procs: State<'_, Procs>, opts: StartOpts) -> Result<(), String> {
+    control::start(app, procs.inner().clone(), opts)
+}
+
+#[tauri::command]
+pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String) -> Result<(), String> {
+    control::send(&procs, &key, &text)
+}
+
+#[tauri::command]
+pub async fn claude_respond(procs: State<'_, Procs>, key: String, request_id: String, response: Value) -> Result<(), String> {
+    control::respond(&procs, &key, &request_id, response)
+}
+
+#[tauri::command]
+pub async fn claude_control(procs: State<'_, Procs>, key: String, request: Value, request_id: Option<String>) -> Result<(), String> {
+    control::control(&procs, &key, request, request_id)
+}
+
+#[tauri::command]
+pub async fn claude_capabilities() -> Result<Value, String> {
+    blocking(discover::capabilities).await
+}
+
+/// Stop a session's claude in its terminal (here or on a VPS) so the app can resume it.
+#[tauri::command]
+pub async fn claude_takeover(pid: u32, host: Option<String>) -> Result<(), String> {
+    blocking(move || match host {
+        Some(h) => remote::takeover(&h, pid),
+        None => control::takeover(pid),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn claude_stop(procs: State<'_, Procs>, key: String) -> Result<(), String> {
+    control::stop(&procs, &key)
+}
+
+#[tauri::command]
+pub async fn claude_running(procs: State<'_, Procs>) -> Result<Vec<String>, String> {
+    Ok(control::running(&procs))
+}
+
+#[tauri::command]
+pub async fn claude_info(hook_port: State<'_, HookPort>) -> Result<Value, String> {
+    Ok(serde_json::json!({
+        "dir": discover::claude_dir().to_string_lossy(),
+        "bin": discover::claude_bin(),
+        "home": std::env::var("HOME").unwrap_or_default(),
+        "hostname": hooks::local_hostname(),
+        "hookPort": hook_port.0,
+    }))
+}
+
+/// The port the hook endpoint listens on (0 when none could be opened).
+pub struct HookPort(pub u16);
+
+// ---------- preferences that both builds share (~/.config/session-dashboard/<name>.json) ----------
+
+fn prefs_path(name: &str) -> Result<std::path::PathBuf, String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("bad name".into());
+    }
+    let base = std::env::var("XDG_CONFIG_HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config"));
+    Ok(base.join("session-dashboard").join(format!("{name}.json")))
+}
+
+#[tauri::command]
+pub async fn prefs_read(name: String) -> Result<Option<Value>, String> {
+    let p = prefs_path(&name)?;
+    match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).map(Some).map_err(|e| format!("{}: {e}", p.display())),
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn prefs_write(name: String, value: Value) -> Result<(), String> {
+    let p = prefs_path(&name)?;
+    std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&value).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn claude_verbs() -> Result<Value, String> {
+    blocking(|| Ok(discover::spinner_verbs())).await
+}
+
+// ---------- cloud sessions ----------
+
+#[tauri::command]
+pub async fn cloud_list(app: AppHandle) -> Result<Value, String> {
+    blocking(move || discover::cloud_list(&app.state::<discover::HostHelper>())).await
+}
+
+#[tauri::command]
+pub async fn cloud_transcript(app: AppHandle, session_id: String, cursor: Option<String>) -> Result<Value, String> {
+    blocking(move || discover::cloud_transcript(&app.state::<discover::HostHelper>(), &session_id, cursor)).await
+}
+
+#[tauri::command]
+pub async fn cloud_send(session_id: String, text: String) -> Result<Value, String> {
+    blocking(move || discover::cloud_send(&session_id, &text)).await
+}
+
+// ---------- git ----------
+
+#[tauri::command]
+pub async fn git_state(paths: Vec<String>, host: Option<String>, quick: Option<bool>) -> Result<Vec<git::GitState>, String> {
+    let quick = quick.unwrap_or(false);
+    blocking(move || {
+        Ok(match host {
+            Some(h) => git::remote(&h, &paths, quick),
+            // 8 folders at a time: one slow repo does not hold up the rest
+            None => {
+                let n = paths.len().div_ceil(8).max(1);
+                std::thread::scope(|s| {
+                    let parts: Vec<_> = paths.chunks(n).map(|c| (c, s.spawn(move || c.iter().map(|p| git::local(p, quick)).collect::<Vec<_>>()))).collect();
+                    // one result per folder, in order, even if a reader failed
+                    parts
+                        .into_iter()
+                        .flat_map(|(c, h)| h.join().unwrap_or_else(|_| c.iter().map(|p| git::GitState { path: p.clone(), error: Some("git read failed".into()), ..Default::default() }).collect()))
+                        .collect()
+                })
+            }
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pr_status(cwd: String) -> Result<Value, String> {
+    blocking(move || Ok(git::pr_status(&cwd))).await
+}
+
+#[tauri::command]
+pub async fn workspace_repos(roots: Vec<String>) -> Result<Vec<String>, String> {
+    blocking(move || Ok(roots.iter().flat_map(|r| git::find_repos(r)).collect())).await
+}
+
+// ---------- hooks ----------
+
+#[tauri::command]
+pub async fn hooks_status(host: Option<String>) -> Result<Value, String> {
+    blocking(move || {
+        Ok(match host {
+            Some(h) => hooks::status_remote(&h),
+            None => hooks::status_local(),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn hooks_set(hook_port: State<'_, HookPort>, install: bool, host: Option<String>) -> Result<Value, String> {
+    let port = hook_port.0;
+    blocking(move || match host {
+        Some(h) => hooks::set_remote(&h, install),
+        None => hooks::set_local(install, port),
+    })
+    .await
+}
+
+/// Answer a permission prompt the hook offered (a session in a terminal): `decision` is
+/// {behavior: "allow", updatedInput?, updatedPermissions?} or {behavior: "deny", message}.
+#[tauri::command]
+pub async fn hooks_answer(id: String, decision: Value) -> Result<(), String> {
+    hooks::answer(&id, decision)
+}
+
+// ---------- machines over ssh ----------
+
+#[tauri::command]
+pub async fn remote_probe(host: String) -> Result<Value, String> {
+    blocking(move || Ok(remote::probe(&host))).await
+}
+
+#[tauri::command]
+pub async fn remote_agents(host: String) -> Result<Value, String> {
+    blocking(move || remote::agents(&host)).await
+}
+
+#[tauri::command]
+pub async fn remote_transcript(host: String, session_id: String, max: Option<usize>) -> Result<TranscriptChunk, String> {
+    blocking(move || remote::transcript_window(&host, &session_id, max.unwrap_or(3000))).await
+}
+
+#[tauri::command]
+pub async fn remote_transcript_since(host: String, session_id: String, offset: u64) -> Result<TranscriptChunk, String> {
+    blocking(move || remote::transcript_since(&host, &session_id, offset)).await
+}
+
+#[tauri::command]
+pub async fn remote_tunnels(app: AppHandle, tunnels: State<'_, remote::Tunnels>, hook_port: State<'_, HookPort>, hosts: Vec<String>) -> Result<(), String> {
+    if hook_port.0 == 0 {
+        return Err("the hook endpoint is not running".into());
+    }
+    let (t, port) = (tunnels.inner().clone(), hook_port.0);
+    blocking(move || {
+        remote::set_tunnels(app, t, hosts, port);
+        Ok(())
+    })
+    .await
+}

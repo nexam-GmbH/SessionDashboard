@@ -6,10 +6,8 @@
 // count and time show on hover, a waiting permission or failure stays visible. The
 // plan row expands to the plan's markdown; approval itself lives in the attention dock.
 import { memo } from "react"
-import { ChevronRight } from "lucide-react"
 import type { ID, Subagent, ToolCall } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { select } from "@/store/actions"
 import { useNow } from "@/components/common/RelativeTime"
 import { cn } from "@/lib/utils"
 import { duration } from "@/lib/format"
@@ -30,8 +28,8 @@ function SubElapsed({ since }: { since: string }) {
   return <>{duration(Math.max(0, now - Date.parse(since)))}</>
 }
 
-const ROW = "group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-[3px] pr-1.5 pl-0.5 text-left text-[12.5px] outline-none hover:bg-hover/60 focus-visible:bg-hover/60 focus-visible:ring-1 focus-visible:ring-ring/60"
-const ON_HOVER = "hidden group-hover/tool:inline group-focus-visible/tool:inline"
+const ROW = "group/tool flex h-6 w-full min-w-0 items-center gap-2 rounded-sm pr-1.5 pl-0.5 text-left text-xs outline-none hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:ring-1 focus-visible:ring-ring/60"
+const ON_HOVER = "opacity-0 transition-opacity duration-100 group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100"
 
 export const SubagentCard = memo(function SubagentCard({ call }: { call: ToolCall }) {
   const sub = useApp((s) => (call.subagentId ? s.subagents[call.subagentId] : undefined))
@@ -39,23 +37,21 @@ export const SubagentCard = memo(function SubagentCard({ call }: { call: ToolCal
   const type = sub?.agentType ?? input.subagent_type ?? "agent"
   const desc = sub?.description ?? input.description ?? call.title
   const display = sub ? DOT[sub.status] : call.display
-  const open = () => sub && select({ kind: "subagent", id: sub.id })
   const tip = [type, sub && `${sub.toolCount} tools`, sub?.summary].filter(Boolean).join(" · ")
   return (
-    <button type="button" onClick={open} disabled={!sub} title={tip} className={cn(ROW, "disabled:hover:bg-transparent")}>
+    <div title={tip} className={ROW}>
       <ToolStatusDot display={display} />
-      <span className="w-[52px] shrink-0 truncate text-[12px] text-fg-faint">Agent</span>
-      <span className="min-w-0 flex-1 truncate text-fg-muted group-hover/tool:text-fg">{desc}</span>
-      {sub?.status === "waiting_permission" && <span className="shrink-0 text-[11px] text-st-perm-fg">needs permission</span>}
-      {sub?.status === "failed" && <span className="shrink-0 text-[11px] text-st-error-fg">failed</span>}
+      <span className="w-[52px] shrink-0 truncate text-xs text-muted-foreground/70">Agent</span>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground group-hover/tool:text-foreground">{desc}</span>
+      {sub?.status === "waiting_permission" && <span className="shrink-0 text-xs text-st-perm-fg">needs permission</span>}
+      {sub?.status === "failed" && <span className="shrink-0 text-xs text-st-error-fg">failed</span>}
       {sub && (
-        <span className={cn("tabular shrink-0 text-[11px] text-fg-faint", ON_HOVER)}>
+        <span className={cn("tabular shrink-0 text-xs text-muted-foreground/70", ON_HOVER)}>
           <span className="font-mono">{type}</span> · {sub.toolCount} tools ·{" "}
           {sub.finishedAt ? duration(Math.max(0, Date.parse(sub.finishedAt) - Date.parse(sub.startedAt))) : <SubElapsed since={sub.startedAt} />}
         </span>
       )}
-      {sub && <ChevronRight size={12} className="shrink-0 text-fg-faint opacity-0 group-hover/tool:opacity-100" />}
-    </button>
+    </div>
   )
 })
 
@@ -69,8 +65,8 @@ export const PlanCard = memo(function PlanCard({ call, itemId }: { call: ToolCal
     <div className="min-w-0">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={ROW}>
         <ToolStatusDot display={call.display} tone={pending ? "input" : undefined} />
-        <span className="w-[52px] shrink-0 truncate text-[12px] text-fg-faint">Plan</span>
-        <span className="min-w-0 flex-1 truncate text-fg-muted group-hover/tool:text-fg">{pending ? "Ready for approval" : "Presented plan"}</span>
+        <span className="w-[52px] shrink-0 truncate text-xs text-muted-foreground/70">Plan</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground group-hover/tool:text-foreground">{pending ? "Ready for approval" : "Presented plan"}</span>
         <Chevron open={open} className={open ? undefined : "opacity-0 group-hover/tool:opacity-100"} />
       </button>
       {open && plan && (

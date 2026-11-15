@@ -11,9 +11,11 @@ export type Row =
   | { kind: "agent"; key: string; itemId: ID; turnId: ID }
   | { kind: "tools"; key: string; itemIds: ID[]; turnId: ID; live: boolean }
   | { kind: "tool"; key: string; itemId: ID; turnId: ID }
+  | { kind: "files"; key: string; itemId: ID; turnId: ID }
   | { kind: "compaction"; key: string; itemId: ID }
   | { kind: "notice"; key: string; itemId: ID; turnId: ID }
   | { kind: "receipt"; key: string; turnId: ID; receipt: NonNullable<Turn["receipt"]> }
+  | { kind: "done"; key: string; turnId: ID; durationMs: number; at?: string }
 
 /**
  * Walk `order` once. Item *types* never change after creation, so the row list
@@ -40,6 +42,8 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[]): 
     if (!turnId) return
     const t = turnById.get(turnId)
     if (t?.receipt) rows.push({ kind: "receipt", key: `r:${turnId}`, turnId, receipt: t.receipt })
+    // "✻ Cooked for 26s · done 19:49", as Claude Code ends a turn
+    else if (t?.durationMs !== undefined && t.status !== "in_progress") rows.push({ kind: "done", key: `d:${turnId}`, turnId, durationMs: t.durationMs, at: t.completedAt })
   }
 
   for (const id of order) {
@@ -49,6 +53,12 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[]): 
       flushGroup()
       closeTurn(currentTurn)
       currentTurn = it.turnId
+    }
+    // files Claude handed you are a message to you, not a step to fold away
+    if (it.type === "tool_call" && it.call.name === "SendUserFile") {
+      flushGroup()
+      rows.push({ kind: "files", key: id, itemId: id, turnId: it.turnId })
+      continue
     }
     if (it.type === "tool_call") {
       if (groupTurn && groupTurn !== it.turnId) flushGroup()
@@ -84,7 +94,7 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[]): 
 
 /** Coarse first-paint height per row; ResizeObserver measurement corrects it. */
 export function estimateRow(row: Row, items: Record<ID, Item>, width: number): number {
-  const charsPerLine = Math.max(40, Math.floor((Math.min(width, 820) - 40) / 7.1))
+  const charsPerLine = Math.max(40, Math.floor((Math.min(width, 1140) - 40) / 7.1))
   const textLines = (text: string, cpl = charsPerLine) => {
     let n = 0
     for (const para of text.split("\n")) n += Math.max(1, Math.ceil(para.length / cpl))
@@ -104,10 +114,14 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
       return row.live ? 50 : 26
     case "tool":
       return 26
+    case "files":
+      return 80
     case "thought":
       return 26
     case "receipt":
       return 26
+    case "done":
+      return 28
     case "compaction":
       return 36
     case "notice":

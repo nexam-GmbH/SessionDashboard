@@ -7,6 +7,7 @@
 // Code-block copy keeps working on cached HTML through one delegated click handler.
 import { memo, startTransition, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react"
 import { cn } from "@/lib/utils"
+import { currentSessionId } from "@/store/actions"
 import { Markdown } from "./Markdown"
 
 const MAX_ENTRIES = 600
@@ -28,12 +29,30 @@ function plain(content: string) {
     .split(/\n{2,}/)
 }
 
+/** Cached HTML has no React handlers: code-block copy and the Run buttons work through this one. */
 function copyFromCachedBlock(e: MouseEvent<HTMLDivElement>) {
   const btn = (e.target as HTMLElement).closest("button")
-  if (!btn || !btn.closest('[data-streamdown="code-block-actions"]')) return
+  if (!btn) return
+  const run = btn.getAttribute("data-run")
+  if (run) {
+    void import("@/features/terminal/terminals").then((t) => {
+      if (btn.getAttribute("data-kind") === "slash") t.runSlashInTerminal(run, currentSessionId() ?? undefined)
+      else void t.runInTerminal(run)
+    })
+    return
+  }
+  if (!btn.closest('[data-streamdown="code-block-actions"]')) return
   const code = btn.closest('[data-streamdown="code-block"]')?.querySelector("pre")?.textContent
   if (code) void navigator.clipboard?.writeText(code)
 }
+
+// Rows that mount while you scroll fast paint a plain placeholder first; rows that mount at rest
+// (opening a chat) render the markdown at once, so nothing flips from plain to formatted on screen.
+let lastScroll = 0
+if (typeof window !== "undefined") {
+  window.addEventListener("scroll", () => (lastScroll = performance.now()), { capture: true, passive: true })
+}
+const scrolling = () => performance.now() - lastScroll < 150
 
 export const CachedMarkdown = memo(function CachedMarkdown({
   cacheKey,
@@ -50,7 +69,7 @@ export const CachedMarkdown = memo(function CachedMarkdown({
 }) {
   const key = `${cacheKey}:${content.length}`
   const [cached] = useState(() => html.get(key))
-  const [upgraded, setUpgraded] = useState(eager)
+  const [upgraded, setUpgraded] = useState(() => eager || !scrolling())
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

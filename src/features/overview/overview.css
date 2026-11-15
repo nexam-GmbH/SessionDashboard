@@ -1,0 +1,186 @@
+/*
+ * Overview tree (the owner's sketch): main agent → repo rail → repo nodes → sessions → running
+ * subagents. Connectors are borders on pseudo-elements, so the tree needs no layout code and no
+ * measuring; everything hangs off one x per column (--x, the centre of the repo node's glyph).
+ */
+@layer components {
+  .ov {
+    --gap: 24px;
+    --x: 17px; /* trunk x inside a column: the centre of the repo node's icon */
+    --indent: 28px; /* session cards start here */
+    --tick: 21px; /* y of the elbow on a card: the centre of its title row */
+    --line: var(--border);
+  }
+  /* columns share the overview's own width (the session list may sit beside it) */
+  .ov {
+    container-type: inline-size;
+  }
+  .ov-tree {
+    --col: clamp(200px, calc((100cqw - 48px - (var(--n) - 1) * var(--gap)) / var(--n)), 300px);
+  }
+
+  /* the tree rests at about a third of the height; spacers collapse when it overflows */
+  .ov {
+    display: flex;
+    flex-direction: column;
+  }
+  .ov::before {
+    content: "";
+    flex: 1 1 0;
+  }
+  .ov::after {
+    content: "";
+    flex: 2 1 0;
+  }
+  @media (max-width: 1360px) {
+    .ov {
+      --gap: 16px;
+      --indent: 22px;
+    }
+  }
+  .ov-tree {
+    flex: none;
+    width: max-content;
+    margin: 0 auto;
+    padding: 32px 24px 48px;
+  }
+
+  /* main agent, with its stem down to the rail */
+  .ov-main-wrap {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    padding-bottom: 36px;
+  }
+  .ov-main-wrap::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    height: 36px;
+    border-left: 1px solid var(--line);
+  }
+
+  .ov-repos {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(var(--n), var(--col));
+    column-gap: var(--gap);
+    padding-top: 28px;
+  }
+  /* the rail: from the first column's trunk to the last column's trunk */
+  .ov-repos::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: var(--x);
+    right: calc(var(--col) - var(--x));
+    border-top: 1px solid var(--line);
+  }
+  .ov-repos.ov-single::before {
+    display: none;
+  }
+  /* one repo under a main agent: its trunk sits right under the main agent's stem */
+  .ov-repos.ov-single:not(.ov-no-main) {
+    grid-template-columns: 1fr;
+  }
+  .ov-repos.ov-single:not(.ov-no-main) > .ov-col {
+    width: var(--col);
+    margin-left: calc(50% - var(--x));
+  }
+  /* no main agent: repos stand on their own, without the rail drops */
+  .ov-no-main {
+    padding-top: 0;
+  }
+  .ov-no-main .ov-col::before {
+    display: none;
+  }
+
+  .ov-col {
+    position: relative;
+    min-width: 0;
+  }
+  /* drop from the rail into the repo node */
+  .ov-col::before {
+    content: "";
+    position: absolute;
+    left: var(--x);
+    top: -28px;
+    height: 28px;
+    border-left: 1px solid var(--line);
+  }
+
+  .ov-sessions {
+    position: relative;
+    padding-top: 10px;
+  }
+  .ov-item {
+    position: relative;
+    padding-left: var(--indent);
+    padding-bottom: 10px;
+  }
+  /* trunk segment: down the whole item, except the last one, which stops at its elbow */
+  .ov-item::before {
+    content: "";
+    position: absolute;
+    left: var(--x);
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid var(--line);
+  }
+  .ov-item:first-child::before {
+    top: -10px;
+  }
+  .ov-item:last-child::before {
+    bottom: auto;
+    height: var(--tick);
+  }
+  .ov-item:first-child:last-child::before {
+    height: calc(var(--tick) + 10px);
+  }
+  /* elbow into the card */
+  .ov-item::after {
+    content: "";
+    position: absolute;
+    left: var(--x);
+    top: var(--tick);
+    width: calc(var(--indent) - var(--x));
+    border-top: 1px solid var(--line);
+  }
+
+  /* running subagents: a small tree hanging off the card's left edge */
+  .ov-subs {
+    position: relative;
+    padding-top: 6px;
+    margin-left: 12px;
+  }
+  .ov-sub {
+    position: relative;
+    padding-left: 16px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+  }
+  .ov-sub::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid var(--border);
+  }
+  .ov-sub:first-child::before {
+    top: -6px;
+  }
+  .ov-sub:last-child::before {
+    bottom: 50%;
+  }
+  .ov-sub::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 10px;
+    border-top: 1px solid var(--border);
+  }
+}

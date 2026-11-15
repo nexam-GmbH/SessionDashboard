@@ -240,3 +240,102 @@ export function headTail(text: string, head = 6, tail = 6) {
   if (lines.length <= head + tail + 2) return { head: lines, hidden: 0, tail: [] as string[], total: lines.length }
   return { head: lines.slice(0, head), hidden: lines.length - head - tail, tail: lines.slice(-tail), total: lines.length }
 }
+
+// ---------- work summaries (Claude Code desktop: "Edited 2 files, ran a command +362 −99") ----------
+const plainName = (p: unknown) => (typeof p === "string" && p ? displayFileName(p) : undefined)
+
+/**
+ * One line for a group of tool calls, in the past tense: "Edited 2 files, ran a command",
+ * "Updated FreelancersPage.tsx", "Read 3 files, searched the code". At most three parts.
+ */
+export function summarizeWork(calls: readonly ToolCall[]): string {
+  const edits = new Set<string>()
+  const reads = new Set<string>()
+  const servers = new Set<string>()
+  let commands = 0
+  let searches = 0
+  let web = 0
+  let agents = 0
+  let plan = false
+  let editCalls = 0
+  const other = new Set<string>()
+  for (const c of calls) {
+    const input = (isRecord(c.input) ? c.input : {}) as Record<string, unknown>
+    switch (classifyTool(c.name)) {
+      case "edit":
+        editCalls++
+        edits.add(String(input.file_path ?? input.notebook_path ?? c.title))
+        break
+      case "read":
+        reads.add(String(input.file_path ?? input.path ?? c.title))
+        break
+      case "command":
+        if (c.name === "Bash") commands++
+        break
+      case "search":
+      case "graph":
+        searches++
+        break
+      case "web":
+        web++
+        break
+      case "agent":
+        agents++
+        break
+      case "mcp":
+        servers.add(splitMcpName(c.name).server)
+        break
+      case "todo":
+        plan = true
+        break
+      case "plan":
+      case "question":
+        break
+      default:
+        other.add(c.name)
+    }
+  }
+  const parts: string[] = []
+  // a single file and nothing else: "Updated Foo.tsx"; with other work: "edited Foo.tsx, ran a command"
+  const onlyEdits = editCalls === calls.length
+  if (edits.size) parts.push(edits.size === 1 ? `${onlyEdits ? "updated" : "edited"} ${plainName([...edits][0]) ?? "a file"}` : `edited ${edits.size} files`)
+  if (commands) parts.push(commands === 1 ? "ran a command" : `ran ${commands} commands`)
+  if (reads.size) parts.push(reads.size === 1 ? `read ${plainName([...reads][0]) ?? "a file"}` : `read ${reads.size} files`)
+  if (searches) parts.push("searched the code")
+  if (web) parts.push(web === 1 ? "looked something up" : "searched the web")
+  if (agents) parts.push(agents === 1 ? "ran a subagent" : `ran ${agents} subagents`)
+  if (servers.size) parts.push(`used ${[...servers].slice(0, 2).join(", ")}`)
+  if (plan && parts.length < 3) parts.push("updated the plan")
+  if (other.size && parts.length < 3) parts.push(`used ${[...other][0]}`)
+  const line = parts.slice(0, 3).join(", ") || "Worked"
+  return line.charAt(0).toUpperCase() + line.slice(1)
+}
+
+/** What a running tool call is doing, in the present tense: "Running a command", "Editing Foo.tsx". */
+export function describeActivity(call: ToolCall | undefined): string {
+  if (!call) return "Working"
+  const input = (isRecord(call.input) ? call.input : {}) as Record<string, unknown>
+  switch (classifyTool(call.name)) {
+    case "edit":
+      return call.name === "Write" ? `Creating ${plainName(input.file_path) ?? "a file"}` : `Editing ${plainName(input.file_path ?? input.notebook_path) ?? "a file"}`
+    case "read":
+      return `Reading ${plainName(input.file_path ?? input.path) ?? "files"}`
+    case "command":
+      return "Running a command"
+    case "search":
+    case "graph":
+      return "Searching the code"
+    case "web":
+      return "Searching the web"
+    case "agent":
+      return "Running a subagent"
+    case "mcp":
+      return `Using ${splitMcpName(call.name).server}`
+    case "todo":
+      return "Planning"
+    case "question":
+      return "Asking you"
+    default:
+      return `Using ${call.name}`
+  }
+}

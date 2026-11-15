@@ -86,7 +86,7 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
                 {optionLabel(o)}
               </OptionButton>
             ))}
-            {!canApprove && <span className="ml-auto text-[11.5px] text-fg-faint">Approve in your terminal</span>}
+            {!canApprove && <span className="ml-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
           </>
         )
       }

@@ -60,8 +60,8 @@ const DraftBox = memo(function DraftBox({ draft }: { draft: Draft }) {
       data-review-draft=""
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="@container mx-2 my-1.5 max-w-[720px] min-w-0 rounded-[4px] border border-line bg-elevated">
-        <div className="flex h-6 items-center gap-1.5 px-2 text-[11px] text-fg-faint">
+      <div className="@container mx-2 my-1.5 max-w-[720px] min-w-0 rounded-md border border-border bg-muted">
+        <div className="flex h-6 items-center gap-1.5 px-2 text-xs text-muted-foreground/70">
           <MessageSquare size={11} className="shrink-0" />
           <span className="truncate">
             {lineLabel(draft.start, draft.end, draft.side)}
@@ -87,7 +87,7 @@ const DraftBox = memo(function DraftBox({ draft }: { draft: Draft }) {
           }}
           placeholder="Comment"
           aria-label="Comment"
-          className="block max-h-40 min-h-11 w-full resize-y border-y border-line-subtle bg-canvas px-2 py-1.5 text-[12.5px] leading-[18px] text-fg outline-none placeholder:text-fg-faint focus:border-y-brand/60"
+          className="block max-h-40 min-h-11 w-full resize-y border-y border-border bg-background px-2 py-1.5 text-xs leading-[18px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-y-input"
         />
         <div className="flex h-8 items-center gap-1.5 px-2">
           <Button
@@ -125,13 +125,13 @@ const CommentCard = memo(function CommentCard({
       onPointerDown={(e) => e.stopPropagation()}
       data-comment-id={comment.id}
     >
-      <div className="group/c mx-2 my-1 flex max-w-[720px] gap-2 rounded-[4px] border border-line-subtle bg-chrome px-2 py-1.5">
-        <MessageSquare size={12} className="mt-[3px] shrink-0 text-fg-faint" />
+      <div className="group/c mx-2 my-1 flex max-w-[720px] gap-2 rounded-md border border-border bg-card px-2 py-1.5">
+        <MessageSquare size={12} className="mt-[3px] shrink-0 text-muted-foreground/70" />
         <div className="min-w-0 flex-1">
-          <div className="flex h-4 items-center gap-1.5 text-[11px] text-fg-faint">
+          <div className="flex h-4 items-center gap-1.5 text-xs text-muted-foreground/70">
             <span>{lineLabel(comment.start, comment.end, comment.side)}</span>
           </div>
-          <p className="mt-0.5 text-[12.5px] leading-[18px] whitespace-pre-wrap text-fg">
+          <p className="mt-0.5 text-xs leading-[18px] whitespace-pre-wrap text-foreground">
             {comment.text}
           </p>
         </div>
@@ -173,15 +173,15 @@ export const PendingComments = memo(function PendingComments({
   )
   if (!comments.length) return null
   return (
-    <div className="flex max-h-[42%] shrink-0 flex-col border-t border-line-subtle">
+    <div className="flex max-h-[42%] shrink-0 flex-col border-t border-border">
       <div className="flex h-7 shrink-0 items-center gap-1.5 pr-1.5 pl-3">
-        <span className="section-label">Comments</span>
-        <span className="text-[11px] text-fg-faint tabular">
+        <span className="text-xs font-medium text-muted-foreground">Comments</span>
+        <span className="text-xs text-muted-foreground/70 tabular">
           {comments.length}
         </span>
         <button
           type="button"
-          className="ml-auto h-5 rounded-[3px] px-1.5 text-[11px] text-fg-faint hover:bg-hover hover:text-fg-muted"
+          className="ml-auto h-5 rounded-sm px-1.5 text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground"
           onClick={() => clearComments(scope)}
         >
           Clear
@@ -199,15 +199,15 @@ export const PendingComments = memo(function PendingComments({
               e.preventDefault()
               onJump(c)
             }}
-            className="group/pc flex cursor-default gap-1.5 rounded-[3px] px-2 py-1 outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+            className="group/pc flex cursor-default gap-1.5 rounded-sm px-2 py-1 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
             title={c.text}
           >
             <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-[10.5px] text-fg-faint">
+              <div className="truncate font-mono text-xs text-muted-foreground/70">
                 {c.label}:{c.start === c.end ? c.start : `${c.start}-${c.end}`}
                 {c.side === "deletions" && " · old"}
               </div>
-              <div className="line-clamp-2 text-[12px] leading-4 text-fg-muted">
+              <div className="line-clamp-2 text-xs leading-4 text-muted-foreground">
                 {c.text}
               </div>
             </div>
@@ -216,7 +216,7 @@ export const PendingComments = memo(function PendingComments({
               aria-label="Delete comment"
               title="Delete comment"
               className={cn(
-                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[3px] text-fg-faint opacity-0 outline-none group-hover/pc:opacity-100 hover:bg-selected hover:text-fg focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
+                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 opacity-0 outline-none group-hover/pc:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
               )}
               onClick={(e) => {
                 e.stopPropagation()

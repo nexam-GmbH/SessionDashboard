@@ -22,14 +22,9 @@ import { useShallow } from "zustand/react/shallow"
 import type { ID, Session } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
 import { useSession } from "@/store/selectors"
-import { openSession, select, sendMessage } from "@/store/actions"
+import { openSession, sendMessage } from "@/store/actions"
 import { ensureTranscript } from "@/mocks/transcript"
 import { Button } from "@/components/ui/button"
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,13 +70,6 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     for (const o of owners) ensureTranscript(o.id)
   }, [owners])
-  // Keep the inspector on the reviewed session while this tab is visible, without opening it:
-  // the diff needs the width (Calm UI rule 7: the inspector opens when you select something).
-  useEffect(() => {
-    const sel = getApp().selection
-    if (sel?.kind !== "session" || sel.id !== sessionId)
-      select({ kind: "session", id: sessionId }, { reveal: false })
-  }, [sessionId])
   const changes = useOwnerChanges(owners)
   const ready = owners.length > 0 && changes.every((c) => c !== null)
   const mainTurns = useApp((s) => s.transcripts[sessionId]?.turns)
@@ -151,9 +139,8 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
         return
       const st = getApp()
       if (
-        st.activeTab !== `/review/${sessionId}` ||
+        st.route !== `/review/${sessionId}` ||
         st.paletteOpen ||
-        st.newSession ||
         document.querySelector("[role=dialog],[role=menu]")
       )
         return
@@ -173,7 +160,7 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
   return (
     <div
       ref={rootRef}
-      className="@container flex h-full min-h-0 flex-col bg-canvas"
+      className="@container flex h-full min-h-0 flex-col bg-background"
     >
       <ReviewHeader session={session} model={model} turn={turn} />
       <div className="min-h-0 flex-1">
@@ -186,7 +173,7 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
                 <div className="mt-1 flex gap-1.5">
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     onClick={() => setTurn(sessionId, "all")}
                   >
                     Show all turns
@@ -203,7 +190,7 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
                 </div>
               }
             >
-              <div className="text-[13px] text-fg-muted">
+              <div className="text-sm text-muted-foreground">
                 No changes in turn {turn}
               </div>
               {model.pending > 0 && (
@@ -215,29 +202,22 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
               action={
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="outline"
                   onClick={() => openSession(sessionId)}
                 >
                   <ArrowUpRight /> Open session
                 </Button>
               }
             >
-              <div className="text-[13px] text-fg-muted">No changes yet</div>
+              <div className="text-sm text-muted-foreground">No changes yet</div>
               {model.pending > 0 && (
                 <div className="mt-1">{model.pending} awaiting approval</div>
               )}
             </EmptyState>
           )
         ) : (
-          <ResizablePanelGroup orientation="horizontal">
-            <ResizablePanel
-              id="review-files"
-              defaultSize="272px"
-              minSize="200px"
-              maxSize="460px"
-              groupResizeBehavior="preserve-pixel-size"
-              className="flex min-h-0 flex-col bg-chrome"
-            >
+          <div className="flex h-full min-h-0">
+            <div className="flex w-[240px] shrink-0 flex-col border-r border-border">
               <div className="min-h-0 flex-1">
                 <FileTree
                   scope={sessionId}
@@ -247,21 +227,16 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
                 />
               </div>
               <PendingComments scope={sessionId} onJump={jumpToComment} />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel
-              id="review-diff"
-              minSize="320px"
-              className="min-w-0"
-            >
+            </div>
+            <div className="min-w-0 flex-1">
               <DiffList
                 scope={sessionId}
                 model={model}
                 apiRef={apiRef}
                 onActiveChange={onActiveChange}
               />
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -272,15 +247,15 @@ function LoadingLayout() {
   return (
     <div className="flex h-full">
       <div
-        className="w-[272px] shrink-0 space-y-2 border-r border-line-subtle bg-chrome p-3"
+        className="w-[272px] shrink-0 space-y-2 border-r border-border bg-card p-3"
         role="status"
         aria-label="Loading changes"
       >
-        <div className="h-6 rounded-[4px] bg-elevated" />
+        <div className="h-6 rounded-md bg-muted" />
         {["w-3/4", "w-1/2", "w-2/3", "w-3/5", "w-1/2"].map((w, i) => (
           <div
             key={i}
-            className={cn("h-2.5 rounded-[2px] bg-elevated", w)}
+            className={cn("h-2.5 rounded-sm bg-muted", w)}
             style={{ marginLeft: i % 2 ? 12 : 0 }}
           />
         ))}
@@ -331,21 +306,21 @@ const ReviewHeader = memo(function ReviewHeader({
   }
 
   return (
-    <header className="flex h-10 shrink-0 min-w-0 items-center gap-2 border-b border-line-subtle bg-chrome pr-2 pl-3">
+    <header className="flex h-10 shrink-0 min-w-0 items-center gap-2 border-b border-border bg-card pr-2 pl-3">
       <StatusGlyph status={session.status} size="sm" />
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
         <h1
-          className="min-w-0 truncate text-[13px] font-medium text-fg"
+          className="min-w-0 truncate text-sm font-medium text-foreground"
           title={session.title}
         >
           {session.title}
         </h1>
-        <span className="hidden shrink-0 text-[12px] text-fg-faint @xl:inline">
+        <span className="hidden shrink-0 text-xs text-muted-foreground/70 @xl:inline">
           {cross ? plural(repos, "repo") : (repo?.name ?? "")}
         </span>
         {model && total > 0 && (
           <span
-            className="flex shrink-0 items-baseline gap-1.5 text-[12px] text-fg-muted"
+            className="flex shrink-0 items-baseline gap-1.5 text-xs text-muted-foreground"
             title={`${reviewed}/${total} reviewed`}
           >
             <span className="tabular">{plural(total, "file")}</span>
@@ -357,10 +332,10 @@ const ReviewHeader = memo(function ReviewHeader({
             type="button"
             onClick={() => setTurn(sid, "all")}
             title="Show all turns"
-            className="inline-flex h-5 shrink-0 items-center gap-1 self-center rounded-[3px] border border-line-subtle px-1.5 text-[11.5px] text-fg-muted hover:bg-hover hover:text-fg"
+            className="inline-flex h-5 shrink-0 items-center gap-1 self-center rounded-sm border border-border px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <span className="tabular">Turn {turn}</span>
-            <X size={11} className="text-fg-faint" />
+            <X size={11} className="text-muted-foreground/70" />
           </button>
         )}
         {model && model.pending > 0 && (
@@ -368,7 +343,7 @@ const ReviewHeader = memo(function ReviewHeader({
             type="button"
             onClick={() => openSession(sid)}
             title="Proposed edits not applied yet: approve them in the session"
-            className="inline-flex shrink-0 items-center gap-1 self-center text-[12px] text-st-perm-fg hover:underline"
+            className="inline-flex shrink-0 items-center gap-1 self-center text-xs text-st-perm-fg hover:underline"
           >
             <ShieldAlert size={12} />
             <span className="tabular">{model.pending} pending</span>
@@ -376,7 +351,7 @@ const ReviewHeader = memo(function ReviewHeader({
         )}
         {sent && (
           <span
-            className="flex shrink-0 items-center gap-1 self-center text-[12px] text-fg-muted"
+            className="flex shrink-0 items-center gap-1 self-center text-xs text-muted-foreground"
             role="status"
           >
             <Check size={12} /> Sent
@@ -395,7 +370,7 @@ const ReviewHeader = memo(function ReviewHeader({
         </Button>
         <Button
           size="sm"
-          variant="secondary"
+          variant="outline"
           disabled={!total}
           onClick={() => setMarks(keys, "kept")}
           title="Keep all (mock)"
@@ -431,10 +406,10 @@ const ReviewHeader = memo(function ReviewHeader({
               value={diffStyle}
               onValueChange={(v) => setDiffStyle(v as typeof diffStyle)}
             >
-              <DropdownMenuRadioItem value="unified" className="text-[12px]">
+              <DropdownMenuRadioItem value="unified" className="text-xs">
                 <Rows3 /> Unified
               </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="split" className="text-[12px]">
+              <DropdownMenuRadioItem value="split" className="text-xs">
                 <Columns2 /> Split
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
@@ -446,7 +421,7 @@ const ReviewHeader = memo(function ReviewHeader({
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              className="text-[12px]"
+              className="text-xs"
               onSelect={() => openSession(sid)}
             >
               <ArrowUpRight /> Open session
@@ -469,9 +444,9 @@ function TurnSubmenu({
 }) {
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger className="text-[12px] [&>svg]:size-3 [&>svg]:text-fg-faint">
+      <DropdownMenuSubTrigger className="text-xs [&>svg]:size-3 [&>svg]:text-muted-foreground/70">
         <span className="flex-1">Turn</span>
-        <span className="tabular text-fg-faint">
+        <span className="tabular text-muted-foreground/70">
           {turn === "all" ? "All" : turn}
         </span>
       </DropdownMenuSubTrigger>
@@ -480,7 +455,7 @@ function TurnSubmenu({
           value={String(turn)}
           onValueChange={(v) => setTurn(sid, v === "all" ? "all" : Number(v))}
         >
-          <DropdownMenuRadioItem value="all" className="text-[12px]">
+          <DropdownMenuRadioItem value="all" className="text-xs">
             All turns
           </DropdownMenuRadioItem>
           <DropdownMenuSeparator />
@@ -488,10 +463,10 @@ function TurnSubmenu({
             <DropdownMenuRadioItem
               key={t.index}
               value={String(t.index)}
-              className="text-[12px]"
+              className="text-xs"
             >
               <span className="tabular">Turn {t.index}</span>
-              <span className="ml-auto text-[11px] text-fg-faint tabular">
+              <span className="ml-auto text-xs text-muted-foreground/70 tabular">
                 {t.files ? plural(t.files, "file") : t.pending ? "pending" : "—"}{" "}
                 · {clockTime(t.startedAt)}
               </span>

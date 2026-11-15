@@ -9,12 +9,31 @@
     <style>
       html,
       body {
-        background: #111113;
+        background: #0a0a0a;
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // page errors go to the app's log file (desktop app); a failed start is otherwise invisible
+      ;(function () {
+        function send(msg, level) {
+          try {
+            var t = window.__TAURI_INTERNALS__
+            if (t && t.invoke) t.invoke("plugin:log|log", { level: level || 5, message: "[page] " + msg, location: "page", file: null, line: null, keyValues: null })
+          } catch (e) {}
+        }
+        window.addEventListener("error", function (e) {
+          send((e.message || "error") + " @ " + (e.filename || "") + ":" + (e.lineno || 0) + (e.error && e.error.stack ? "\n" + e.error.stack : ""))
+        })
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason
+          send("unhandled rejection: " + (r && r.stack ? r.stack : String(r)))
+        })
+        window.__sdLog = send
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

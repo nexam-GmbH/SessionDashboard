@@ -1,4 +1,5 @@
 import type { ControlMode, PermissionMode, Session, SessionStatus, Subagent } from "./model"
+import { REAL } from "@/backend/mode"
 
 /**
  * Status system — UI_PLAN.md §2.3.
@@ -58,8 +59,8 @@ export const STATUS_FG: Record<SessionStatus, string> = {
   done_unseen: "var(--st-done-fg)",
   working: "var(--st-working-fg)",
   starting: "var(--st-working-fg)",
-  idle: "var(--fg-muted)",
-  stopped: "var(--fg-faint)",
+  idle: "var(--muted-foreground)",
+  stopped: "color-mix(in oklab, var(--muted-foreground) 70%, transparent)",
 }
 
 export const STATUS_TINT: Partial<Record<SessionStatus, string>> = {
@@ -111,6 +112,7 @@ export const CONTROL_TAG: Record<ControlMode, string> = {
   pty: "PTY",
   observed: "OBS",
   history: "HIST",
+  cloud: "CLOUD",
 }
 
 export const CONTROL_LABEL: Record<ControlMode, string> = {
@@ -119,6 +121,7 @@ export const CONTROL_LABEL: Record<ControlMode, string> = {
   observed:
     "Started in your terminal. You can read it and send messages here; approvals happen in that terminal.",
   history: "Not running. Resume to continue it here, or fork a copy.",
+  cloud: "Runs on claude.ai. Messages go in from here; permission prompts are answered on claude.ai.",
 }
 
 export interface ControlCapabilities {
@@ -135,19 +138,26 @@ export function capabilities(mode: ControlMode): ControlCapabilities {
     case "pty":
       return { send: true, approve: true, interrupt: true, changeSettings: true, resume: false }
     case "observed":
-      return { send: true, approve: false, interrupt: false, changeSettings: false, resume: false }
+      // a real terminal session can't take messages from here yet (two writers on one session);
+      // Take over (stop it in the terminal, resume it here) gives full control
+      // prompts come through the hook (Settings → Exact states from hooks) and can be answered
+      // here or in the terminal, whichever is first; messages need Take over
+      return { send: !REAL, approve: REAL, interrupt: false, changeSettings: false, resume: REAL }
     case "history":
       return { send: false, approve: false, interrupt: false, changeSettings: false, resume: true }
+    case "cloud":
+      // messages go in with `claude -p --cloud <id>`; permission prompts are answered on claude.ai
+      return { send: true, approve: false, interrupt: false, changeSettings: false, resume: false }
   }
 }
 
 export const PERMISSION_MODE_LABEL: Record<PermissionMode, string> = {
-  default: "Default",
+  default: "Manual",
   acceptEdits: "Accept edits",
   plan: "Plan",
   auto: "Auto",
   dontAsk: "Don't ask",
-  bypassPermissions: "Bypass",
+  bypassPermissions: "Bypass permissions",
 }
 
 export function modelShort(model: string) {

@@ -5,11 +5,13 @@ import type {
   ID,
   PermissionMode,
   QuestionRequest,
-  Selection,
   Session,
   SessionStatus,
 } from "@/lib/model"
-import { getApp, setApp, PINNED_TABS, type HistoryRange, type MapUi, type Settings, type Tab, type TabKind } from "./app"
+import { getApp, setApp, type Settings } from "./app"
+import { selectNeedsYou, selectSessionOrder } from "./selectors"
+import { REAL } from "@/backend/mode"
+import { realRename, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver } from "@/backend/real"
 
 /**
  * Store actions — plain functions so components, palette commands, the mock
@@ -33,141 +35,95 @@ export function setStatus(id: ID, status: SessionStatus, extra: Partial<Session>
   patchSession(id, { status, statusObservedAt: nowIso(), ...extra }, true)
 }
 
-// ---------- selection & tabs ----------
-/**
- * Select something. Calm UI rule 7: the inspector is closed by default and opens when you select
- * something on the map, in a table or in the sidebar, but not when you simply open a session tab.
- */
-export function select(sel: Selection, opts: { reveal?: boolean } = {}) {
-  const st = getApp()
-  const reveal = opts.reveal ?? (sel !== null && !st.activeTab.startsWith("/session/"))
-  setApp({ selection: sel, ...(reveal && !st.panels.inspector ? { panels: { ...st.panels, inspector: true } } : {}) })
-}
-
-function tabFor(path: string): Tab {
-  const [, kind, refId] = path.split("/") as [string, string, string | undefined]
-  const known: TabKind[] = ["map", "sessions", "session", "review", "repo", "graph", "settings", "dev"]
-  return { key: path, kind: (known.includes(kind as TabKind) ? kind : "map") as TabKind, refId }
-}
+// ---------- navigation ----------
+/** Sessions kept in the recent list (Ctrl+Tab order); the first few stay mounted for instant switching. */
+const RECENT_MAX = 12
 
 /** Called by the router whenever the location changes. */
-const PREVIEW_KINDS: TabKind[] = ["session", "repo", "review", "graph"]
-
-export function syncActiveTab(pathname: string) {
-  const key = pathname === "/" ? "/map" : pathname
-  setApp((s) => {
-    let tabs = s.tabs
-    let mounted = s.mountedTabs
-    if (!tabs.some((t) => t.key === key)) {
-      const tab = tabFor(key)
-      if (PREVIEW_KINDS.includes(tab.kind)) {
-        // reuse the existing preview tab (calm: opening many sessions doesn't pile up tabs)
-        const i = tabs.findIndex((t) => t.preview)
-        const next = { ...tab, preview: true }
-        if (i >= 0) {
-          const old = tabs[i].key
-          tabs = tabs.map((t, j) => (j === i ? next : t))
-          mounted = mounted.filter((k) => k !== old)
-        } else tabs = [...tabs, next]
-      } else tabs = [...tabs, tab]
-    }
-    mounted = [key, ...mounted.filter((k) => k !== key)].slice(0, 5)
-    return { tabs, activeTab: key, mountedTabs: mounted }
-  })
-  const [, kind, refId] = key.split("/")
-  if (kind === "session" && refId) {
-    markSeen(refId)
-    const sel = getApp().selection
-    if (!sel || sel.kind !== "session" || sel.id !== refId) select({ kind: "session", id: refId }, { reveal: false })
-  }
+export function syncRoute(pathname: string) {
+  const route = pathname || "/"
+  const [, kind, ref] = route.split("/")
+  if ((kind === "session" || kind === "review") && ref && getApp().sessions[ref]) {
+    setApp((s) => ({ route, screen: route, recent: [ref, ...s.recent.filter((id) => id !== ref)].slice(0, RECENT_MAX) }))
+    if (kind === "session") markSeen(ref)
+  } else setApp(route === "/" ? { route } : { route, screen: route })
 }
 
-/** Turn a preview tab into a normal tab (double-click, or when you interact with the session). */
-export function pinTab(key: string) {
-  setApp((s) => (s.tabs.some((t) => t.key === key && t.preview) ? { tabs: s.tabs.map((t) => (t.key === key ? { ...t, preview: false } : t)) } : s))
-}
-const pinSessionTab = (sessionId: ID) => pinTab(`/session/${sessionId}`)
-
-export function closeTab(key: string) {
-  const s = getApp()
-  const tab = s.tabs.find((t) => t.key === key)
-  if (!tab || tab.pinned) return
-  const idx = s.tabs.findIndex((t) => t.key === key)
-  const tabs = s.tabs.filter((t) => t.key !== key)
-  setApp({ tabs, mountedTabs: s.mountedTabs.filter((k) => k !== key) })
-  closedTabs.push(key)
-  if (s.activeTab === key) {
-    const next = tabs[Math.min(idx, tabs.length - 1)] ?? PINNED_TABS[0]
-    navigate(next.key)
-  }
+/** The session the current screen belongs to (session or its review), if any. */
+export function currentSessionId(): ID | null {
+  const [, kind, ref] = getApp().route.split("/")
+  return (kind === "session" || kind === "review") && ref ? ref : null
 }
 
-const closedTabs: string[] = []
-export function reopenClosedTab() {
-  const key = closedTabs.pop()
-  if (key) navigate(key)
+export function openOverview() {
+  navigate("/")
 }
-
-export function moveTab(fromKey: string, toKey: string) {
-  setApp((s) => {
-    const tabs = s.tabs.slice()
-    const from = tabs.findIndex((t) => t.key === fromKey)
-    const to = tabs.findIndex((t) => t.key === toKey)
-    if (from < 0 || to < 0 || tabs[from].pinned || tabs[to].pinned) return s
-    const [t] = tabs.splice(from, 1)
-    tabs.splice(to, 0, t)
-    return { tabs }
-  })
-}
-
 export function openSession(id: ID) {
+  // a session of another workspace: show that workspace
+  const s = getApp()
+  const ws = s.sessions[id]?.repoId ? s.repos[s.sessions[id].repoId!]?.workspace : undefined
+  if (ws && s.settings.workspace && ws !== s.settings.workspace) setApp((st) => ({ settings: { ...st.settings, workspace: ws } }))
   navigate(`/session/${id}`)
 }
-export function openRepo(id: ID) {
-  navigate(`/repo/${id}`)
+
+/** Move a session from its terminal into the app (stops it there, resumes it here). */
+export function takeOverSession(id: ID, prompt?: string) {
+  if (REAL) void realTakeOver(id, prompt)
+  else resumeSession(id)
+  openSession(id)
+}
+
+/** Show a workspace ("" = all of them) and its overview. */
+export function setWorkspace(id: string) {
+  setApp((st) => ({ settings: { ...st.settings, workspace: id } }))
+  navigate("/")
 }
 export function openReview(sessionId: ID) {
   navigate(`/review/${sessionId}`)
 }
-export function openGraph(scope: string) {
-  navigate(`/graph/${scope}`)
+export function openSettings() {
+  navigate("/settings")
+}
+export function openArchive() {
+  navigate("/archive")
 }
 
-// ---------- panels ----------
-export function togglePanel(p: "sidebar" | "inspector" | "bottom", value?: boolean) {
-  setApp((s) => ({ panels: { ...s.panels, [p]: value ?? !s.panels[p] } }))
-}
-export function setBottomTab(tab: "terminal" | "events") {
-  setApp((s) => ({ panels: { ...s.panels, bottom: true, bottomTab: tab } }))
-}
-export function setLayoutPreset(preset: "default" | "focus" | "review") {
-  const panels =
-    preset === "focus"
-      ? { sidebar: false, inspector: false, bottom: false }
-      : preset === "review"
-        ? { sidebar: false, inspector: true, bottom: false }
-        : { sidebar: true, inspector: false, bottom: false }
-  setApp((s) => ({ layoutPreset: preset, panels: { ...s.panels, ...panels } }))
+/** Ctrl+Tab: the n-th most recent session other than the current one (1 = the previous one). */
+export function recentSession(n = 1): ID | null {
+  const cur = currentSessionId()
+  const list = getApp().recent.filter((id) => id !== cur && isLive(getApp().sessions[id]))
+  return list[n - 1] ?? null
 }
 
-// ---------- sidebar ----------
-export function toggleSidebarNode(id: ID, value?: boolean) {
-  setApp((s) => {
-    const next = { ...s.sidebarExpanded }
-    const open = value ?? !next[id]
-    if (open) next[id] = true
-    else delete next[id]
-    return { sidebarExpanded: next }
-  })
+function isLive(s: Session | undefined) {
+  return !!s && !s.archived && s.control !== "history"
 }
-export function setSidebarGroupBy(groupBy: "repo" | "status" | "recent") {
-  setApp({ sidebarGroupBy: groupBy })
+
+function sessionOrder(): ID[] {
+  return selectSessionOrder(getApp())
+}
+
+/** Alt+Up / Alt+Down: previous or next session in list order (wraps). */
+export function stepSession(dir: 1 | -1) {
+  const order = sessionOrder()
+  if (!order.length) return
+  const cur = currentSessionId()
+  const i = cur ? order.indexOf(cur) : -1
+  const next = i < 0 ? (dir > 0 ? order[0] : order[order.length - 1]) : order[(i + dir + order.length) % order.length]
+  openSession(next)
+}
+
+/** Ctrl+1–9: the n-th session in list order. */
+export function jumpToSession(n: number) {
+  const id = sessionOrder()[n - 1]
+  if (id) openSession(id)
 }
 
 // ---------- session lifecycle ----------
 export function markSeen(id: ID) {
   const s = getApp().sessions[id]
   if (!s) return
+  if (REAL) realMarkSeen(id)
   if (s.status === "done_unseen") setStatus(id, "idle", { lastViewedAt: nowIso() })
   else patchSession(id, { lastViewedAt: nowIso(), updatedAt: s.updatedAt })
   setApp((st) => ({
@@ -177,6 +133,7 @@ export function markSeen(id: ID) {
 
 /** Archive = hide, never delete (user requirement). Restorable from the Archive view. */
 export function archiveSessions(ids: ID[]) {
+  if (REAL) realArchive(ids, true)
   const at = nowIso()
   setApp((s) => {
     const sessions = { ...s.sessions }
@@ -199,18 +156,17 @@ export function archiveSessions(ids: ID[]) {
       sessions,
       structVersion: s.structVersion + 1,
       statusVersion: s.statusVersion + 1,
-      toasts: s.toasts.filter((t) => !archivedSet.has(t.sessionId)),
-      selection: s.selection?.kind === "session" && archivedSet.has(s.selection.id) ? null : s.selection,
+      recent: s.recent.filter((id) => !archivedSet.has(id)),
     }
   })
-  for (const id of ids) {
-    const key = `/session/${id}`
-    if (getApp().tabs.some((t) => t.key === key)) closeTab(key)
-  }
+  // leaving an archived session's screen: go back to the overview
+  const cur = currentSessionId()
+  if (cur && ids.includes(cur)) openOverview()
 }
 export const archiveSession = (id: ID) => archiveSessions([id])
 
 export function restoreSessions(ids: ID[]) {
+  if (REAL) realArchive(ids, false)
   setApp((s) => {
     const sessions = { ...s.sessions }
     for (const id of ids) {
@@ -236,23 +192,112 @@ export function snoozeSession(id: ID, hours: number) {
 }
 
 export function renameSession(id: ID, title: string) {
-  pinSessionTab(id)
-  patchSession(id, { title, titleSource: "custom", titleLocked: true })
+  if (REAL) {
+    realRename(id, title)
+    return
+  }
+  if (title.trim()) patchSession(id, { title: title.trim(), titleSource: "custom", titleLocked: true })
 }
 
-export function setSessionSettings(id: ID, patch: { model?: string; effort?: Effort; permissionMode?: PermissionMode }) {
+export function setSessionSettings(id: ID, patch: { model?: string; effort?: Effort; permissionMode?: PermissionMode; fastMode?: boolean; ultracode?: boolean; outputStyle?: string }) {
   patchSession(id, patch)
+  if (REAL) realSettings(id, patch)
+}
+
+/** "+ → Add folder" while a session runs (`--add-dir`): another repo's files join its context. */
+export function addSessionFolder(id: ID, repoId: ID) {
+  const s = getApp()
+  const path = s.repos[repoId]?.rootPath
+  const sess = s.sessions[id]
+  if (!path || !sess || sess.additionalDirs.includes(path)) return
+  patchSession(id, { additionalDirs: [...sess.additionalDirs, path], updatedAt: sess.updatedAt })
+}
+export function removeSessionFolder(id: ID, repoId: ID) {
+  const s = getApp()
+  const path = s.repos[repoId]?.rootPath
+  const sess = s.sessions[id]
+  if (!path || !sess) return
+  patchSession(id, { additionalDirs: sess.additionalDirs.filter((d) => d !== path), updatedAt: sess.updatedAt })
+}
+
+/**
+ * Track a folder as a project (Open folder… on New session, or a session discovered in a folder
+ * that wasn't tracked yet). Returns the existing project when the path is already tracked.
+ */
+export function addRepoFromPath(path: string, machine?: string): ID {
+  const s = getApp()
+  const clean = path.replace(/\/+$/, "")
+  const existing = s.repoOrder.find((id) => (s.repos[id].machine ?? "") === (machine ?? "") && (s.repos[id].rootPath === clean || homeAlias(s.repos[id].rootPath) === clean))
+  if (existing) return existing
+  const name = clean.split("/").pop() || clean
+  // a VPS folder keeps "~/…" (claude resolves it there); same id scheme as backend/real.ts
+  const rootPath = machine ? clean : clean.replace(/^~(?=\/)/, REAL ? homeDir() : "/home/dev")
+  const id = machine ? `repo:${machine}:${rootPath}` : `repo_${name}_${Date.now().toString(36)}`
+  setApp((st) => ({
+    repos: {
+      ...st.repos,
+      [id]: {
+        id,
+        name,
+        rootPath,
+        machine,
+        defaultBranch: "main",
+        language: "TypeScript",
+        worktrees: [
+          {
+            id: `${id}::${rootPath}`,
+            repoId: id,
+            path: rootPath,
+            branch: "main",
+            isMain: true,
+            git: { state: "clean", filesChanged: 0, linesAdded: 0, linesRemoved: 0, untracked: 0, ahead: 0, behind: 0, unpushed: 0, observedAt: nowIso() },
+          },
+        ],
+        sharedRuleFiles: ["CLAUDE.md"],
+        pinned: false,
+        addedAt: nowIso(),
+      },
+    },
+    repoOrder: [...st.repoOrder, id],
+    repoSpecs: { ...st.repoSpecs, [id]: { name, language: "TypeScript", files: ["README.md", "CLAUDE.md", "src/index.ts"], tasks: [], symbols: [] } },
+    sessionIdsByRepo: { ...st.sessionIdsByRepo, [id]: [] },
+    structVersion: st.structVersion + 1,
+  }))
+  return id
+}
+const homeAlias = (p: string) => p.replace(/^\/home\/[^/]+/, "~")
+
+/**
+ * A Claude Code session started outside the app (`claude` in a terminal) shows up on its own
+ * (Phase 2: `claude agents --json`, hooks and the JSONL scan; RESEARCH §1.3). Its folder becomes a
+ * project if it isn't one yet. It is "observed": you can read it and message it; approvals happen
+ * in that terminal until you take it over.
+ */
+export function addDiscoveredSession(path: string, task: string): ID {
+  const repoId = addRepoFromPath(path)
+  const d = getApp().settings.defaults
+  const id = createSession({ repoId, where: "main", prompt: task, title: task, model: d.model, effort: d.effort, permissionMode: "default", additionalRepoIds: [], background: false })
+  setStatus(id, "working", { control: "observed", activity: "Reading the codebase", lastViewedAt: undefined })
+  return id
 }
 
 export function interrupt(id: ID) {
   const s = getApp().sessions[id]
   if (!s || (s.status !== "working" && s.status !== "starting")) return
+  if (REAL) return realInterrupt(id)
   setStatus(id, "idle", { activity: "Interrupted by user", lastStopReason: "cancelled" })
 }
 
 export function resumeSession(id: ID) {
   const s = getApp().sessions[id]
   if (!s) return
+  if (REAL) {
+    // continue it in the app (`claude --resume`); a terminal session must be stopped there first
+    // claude finds a session by the folder it was started in
+    realStart({ cwd: s.startCwd ?? s.cwd, resume: id, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+    openSession(id)
+    return
+  }
   setStatus(id, "working", {
     control: "owned",
     archived: false,
@@ -269,6 +314,11 @@ const newId = (p: string) => `${p}_${Date.now().toString(36)}${(seq++).toString(
 export function forkSession(id: ID) {
   const s = getApp().sessions[id]
   if (!s) return
+  if (REAL) {
+    const fid = realStart({ cwd: s.startCwd ?? s.cwd, resume: id, fork: true, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+    openSession(fid)
+    return
+  }
   const fid = newId("s")
   const fork: Session = {
     ...s,
@@ -317,11 +367,39 @@ export interface NewSessionInput {
   additionalRepoIds: ID[]
   background: boolean
   parent?: Session["parent"]
+  fastMode?: boolean
+  ultracode?: boolean
+  outputStyle?: string
 }
 
 export function createSession(input: NewSessionInput): ID {
   const st = getApp()
   const repo = st.repos[input.repoId]
+  if (REAL) {
+    // a workspace's main folder: the agent works across all its repos (repos outside the folder
+    // join with --add-dir) and is told which they are; no worktree for a folder that is not a repo
+    const ws = repo.isHome ? st.settings.workspaces.find((w) => w.id === repo.workspace) : undefined
+    const wsRepos = ws ? Object.values(st.repos).filter((r) => r.workspace === ws.id && !r.isHome && !r.machine) : []
+    const outside = wsRepos.filter((r) => !r.rootPath.startsWith(repo.rootPath + "/")).map((r) => r.rootPath)
+    const note = ws
+      ? `You run in ${repo.rootPath}, the main folder of the "${ws.name}" workspace. Its repositories: ${wsRepos.map((r) => `${r.name} (${r.rootPath})`).join(", ")}. Each is its own git repository with its own branch; a change that touches several of them is made in each, from here.`
+      : undefined
+    return realStart({
+      cwd: repo.rootPath,
+      machine: repo.machine,
+      prompt: input.prompt,
+      model: input.model,
+      effort: input.effort,
+      permissionMode: input.permissionMode,
+      addDirs: [...input.additionalRepoIds.map((r) => st.repos[r]?.rootPath).filter(Boolean), ...outside],
+      appendSystemPrompt: note,
+      name: input.title,
+      worktree: input.where === "worktree-new" && !repo.isHome ? input.worktreeName : undefined,
+      fastMode: input.fastMode,
+      ultracode: input.ultracode,
+      outputStyle: input.outputStyle,
+    })
+  }
   const id = newId("s")
   const slug = (input.worktreeName || input.title || input.prompt || "session")
     .toLowerCase()
@@ -363,21 +441,26 @@ export function createSession(input: NewSessionInput): ID {
     archived: false,
   }
   addSession(session)
-  setTimeout(() => setStatus(id, "working", { activity: "Reading the codebase" }), 1200)
+  setTimeout(() => {
+    if (getApp().sessions[id]?.status === "starting") setStatus(id, "working", { activity: "Reading the codebase" })
+  }, 1200)
   return id
 }
 
 // ---------- requests ----------
 export function resolvePermission(requestId: ID, optionId: string, feedback?: string) {
+  // the desktop app: the request was answered or went away meanwhile; never fake an answer
+  if (REAL) {
+    if (!realResolve(requestId, optionId, feedback)) expireRequest(requestId)
+    return
+  }
   const s = getApp()
   const req = s.requests[requestId]
   if (!req || req.type === "question") return
-  if (s.activeTab === `/session/${req.sessionId}`) pinSessionTab(req.sessionId)
   const option = req.options.find((o) => o.id === optionId)
   const rejected = option?.kind === "reject_once" || option?.kind === "reject_always"
   setApp((st) => ({
     requests: { ...st.requests, [requestId]: { ...req, state: "selected", selectedOptionId: optionId, resolvedAt: nowIso() } as typeof req },
-    toasts: st.toasts.filter((t) => t.sessionId !== req.sessionId),
   }))
   if (req.type === "permission" && req.subagentId) {
     const sub = getApp().subagents[req.subagentId]
@@ -410,13 +493,23 @@ export function resolvePermission(requestId: ID, optionId: string, feedback?: st
   setStatus(req.sessionId, "working", patch)
 }
 
+/** A prompt card that no longer has a prompt behind it: show it as gone. */
+function expireRequest(requestId: ID) {
+  setApp((st) => {
+    const req = st.requests[requestId]
+    return req && req.state === "pending" ? { requests: { ...st.requests, [requestId]: { ...req, state: "cancelled" } as typeof req }, statusVersion: st.statusVersion + 1 } : st
+  })
+}
+
 export function answerQuestion(requestId: ID, answers: Record<string, string | string[]>) {
+  if (REAL) {
+    if (!realAnswer(requestId, answers)) expireRequest(requestId)
+    return
+  }
   const req = getApp().requests[requestId] as QuestionRequest | undefined
   if (!req || req.type !== "question") return
-  pinSessionTab(req.sessionId)
   setApp((st) => ({
     requests: { ...st.requests, [requestId]: { ...req, state: "answered" } },
-    toasts: st.toasts.filter((t) => t.sessionId !== req.sessionId),
   }))
   const first = Object.values(answers)[0]
   setStatus(req.sessionId, "working", {
@@ -429,7 +522,7 @@ export function answerQuestion(requestId: ID, answers: Record<string, string | s
 export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" = "queue", attachments?: string[]) {
   const s = getApp().sessions[sessionId]
   if (!s || !text.trim()) return
-  pinSessionTab(sessionId)
+  if (REAL) return realSend(sessionId, text, attachments)
   const t = getApp().transcripts[sessionId]
   if (t && (s.status === "working" || s.status === "starting") && mode === "queue") {
     setApp((st) => ({
@@ -453,38 +546,6 @@ export function removeQueued(sessionId: ID, queuedId: ID) {
   }))
 }
 
-// ---------- map ui ----------
-export function patchMap(patch: Partial<MapUi>) {
-  setApp((s) => ({ map: { ...s.map, ...patch } }))
-}
-export function toggleRepoCollapsed(repoId: ID) {
-  setApp((s) => {
-    const next = { ...s.map.collapsedRepos }
-    if (next[repoId]) delete next[repoId]
-    else next[repoId] = true
-    return { map: { ...s.map, collapsedRepos: next } }
-  })
-}
-export function toggleStack(repoId: ID) {
-  setApp((s) => {
-    const next = { ...s.map.expandedStacks }
-    if (next[repoId]) delete next[repoId]
-    else next[repoId] = true
-    return { map: { ...s.map, expandedStacks: next } }
-  })
-}
-export function toggleSubagents(sessionId: ID) {
-  setApp((s) => {
-    const next = { ...s.map.expandedSubagents }
-    if (next[sessionId]) delete next[sessionId]
-    else next[sessionId] = true
-    return { map: { ...s.map, expandedSubagents: next } }
-  })
-}
-export function setHistoryRange(r: HistoryRange) {
-  patchMap({ historyRange: r })
-}
-
 // ---------- dialogs ----------
 // Type-ahead: keys pressed between Ctrl+K and the palette input getting focus (first open loads a
 // chunk and mounts a dialog) are buffered and handed to the palette, so fast typing isn't lost.
@@ -503,26 +564,37 @@ export function takePaletteTypeAhead() {
   typeAhead = ""
   return t
 }
-export function openPalette(prefix = "") {
+export function openPalette() {
   typeAhead = ""
   window.addEventListener("keydown", captureTypeAhead, true)
-  setApp({ paletteOpen: true, palettePrefix: prefix })
+  setApp({ paletteOpen: true })
 }
 export function closePalette() {
   takePaletteTypeAhead()
-  setApp({ paletteOpen: false, palettePrefix: "" })
+  setApp({ paletteOpen: false })
 }
-export function openNewSession(repoId?: ID, tab: "new" | "resume" = "new") {
-  setApp({ newSession: { repoId, tab } })
+/** The New session screen (Ctrl+N, +), in `repoId` or the project on screen. */
+export function openNewSession(repoId?: ID) {
+  navigate(repoId ? `/new/${repoId}` : "/new")
 }
-export function closeNewSession() {
-  setApp({ newSession: null })
+
+/** New sessions default to the repo of the session on screen. */
+export function repoInFocus() {
+  const id = currentSessionId()
+  return (id && getApp().sessions[id]?.repoId) || undefined
 }
-export function openCrossRepo(open = true) {
-  setApp({ crossRepoOpen: open })
+
+/** Hide or show the session list (Ctrl+B, the panel button). */
+export function toggleSidebar() {
+  setApp((s) => ({ settings: { ...s.settings, sidebarHidden: !s.settings.sidebarHidden } }))
 }
 
 // ---------- notifications ----------
+/**
+ * Record a notification (coalesced per session and kind). No in-app pop-up: the top bar's
+ * "need you" count and the coloured cards already say it (PRODUCT.md: nothing stacked on top).
+ * Phase 2 sends these as OS notifications while the window is in the background.
+ */
 export function pushNotification(n: Omit<AppNotification, "id" | "count" | "groupKey"> & { groupKey?: string }) {
   const s = getApp()
   const sess = s.sessions[n.sessionId]
@@ -533,22 +605,8 @@ export function pushNotification(n: Omit<AppNotification, "id" | "count" | "grou
     const notifications = existing
       ? st.notifications.map((x) => (x === existing ? { ...x, count: x.count + 1, createdAt: n.createdAt, body: n.body } : x))
       : [{ ...n, id: newId("n"), count: 1, groupKey }, ...st.notifications].slice(0, 300)
-    const tExisting = st.toasts.find((t) => t.sessionId === n.sessionId)
-    const toast = {
-      id: tExisting?.id ?? newId("t"),
-      sessionId: n.sessionId,
-      kind: n.kind,
-      title: n.title,
-      body: n.body,
-      count: (tExisting?.count ?? 0) + 1,
-      createdAt: Date.now(),
-    }
-    const toasts = [toast, ...st.toasts.filter((t) => t.sessionId !== n.sessionId)].slice(0, 3)
-    return { notifications, toasts }
+    return { notifications }
   })
-}
-export function dismissToast(id: ID) {
-  setApp((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
 }
 export function markNotificationRead(id: ID) {
   const at = nowIso()
@@ -557,9 +615,6 @@ export function markNotificationRead(id: ID) {
 export function markAllNotificationsRead() {
   const at = nowIso()
   setApp((s) => ({ notifications: s.notifications.map((n) => (n.readAt ? n : { ...n, readAt: at })) }))
-}
-export function setNotificationsOpen(open: boolean) {
-  setApp({ notificationsOpen: open })
 }
 
 // ---------- settings & engine ----------
@@ -570,16 +625,11 @@ export function setEngine(patch: Partial<{ running: boolean; rate: number }>) {
   setApp((s) => ({ engine: { ...s.engine, ...patch } }))
 }
 
-/** Go to the next item that needs the user (tier 0 first). */
-export async function goToNextWaiting() {
-  const { selectAttention } = await import("./selectors")
-  const { STATUS_TIER } = await import("@/lib/status")
-  const all = selectAttention(getApp())
-  const needs = all.filter((e) => STATUS_TIER[e.status] <= 1)
-  const list = needs.length ? needs : all
+/** Ctrl+J and the "need you" button: the next session that needs the user, after the current one. */
+export function goToNextWaiting() {
+  const list = selectNeedsYou(getApp())
   if (!list.length) return
-  const current = getApp().activeTab
-  const idx = list.findIndex((e) => current === `/session/${e.kind === "session" ? e.id : e.sessionId}`)
-  const next = list[(idx + 1) % list.length]
-  openSession(next.kind === "session" ? next.id : next.sessionId)
+  const cur = currentSessionId()
+  const i = cur ? list.indexOf(cur) : -1
+  openSession(list[(i + 1) % list.length])
 }

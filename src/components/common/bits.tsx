@@ -1,34 +1,13 @@
-import { memo, type ReactNode } from "react"
+import { type ReactNode } from "react"
 import { ArrowDown, ArrowUp, CircleCheck, CircleDot, CircleX, GitPullRequest, GitPullRequestDraft, GitMerge } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { ControlMode, GitSnapshot } from "@/lib/model"
-import { CONTROL_LABEL, CONTROL_TAG } from "@/lib/status"
-
-/** Control-mode marker (RESEARCH §1.4): tiny mono tag, explanation on hover. */
-export const ControlTag = memo(function ControlTag({ mode, className }: { mode: ControlMode; className?: string }) {
-  return (
-    <span
-      title={CONTROL_LABEL[mode]}
-      className={cn(
-        "inline-flex h-4 shrink-0 items-center rounded-sm border px-1 font-mono text-[9.5px] leading-none font-medium tracking-wide",
-        mode === "observed"
-          ? "border-line text-fg-muted"
-          : mode === "history"
-            ? "border-line-subtle text-fg-faint"
-            : "border-line-subtle text-fg-faint",
-        className,
-      )}
-    >
-      {CONTROL_TAG[mode]}
-    </span>
-  )
-})
+import type { GitSnapshot } from "@/lib/model"
 
 /** +added −removed, VS Code Dark Modern gutter colors. */
 export function DiffStat({ added, removed, className }: { added: number; removed: number; className?: string }) {
   if (!added && !removed) return null
   return (
-    <span className={cn("tabular inline-flex gap-1 font-mono text-[11px]", className)}>
+    <span className={cn("tabular inline-flex gap-1 font-mono text-xs", className)}>
       <span className="text-diff-add">+{added}</span>
       <span className="text-diff-del">−{removed}</span>
     </span>
@@ -39,7 +18,7 @@ export function DiffStat({ added, removed, className }: { added: number; removed
 export function AheadBehind({ ahead, behind, className }: { ahead: number; behind: number; className?: string }) {
   if (!ahead && !behind) return null
   return (
-    <span className={cn("tabular inline-flex items-center gap-1.5 font-mono text-[11px] text-fg-muted", className)}>
+    <span className={cn("tabular inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground", className)}>
       {ahead > 0 && (
         <span className="inline-flex items-center" title={`${ahead} unpushed commit${ahead > 1 ? "s" : ""}`}>
           <ArrowUp size={11} strokeWidth={2} />
@@ -68,7 +47,7 @@ export function PrChip({ pr }: { pr: NonNullable<GitSnapshot["pr"]> }) {
     ) : null
   return (
     <span
-      className="tabular inline-flex items-center gap-1 font-mono text-[11px] text-fg-muted"
+      className="tabular inline-flex items-center gap-1 font-mono text-xs text-muted-foreground"
       title={`PR #${pr.number} · ${pr.state} · checks ${pr.checks}`}
     >
       <Icon size={11} className={pr.state === "merged" ? "text-[#8e4ec6]" : undefined} />#{pr.number}
@@ -84,7 +63,7 @@ export function GitChips({ git, className }: { git: GitSnapshot; className?: str
       <DiffStat added={git.linesAdded} removed={git.linesRemoved} />
       {git.pr && <PrChip pr={git.pr} />}
       {git.state === "clean" && !git.unpushed && !git.behind && !git.pr && (
-        <span className="text-[11px] text-fg-faint">clean</span>
+        <span className="text-xs text-muted-foreground/70">clean</span>
       )}
     </span>
   )
@@ -109,8 +88,8 @@ export function PanelHeader({
       className={cn("group/ph flex h-7 shrink-0 items-center gap-1.5 pr-1.5 pl-3", onClick && "cursor-default", className)}
       onClick={onClick}
     >
-      <span className="section-label truncate">{label}</span>
-      {count !== undefined && <span className="tabular text-[11px] text-fg-faint">{count}</span>}
+      <span className="text-xs font-medium text-muted-foreground truncate">{label}</span>
+      {count !== undefined && <span className="tabular text-xs text-muted-foreground/70">{count}</span>}
       <span className="ml-auto flex items-center gap-0.5">{actions}</span>
     </div>
   )
@@ -124,8 +103,8 @@ export function PropertyTable({ children, className }: { children: ReactNode; cl
 export function Prop({ label, children, mono }: { label: ReactNode; children: ReactNode; mono?: boolean }) {
   return (
     <>
-      <div className="truncate text-fg-faint">{label}</div>
-      <div className={cn("min-w-0 truncate text-fg-muted", mono && "font-mono text-[11px]")}>{children}</div>
+      <div className="truncate text-muted-foreground/70">{label}</div>
+      <div className={cn("min-w-0 truncate text-muted-foreground", mono && "font-mono text-xs")}>{children}</div>
     </>
   )
 }
@@ -147,8 +126,8 @@ export function EmptyState({
     <div className={cn("flex h-full w-full items-center justify-center p-4", className)}>
       <div
         className={cn(
-          "flex max-w-sm flex-col items-center gap-2 text-center text-xs text-fg-faint",
-          boxed && "rounded-md border border-dashed border-line-subtle px-6 py-5",
+          "flex max-w-sm flex-col items-center gap-2 text-center text-xs text-muted-foreground/70",
+          boxed && "rounded-md border border-dashed border-border px-6 py-5",
         )}
       >
         <div>{children}</div>
@@ -162,7 +141,7 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   return (
     <kbd
       className={cn(
-        "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-sm border border-line-subtle bg-elevated px-1 font-sans text-[10.5px] leading-none text-fg-muted",
+        "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-sm border border-border bg-muted px-1 font-sans text-xs leading-none text-muted-foreground",
         className,
       )}
     >
@@ -185,5 +164,5 @@ export function Shortcut({ keys, className }: { keys: string[]; className?: stri
 }
 
 export function Divider({ vertical, className }: { vertical?: boolean; className?: string }) {
-  return <div className={cn(vertical ? "mx-1 h-4 w-px bg-line-subtle" : "h-px w-full bg-line-subtle", className)} />
+  return <div className={cn(vertical ? "mx-1 h-4 w-px bg-border" : "h-px w-full bg-border", className)} />
 }

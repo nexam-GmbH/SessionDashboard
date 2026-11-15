@@ -2,49 +2,38 @@ import { useEffect, useState } from "react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Shortcut } from "@/components/common/bits"
 
-/**
- * "?" opens a compact list of the shortcuts that matter (Linear/GitHub pattern). Calm UI: one
- * screen, short labels, no explanations. The full list lives in Settings → Keybindings.
- */
+/** "?" opens the few shortcuts that matter (Linear/GitHub pattern): one screen, short labels. */
 const GROUPS: { title: string; items: [string, string[]][] }[] = [
   {
-    title: "Everywhere",
+    title: "Switch",
     items: [
-      ["Search & commands", ["mod", "K"]],
-      ["Next thing that needs you", ["N"]],
-      ["Jump to Needs-you item", ["Alt", "1–9"]],
-      ["New session", ["mod", "N"]],
-      ["Cross-repo task", ["mod", "Shift", "N"]],
-      ["Close tab", ["mod", "W"]],
-    ],
-  },
-  {
-    title: "Go to",
-    items: [
-      ["Map", ["G", "M"]],
-      ["Sessions", ["G", "S"]],
-      ["Code graph", ["G", "G"]],
-      ["Sidebar", ["mod", "B"]],
-      ["Bottom panel", ["mod", "J"]],
-      ["Settings", ["mod", ","]],
+      ["Previous session", ["mod", "Tab"]],
+      ["Next that needs you", ["mod", "J"]],
+      ["Session 1–9 in the list", ["mod", "1–9"]],
+      ["Overview", ["mod", "0"]],
+      ["Up / down the list", ["Alt", "↑↓"]],
+      ["Search", ["mod", "K"]],
     ],
   },
   {
     title: "In a session",
     items: [
-      ["Approve (first option)", ["⏎"]],
-      ["Send now", ["mod", "⏎"]],
+      ["Allow (first option)", ["⏎"]],
+      ["Send", ["⏎"]],
+      ["Send now, mid-turn", ["mod", "⏎"]],
       ["Interrupt", ["Esc"]],
-      ["Edit last queued", ["↑"]],
+      ["Rewind", ["Esc", "Esc"]],
+      ["New session", ["mod", "N"]],
     ],
   },
   {
-    title: "On the map",
+    title: "Window",
     items: [
-      ["Move selection", ["←", "→", "↑", "↓"]],
-      ["Open", ["⏎"]],
-      ["Fit view", ["F"]],
-      ["Repo links", ["L"]],
+      ["Workspace 1–9", ["Alt", "1–9"]],
+      ["Hide / show the session list", ["mod", "B"]],
+      ["Terminal", ["mod", "`"]],
+      ["Larger / smaller", ["mod", "= −"]],
+      ["Settings", ["mod", ","]],
     ],
   },
 ]
@@ -55,7 +44,7 @@ export function ShortcutsHelp() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey) return
       const el = e.target as HTMLElement | null
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable || el.closest(".xterm"))) return
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return
       e.preventDefault()
       setOpen((v) => !v)
     }
@@ -69,17 +58,17 @@ export function ShortcutsHelp() {
   }, [])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-[640px] gap-0 border-line bg-elevated p-0 sm:max-w-[640px]">
-        <div className="border-b border-line-subtle px-4 py-3">
+      <DialogContent className="max-w-[640px] gap-0 border-border bg-muted p-0 sm:max-w-[640px]">
+        <div className="border-b border-border px-4 py-3">
           <DialogTitle className="text-sm font-medium">Keyboard shortcuts</DialogTitle>
         </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-4 py-4">
           {GROUPS.map((g) => (
             <section key={g.title}>
-              <div className="section-label mb-1.5">{g.title}</div>
+              <h3 className="mb-1.5 text-xs font-medium text-muted-foreground/70">{g.title}</h3>
               {g.items.map(([label, keys]) => (
                 <div key={label} className="flex h-7 items-center gap-3 text-xs">
-                  <span className="text-fg-muted">{label}</span>
+                  <span className="text-muted-foreground">{label}</span>
                   <Shortcut keys={keys} className="ml-auto" />
                 </div>
               ))}

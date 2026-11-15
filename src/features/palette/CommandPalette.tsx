@@ -1,107 +1,82 @@
-// Command palette — UI_PLAN §5.9. shadcn Command (cmdk, MIT); structure after
-// Yaak CommandPaletteDialog.tsx (MIT) and Orca's worktree-jump palette (MIT):
-// recents on top, groups, prefix modes (> commands, @ sessions, # repos), own fuzzy
-// search with shouldFilter={false} so thousands of sessions stay fast.
+// Search (Ctrl+K). shadcn Command (cmdk, MIT); structure after Orca's worktree-jump palette (MIT,
+// ideas): with an empty query it lists live sessions ranked by attention (needs you, then
+// finished unseen, then recently opened), so Ctrl+K ⏎ goes where you are needed. Typing searches
+// live sessions first, then a short group of past ones, then repos (new session there) and a few
+// commands.
 import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
-import { FolderGit2, History, Search, CornerDownLeft, ArrowUpDown, Waypoints } from "lucide-react"
+import { ArrowUpDown, CornerDownLeft, Plus, Search } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { getApp, useApp } from "@/store/app"
-import { closePalette, openRepo, openSession, takePaletteTypeAhead } from "@/store/actions"
+import { getApp } from "@/store/app"
+import { selectNeedsYou, selectSessionOrder, useShownStatus } from "@/store/selectors"
+import { closePalette, openNewSession, openSession, takePaletteTypeAhead } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Kbd, Shortcut } from "@/components/common/bits"
-import { STATUS_TIER } from "@/lib/status"
 import { relTime } from "@/lib/format"
-import { prepareQuery, scoreSession } from "@/features/sessions/search"
+import { matchScore } from "@/lib/match"
+import { prepareQuery, scoreSession } from "@/lib/sessionSearch"
 import type { Session } from "@/lib/model"
 import { COMMANDS } from "./commands"
-import { matchScore } from "@/lib/match"
-import { searchCodeGraph } from "@/features/code-graph/graphIntent"
-import { setSessionsFilter } from "@/features/sessions/sessionsUi"
-import { navigate } from "@/app/nav"
+
+type Hit = { x: Session; repo: string }
 
 export default function CommandPalette() {
-  const prefix = useApp((s) => s.palettePrefix)
-  const [raw, setRaw] = useState(prefix)
+  const [raw, setRaw] = useState("")
   // keys typed before the input had focus (see openPalette)
   useEffect(() => {
     const early = takePaletteTypeAhead()
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time merge of buffered keystrokes on mount
     if (early) setRaw((r) => r + early)
   }, [])
-  const mode = raw.startsWith(">") ? "commands" : raw.startsWith("@") ? "sessions" : raw.startsWith("#") ? "repos" : "all"
-  const query = mode === "all" ? raw.trim() : raw.slice(1).trim()
+  const query = useDeferredValue(raw.trim())
 
-  // Deferred so typing never waits for the 5k-session scan (stress fixture).
-  const deferred = useDeferredValue(query)
-  const { sessions, past, pastTotal, repos, commands } = useMemo(() => {
+  const { live, past, repos, commands } = useMemo(() => {
     const s = getApp()
-    const q = deferred
-    // developer commands (fixtures, perf, WebGL) only in ">" command mode
-    const cmds = COMMANDS.filter((c) => (!c.when || c.when()) && (mode === "commands" || c.group !== "Developer"))
-      .map((c) => ({ c, score: matchScore(q, `${c.title} ${c.keywords ?? ""} ${c.group}`) }))
+    const repoName = (x: Session) => (x.repoId ? (s.repos[x.repoId]?.name ?? "") : "main agent")
+    const order = selectSessionOrder(s)
+    let live: Hit[]
+    let past: Hit[] = []
+    if (!query) {
+      // attention first, then what you had open most recently, then the rest in list order
+      const needs = selectNeedsYou(s)
+      const unseen = order.filter((id) => s.sessions[id].status === "done_unseen")
+      const ranked = [...new Set([...needs, ...unseen, ...s.recent.filter((id) => order.includes(id)), ...order])]
+      live = ranked.slice(0, 8).map((id) => ({ x: s.sessions[id], repo: repoName(s.sessions[id]) }))
+    } else {
+      const pq = prepareQuery(query)
+      const scored = (ids: string[]) =>
+        ids
+          .map((id) => s.sessions[id])
+          .map((x) => ({ x, repo: repoName(x), score: scoreSession(pq, x, repoName(x)) }))
+          .filter((h) => h.score > 0)
+          .sort((a, b) => b.score - a.score || b.x.updatedAt.localeCompare(a.x.updatedAt))
+      live = scored(order).slice(0, 10)
+      const pastIds = Object.keys(s.sessions).filter((id) => s.sessions[id].archived || s.sessions[id].control === "history")
+      past = scored(pastIds).slice(0, 4)
+    }
+    const repos = query
+      ? s.repoOrder
+          .map((id) => s.repos[id])
+          .filter((r) => matchScore(query, r.name) > 0)
+          .slice(0, 3)
+      : []
+    const commands = COMMANDS.filter((c) => !c.when || c.when())
+      .map((c) => ({ c, score: matchScore(query, `${c.title} ${c.keywords ?? ""}`) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
+      .slice(0, query ? 6 : 4)
       .map((x) => x.c)
-    // top-k without sorting every match: keep a small sorted buffer
-    const limit = q ? 12 : 8
-    const pq = prepareQuery(q)
-    const top: { x: Session; repo: string; rank: number }[] = []
-    // history/archive matches go in their own short group (calm: live work first, no wall of old runs)
-    const pastAll: { x: Session; repo: string; rank: number }[] = []
-    for (const id in s.sessions) {
-      const x = s.sessions[id]
-      const isPast = x.control === "history" || x.archived
-      if (!q && isPast) continue
-      const repo = x.repoId ? (s.repos[x.repoId]?.name ?? "") : "main"
-      let rank: number
-      if (q) {
-        const score = scoreSession(pq, x, repo)
-        if (!score) continue
-        rank = score + (x.archived ? -5 : 0) + Date.parse(x.updatedAt) / 1e13
-        if (isPast) {
-          pastAll.push({ x, repo, rank })
-          continue
-        }
-      } else {
-        rank = -STATUS_TIER[x.status] * 1e3 + Date.parse(x.updatedAt) / 1e10
-      }
-      if (top.length === limit && rank <= top[limit - 1].rank) continue
-      top.push({ x, repo, rank })
-      top.sort((a, b) => b.rank - a.rank)
-      if (top.length > limit) top.pop()
-    }
-    const rps = s.repoOrder
-      .map((id) => ({ r: s.repos[id], score: matchScore(q, s.repos[id].name) }))
-      .filter((v) => v.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, q ? 6 : 5)
-    // one row per title+repo (the same task re-run many times reads as noise), newest first among equals
-    pastAll.sort((a, b) => b.rank - a.rank)
-    const seen = new Set<string>()
-    const pastTop: typeof pastAll = []
-    for (const p of pastAll) {
-      const k = `${p.x.title}|${p.repo}`
-      if (seen.has(k)) continue
-      seen.add(k)
-      pastTop.push(p)
-      if (pastTop.length === 4) break
-    }
-    return { sessions: top, past: pastTop, pastTotal: pastAll.length, repos: rps, commands: cmds.slice(0, q ? 12 : 8) }
-  }, [deferred, mode])
+    return { live, past, repos, commands }
+  }, [query])
 
-  // Controlled selection: results arrive one render late (deferred query), so cmdk's own
-  // "select the first item" can point at an item that no longer exists and Enter does nothing.
-  // Fall back to the first visible item whenever the selected one is gone.
+  // Controlled selection: results arrive one render late (deferred query); fall back to the first
+  // visible item whenever the selected one is gone, so Enter always does something.
   const [value, setValue] = useState("")
-  const showCode = mode === "all" && query.length >= 2
   const values = [
-    ...(mode === "all" || mode === "sessions" ? sessions.map(({ x }) => `s:${x.id}`) : []),
-    ...(mode === "all" || mode === "sessions" ? past.map(({ x }) => `s:${x.id}`) : []),
-    ...((mode === "all" || mode === "sessions") && pastTotal > past.length ? ["h:all"] : []),
-    ...(mode === "all" || mode === "commands" ? commands.map((c) => `c:${c.id}`) : []),
-    ...(showCode ? ["g:search"] : []),
-    ...(mode === "all" || mode === "repos" ? repos.map(({ r }) => `r:${r.id}`) : []),
+    ...live.map(({ x }) => `s:${x.id}`),
+    ...past.map(({ x }) => `s:${x.id}`),
+    ...repos.map((r) => `r:${r.id}`),
+    ...commands.map((c) => `c:${c.id}`),
   ]
   const selected = values.includes(value) ? value : (values[0] ?? "")
 
@@ -114,101 +89,70 @@ export default function CommandPalette() {
     <Dialog open onOpenChange={(o) => !o && closePalette()}>
       <DialogContent
         showCloseButton={false}
-        className="top-[14%] max-w-[640px] translate-y-0 gap-0 overflow-hidden border-line bg-elevated p-0 shadow-[0_16px_48px_rgba(0,0,0,0.55)] sm:max-w-[640px]"
+        className="top-[14%] bottom-auto max-w-[600px] translate-y-0 gap-0 overflow-hidden rounded-xl border-border bg-muted p-0 shadow-[0_16px_48px_rgba(0,0,0,0.55)] sm:max-w-[600px]"
       >
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
-        <Cmdk shouldFilter={false} loop value={selected} onValueChange={setValue} className="flex flex-col" label="Command palette">
-          <div className="flex h-10 items-center gap-2 border-b border-line-subtle px-3">
-            <Search size={14} className="shrink-0 text-fg-faint" />
+        <DialogTitle className="sr-only">Search</DialogTitle>
+        <Cmdk shouldFilter={false} loop value={selected} onValueChange={setValue} className="flex flex-col" label="Search">
+          <div className="flex h-11 items-center gap-2.5 border-b border-border px-3.5">
+            <Search size={15} className="shrink-0 text-muted-foreground/70" />
             <Cmdk.Input
               autoFocus
               value={raw}
               onValueChange={setRaw}
-              placeholder="Search sessions and repos"
-              title="> commands · @ sessions · # repos"
-              className="h-full flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-faint"
+              placeholder="Go to a session, repo or command"
+              className="h-full flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             />
           </div>
-          <Cmdk.List className="max-h-[min(440px,60vh)] overflow-y-auto p-1">
-            <Cmdk.Empty className="px-3 py-6 text-center text-xs text-fg-faint">No results.</Cmdk.Empty>
-            {(mode === "all" || mode === "sessions") && sessions.length > 0 && (
-              <Group heading={query ? "Sessions" : "Recent"}>
-                {sessions.map(({ x, repo }) => (
-                  <Item key={x.id} value={`s:${x.id}`} onSelect={() => run(() => openSession(x.id))}>
-                    <StatusGlyph status={x.status} size="sm" animate={false} />
-                    <span className="truncate text-fg">{x.title}</span>
-                    <span className="shrink-0 text-[11px] text-fg-faint">{repo}</span>
-                    {x.archived && <span className="shrink-0 rounded-sm border border-line-subtle px-1 text-[10px] text-fg-faint">archived</span>}
-                    <span className="tabular ml-auto shrink-0 text-[11px] text-fg-faint">{relTime(x.updatedAt)}</span>
-                  </Item>
+          <Cmdk.List className="max-h-[min(460px,60vh)] overflow-y-auto p-1.5">
+            <Cmdk.Empty className="px-3 py-6 text-center text-xs text-muted-foreground/70">Nothing matches.</Cmdk.Empty>
+            {live.length > 0 && (
+              <Group heading={query ? "Sessions" : "Sessions, most urgent first"}>
+                {live.map(({ x, repo }) => (
+                  <SessionItem key={x.id} x={x} repo={repo} onSelect={() => run(() => openSession(x.id))} />
                 ))}
               </Group>
             )}
-            {(mode === "all" || mode === "sessions") && past.length > 0 && (
-              <Group heading="History">
+            {past.length > 0 && (
+              <Group heading="Past and archived">
                 {past.map(({ x, repo }) => (
-                  <Item key={x.id} value={`s:${x.id}`} onSelect={() => run(() => openSession(x.id))}>
-                    <StatusGlyph status={x.status} size="sm" animate={false} />
-                    <span className="truncate text-fg-muted">{x.title}</span>
-                    <span className="shrink-0 text-[11px] text-fg-faint">{repo}</span>
-                    {x.archived && <span className="shrink-0 rounded-sm border border-line-subtle px-1 text-[10px] text-fg-faint">archived</span>}
-                    <span className="tabular ml-auto shrink-0 text-[11px] text-fg-faint">{relTime(x.updatedAt)}</span>
-                  </Item>
+                  <SessionItem key={x.id} x={x} repo={repo} past onSelect={() => run(() => openSession(x.id))} />
                 ))}
-                {pastTotal > past.length && (
-                  <Item
-                    value="h:all"
-                    onSelect={() =>
-                      run(() => {
-                        setSessionsFilter({ view: "history", query })
-                        navigate("/sessions")
-                      })
-                    }
-                  >
-                    <History size={14} className="text-fg-faint" />
-                    <span className="truncate text-fg-muted">All {pastTotal} in History</span>
-                  </Item>
-                )}
               </Group>
             )}
-            {(mode === "all" || mode === "commands") && commands.length > 0 && (
+            {repos.length > 0 && (
+              <Group heading="Repos">
+                {repos.map((r) => (
+                  <Item key={r.id} value={`r:${r.id}`} onSelect={() => run(() => openNewSession(r.id))}>
+                    <Plus size={14} className="text-muted-foreground/70" />
+                    <span className="truncate text-foreground">New session in {r.name}</span>
+                  </Item>
+                ))}
+              </Group>
+            )}
+            {commands.length > 0 && (
               <Group heading="Commands">
                 {commands.map((c) => (
                   <Item key={c.id} value={`c:${c.id}`} onSelect={() => run(c.run)}>
-                    <span className="truncate text-fg">{c.title}</span>
+                    <span className="truncate text-foreground">{c.title}</span>
                     {c.shortcut && <Shortcut keys={c.shortcut} className="ml-auto" />}
                   </Item>
                 ))}
               </Group>
             )}
-            {/* code symbols aren't indexed here: one way into the graph search instead of "No results" */}
-            {showCode && (
-              <Group heading="Code">
-                <Item value="g:search" onSelect={() => run(() => searchCodeGraph(query))}>
-                  <Waypoints size={14} className="text-fg-faint" />
-                  <span className="truncate text-fg">
-                    Find <code className="font-mono text-[12px]">{query}</code> in code graph
-                  </span>
-                </Item>
-              </Group>
-            )}
-            {(mode === "all" || mode === "repos") && repos.length > 0 && (
-              <Group heading="Repos">
-                {repos.map(({ r }) => (
-                  <Item key={r.id} value={`r:${r.id}`} onSelect={() => run(() => openRepo(r.id))}>
-                    <FolderGit2 size={14} className="text-fg-faint" />
-                    <span className="truncate text-fg">{r.name}</span>
-                    <span className="ml-auto truncate font-mono text-[11px] text-fg-faint">{r.rootPath.replace(/^\/home\/[^/]+/, "~")}</span>
-                  </Item>
-                ))}
-              </Group>
-            )}
           </Cmdk.List>
-          {/* §2.5: at most 3 hints */}
-          <div className="flex h-7 items-center gap-3 border-t border-line-subtle px-3 text-[11px] text-fg-faint" title="@ sessions · # repos · Esc close">
-            <span className="flex items-center gap-1"><Kbd><ArrowUpDown size={10} /></Kbd> navigate</span>
-            <span className="flex items-center gap-1"><Kbd><CornerDownLeft size={10} /></Kbd> open</span>
-            <span className="flex items-center gap-1"><Kbd>&gt;</Kbd> commands</span>
+          <div className="flex h-8 items-center gap-3 border-t border-border px-3.5 text-xs text-muted-foreground/70">
+            <span className="flex items-center gap-1">
+              <Kbd>
+                <ArrowUpDown size={10} />
+              </Kbd>
+              move
+            </span>
+            <span className="flex items-center gap-1">
+              <Kbd>
+                <CornerDownLeft size={10} />
+              </Kbd>
+              open
+            </span>
           </div>
         </Cmdk>
       </DialogContent>
@@ -216,11 +160,23 @@ export default function CommandPalette() {
   )
 }
 
+function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; past?: boolean; onSelect: () => void }) {
+  const status = useShownStatus(x.id)
+  return (
+    <Item value={`s:${x.id}`} onSelect={onSelect}>
+      <StatusGlyph status={status} size="sm" animate={false} title={null} />
+      <span className={past ? "truncate text-muted-foreground" : "truncate text-foreground"}>{x.title}</span>
+      <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
+      <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{x.archived ? "archived" : relTime(x.updatedAt)}</span>
+    </Item>
+  )
+}
+
 function Group({ heading, children }: { heading: string; children: React.ReactNode }) {
   return (
     <Cmdk.Group
       heading={heading}
-      className="[&_[cmdk-group-heading]]:section-label pb-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1"
+      className="pb-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground/70"
     >
       {children}
     </Cmdk.Group>
@@ -229,11 +185,7 @@ function Group({ heading, children }: { heading: string; children: React.ReactNo
 
 function Item({ value, onSelect, children }: { value: string; onSelect: () => void; children: React.ReactNode }) {
   return (
-    <Cmdk.Item
-      value={value}
-      onSelect={onSelect}
-      className="flex h-7 cursor-default items-center gap-2 rounded-md px-2 text-[12.5px] data-[selected=true]:bg-selected"
-    >
+    <Cmdk.Item value={value} onSelect={onSelect} className="flex h-8 cursor-default items-center gap-2.5 rounded-md px-2 text-sm data-[selected=true]:bg-accent">
       {children}
     </Cmdk.Item>
   )

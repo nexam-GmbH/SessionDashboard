@@ -200,29 +200,6 @@ export const REPO_CATALOG: RepoSpec[] = [
   },
 ]
 
-export const EXTRA_REPO_WORDS = [
-  "search",
-  "payments",
-  "catalog",
-  "inventory",
-  "scheduler",
-  "reports",
-  "exports",
-  "webhooks",
-  "identity",
-  "audit",
-  "pricing",
-  "ingest",
-  "realtime",
-  "media",
-  "docs",
-  "support",
-  "crm",
-  "ml-features",
-  "feature-flags",
-  "status-page",
-]
-
 export const HISTORY_TASKS = [
   "Bump dependencies",
   "Fix flaky test in CI",
@@ -296,3 +273,9 @@ export const FOLLOW_UPS = [
   "Looks good. Push the branch and open a draft PR.",
   "Use the existing helper instead of a new util.",
 ]
+
+/**
+ * Folders on the mock disk that are not tracked projects yet: what "Open folder…" suggests, and
+ * where a session started in the terminal can appear from (Phase 2 lists real folders).
+ */
+export const LOCAL_FOLDERS = ["~/code/scratch", "~/code/dotfiles", "~/code/blog", "~/code/ml-experiments", "~/code/mobile-app", "~/code/billing-service"]

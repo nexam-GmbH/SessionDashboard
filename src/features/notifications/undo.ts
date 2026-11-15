@@ -4,9 +4,9 @@ import { archiveSessions, restoreSessions } from "@/store/actions"
 import type { ID } from "@/lib/model"
 
 /**
- * One "Undo" toast for reversible bulk actions (archive / restore), shown by ToastStack.
- * Every surface that archives (sidebar, map, inspector, Sessions table, session header,
- * palette) goes through archiveWithUndo, so the same action gives the same feedback everywhere.
+ * One "Undo" notice for reversible actions (archive / restore), shown in the top bar by
+ * UndoNotice. Every surface that archives (session menu, palette, archive screen) goes through
+ * archiveWithUndo / restoreWithUndo, so the same action gives the same feedback everywhere.
  */
 interface UndoState {
   /** bumps on every new action so the toast's timer restarts */

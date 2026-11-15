@@ -25,3 +25,6 @@ dist-ssr
 
 # screenshot/perf output
 .shots
+
+# design hook session cache (machine-local)
+.impeccable/hook.cache.json

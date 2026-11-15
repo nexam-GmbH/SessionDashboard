@@ -20,7 +20,7 @@ import {
 } from "lucide-react"
 import type { ID } from "@/lib/model"
 import { useSession } from "@/store/selectors"
-import { openSession, select } from "@/store/actions"
+import { openSession } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { DiffStat } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
@@ -113,10 +113,10 @@ export const FileTree = memo(function FileTree({
     })
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-chrome">
+    <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="flex h-9 shrink-0 items-center px-2">
-        <label className="flex h-6 w-full items-center gap-1.5 rounded-[4px] border border-line-subtle bg-canvas px-1.5 focus-within:border-brand/70">
-          <Search size={12} className="shrink-0 text-fg-faint" />
+        <label className="flex h-6 w-full items-center gap-1.5 rounded-md border border-border bg-background px-1.5 focus-within:border-input">
+          <Search size={12} className="shrink-0 text-muted-foreground/70" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -129,13 +129,13 @@ export const FileTree = memo(function FileTree({
             placeholder="Filter files"
             title="j / k: next / previous file"
             aria-label="Filter files"
-            className="min-w-0 flex-1 bg-transparent text-[12px] text-fg outline-none placeholder:text-fg-faint"
+            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/70"
           />
           {query && (
             <button
               type="button"
               aria-label="Clear filter"
-              className="text-fg-faint hover:text-fg"
+              className="text-muted-foreground/70 hover:text-foreground"
               onClick={() => setQuery("")}
             >
               <X size={12} />
@@ -145,12 +145,12 @@ export const FileTree = memo(function FileTree({
       </div>
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto contain-strict"
+        className="min-h-0 flex-1 overflow-y-auto [contain:strict]"
         role="tree"
         aria-label="Changed files"
       >
         {rows.length === 0 ? (
-          <div className="px-3 py-2 text-[12px] text-fg-faint">
+          <div className="px-3 py-2 text-xs text-muted-foreground/70">
             No matches
           </div>
         ) : (
@@ -205,27 +205,24 @@ const GroupRow = memo(function GroupRow({
 }) {
   const session = useSession(group.sessionId)
   return (
-    <div className="group/g flex h-full w-full min-w-0 items-center rounded-[3px] hover:bg-hover">
+    <div className="group/g flex h-full w-full min-w-0 items-center rounded-sm hover:bg-accent">
       <button
         type="button"
         role="treeitem"
         aria-expanded={open}
-        onClick={() => {
-          onToggle()
-          select({ kind: "session", id: group.sessionId })
-        }}
+        onClick={onToggle}
         title={session ? `${session.title}\n${group.sublabel}` : group.label}
         className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-1 text-left"
       >
         <ChevronRight
           size={12}
           className={cn(
-            "shrink-0 text-fg-faint transition-transform duration-150",
+            "shrink-0 text-muted-foreground/70 transition-transform duration-150",
             open && "rotate-90"
           )}
         />
-        <FolderGit2 size={13} className="shrink-0 text-fg-muted" />
-        <span className="min-w-0 truncate text-[12.5px] font-medium text-fg">
+        <FolderGit2 size={13} className="shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">
           {group.label}
         </span>
       </button>
@@ -235,12 +232,12 @@ const GroupRow = memo(function GroupRow({
           title={session ? `Open “${session.title}”` : "Open session"}
           aria-label="Open session"
           onClick={() => openSession(group.sessionId)}
-          className="hidden size-4 items-center justify-center rounded-[3px] text-fg-faint group-hover/g:flex hover:bg-selected hover:text-fg"
+          className="flex size-4 items-center justify-center rounded-sm text-muted-foreground/70 opacity-0 group-hover/g:opacity-100 focus-visible:opacity-100 hover:bg-accent hover:text-foreground"
         >
           <ArrowUpRight size={12} />
         </button>
         {session && <StatusGlyph status={session.status} size="xs" />}
-        <span className="text-[11px] text-fg-faint tabular">
+        <span className="text-xs text-muted-foreground/70 tabular">
           {group.files.length}
         </span>
       </span>
@@ -260,7 +257,7 @@ export function MarkGlyph({
       <CircleCheck
         size={size}
         strokeWidth={2}
-        className="shrink-0 text-fg-muted"
+        className="shrink-0 text-muted-foreground"
         aria-label="Kept"
       />
     )
@@ -269,7 +266,7 @@ export function MarkGlyph({
       <CircleX
         size={size}
         strokeWidth={2}
-        className="shrink-0 text-fg-faint"
+        className="shrink-0 text-muted-foreground/70"
         aria-label="Rejected"
       />
     )
@@ -277,7 +274,7 @@ export function MarkGlyph({
     <Circle
       size={size - 3}
       strokeWidth={2.25}
-      className="mx-[1.5px] shrink-0 text-fg-faint"
+      className="mx-[1.5px] shrink-0 text-muted-foreground/70"
       aria-label="Not reviewed"
     />
   )
@@ -319,30 +316,30 @@ const FileRow = memo(function FileRow({
       onClick={() => onSelect(file.key)}
       title={`${file.path} · ${OP_TITLE[file.op]}${mark ? ` · ${mark}` : ""}`}
       className={cn(
-        "flex h-full w-full min-w-0 items-center gap-1.5 rounded-[3px] pr-1.5 text-left",
+        "flex h-full w-full min-w-0 items-center gap-1.5 rounded-sm pr-1.5 text-left",
         indent ? "pl-6" : "pl-2",
-        active ? "bg-selected" : "hover:bg-hover"
+        active ? "bg-accent" : "hover:bg-accent"
       )}
     >
       {mark && <MarkGlyph mark={mark} size={12} />}
       <span
         className={cn(
-          "max-w-[75%] shrink-0 truncate text-[12.5px]",
+          "max-w-[75%] shrink-0 truncate text-xs",
           mark === "rejected"
-            ? "text-fg-faint line-through decoration-fg-faint/60"
+            ? "text-muted-foreground/70 line-through decoration-muted-foreground/40"
             : mark === "kept"
-              ? "text-fg-muted"
-              : "text-fg"
+              ? "text-muted-foreground"
+              : "text-foreground"
         )}
       >
         {file.name}
       </span>
-      <span className="min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground/70">
         {file.dir}
       </span>
       {comments > 0 && (
         <span
-          className="flex shrink-0 items-center gap-0.5 text-[11px] text-fg-muted"
+          className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground"
           title={`${comments} pending comment${comments === 1 ? "" : "s"}`}
         >
           <MessageSquare size={11} />

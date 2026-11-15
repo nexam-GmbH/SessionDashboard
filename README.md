@@ -1,8 +1,9 @@
 # Session Dashboard
 
-One place for all your Claude Code sessions across all your repos: an agent map (main agent → repos →
-sessions → subagents), full session control (stream, tools, diffs, approvals), history and archive, a Graphify
-code graph, and notifications. Tauri 2 + React 19 + TypeScript, dark, for Linux, Windows and macOS.
+All your parallel Claude Code sessions in one calm window: an overview tree (main agent → repos → sessions →
+subagents) that shows what needs you, and a Claude Code-style chat per session that you switch between as fast
+as terminal tabs (Ctrl+Tab, Ctrl+J, Ctrl+1–9). Tauri 2 + React 19 + TypeScript, dark, for Linux, Windows and
+macOS.
 
 **Status:** Phase 1, UI only with mock data. No real Claude processes yet.
 

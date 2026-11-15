@@ -51,19 +51,19 @@ export const CardFrame = forwardRef<
       tabIndex={0}
       onKeyDown={onKeyDown}
       className={cn(
-        "group/card overflow-hidden rounded-[6px] border bg-elevated outline-none focus-visible:ring-1 focus-visible:ring-ring/70",
+        "group/card overflow-hidden rounded-md border bg-muted outline-none focus-visible:ring-1 focus-visible:ring-ring/70",
         tone === "perm" ? "border-st-perm/45" : "border-st-input/40",
         className,
       )}
     >
       <header className={cn("flex min-h-8 min-w-0 items-center gap-2 px-2.5 py-1", tone === "perm" ? "bg-st-perm-tint/70" : "bg-st-input-tint/70")}>
         <span className={cn("inline-flex shrink-0", tone === "perm" ? "text-st-perm" : "text-st-input")}>{icon}</span>
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-[18px] font-medium text-fg">{title}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-sm leading-[18px] font-medium text-foreground">{title}</div>
         {meta}
         {aside}
         {pager && pager.total > 1 && (
-          <span className="flex shrink-0 items-center text-[11px] text-fg-faint">
-            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg", FOCUS)}>
+          <span className="flex shrink-0 items-center text-xs text-muted-foreground/70">
+            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-5 items-center justify-center rounded-sm hover:bg-accent hover:text-foreground", FOCUS)}>
               <ChevronLeft size={12} />
             </button>
             <span className="tabular" title="Pending requests">
@@ -74,7 +74,7 @@ export const CardFrame = forwardRef<
                 Request {pager.index + 1} of {pager.total}
               </span>
             </span>
-            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-5 items-center justify-center rounded-[3px] hover:bg-hover hover:text-fg", FOCUS)}>
+            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-5 items-center justify-center rounded-sm hover:bg-accent hover:text-foreground", FOCUS)}>
               <ChevronRight size={12} />
             </button>
           </span>
@@ -85,8 +85,8 @@ export const CardFrame = forwardRef<
           </span>
         )}
       </header>
-      {children && <div className="border-t border-line-subtle/60 px-2.5 py-2">{children}</div>}
-      {footer && <div className="flex flex-wrap items-center gap-1.5 border-t border-line-subtle/60 px-2.5 py-2">{footer}</div>}
+      {children && <div className="border-t border-border/60 px-2.5 py-2">{children}</div>}
+      {footer && <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 px-2.5 py-2">{footer}</div>}
     </section>
   )
 })
@@ -100,7 +100,7 @@ export function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () 
       aria-label={open ? "Hide details" : "Show details"}
       title={open ? "Hide details" : "Details"}
       onClick={onToggle}
-      className={cn("inline-flex size-5 shrink-0 items-center justify-center rounded-[3px] text-fg-faint hover:bg-hover hover:text-fg", FOCUS)}
+      className={cn("inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-accent hover:text-foreground", FOCUS)}
     >
       <ChevronRight size={12} className={cn("transition-transform duration-150", open && "rotate-90")} />
     </button>
@@ -142,18 +142,18 @@ export function FeedbackField({
             onCancel()
           }
         }}
-        className="min-h-[52px] w-full resize-y rounded-[4px] border border-line bg-canvas px-2 py-1.5 text-[12.5px] leading-[18px] text-fg outline-none placeholder:text-fg-faint focus:border-brand/60"
+        className="min-h-[52px] w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs leading-[18px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-input"
       />
       <div className="flex items-center gap-1.5">
         <button
           type="button"
           onClick={onSubmit}
           title={`${MOD}+Enter`}
-          className={cn("inline-flex h-6 items-center rounded-[4px] border border-line bg-elevated px-2 text-[12px] text-fg hover:border-line-strong hover:bg-hover", FOCUS)}
+          className={cn("inline-flex h-6 items-center rounded-md border border-border bg-muted px-2 text-xs text-foreground hover:border-input hover:bg-accent", FOCUS)}
         >
           {submitLabel}
         </button>
-        <button type="button" onClick={onCancel} title="Esc" className={cn("h-6 rounded-[4px] px-2 text-[12px] text-fg-faint hover:bg-hover hover:text-fg-muted", FOCUS)}>
+        <button type="button" onClick={onCancel} title="Esc" className={cn("h-6 rounded-md px-2 text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground", FOCUS)}>
           Cancel
         </button>
       </div>
@@ -187,18 +187,18 @@ export function OptionButton({
       disabled={disabled}
       title={title}
       className={cn(
-        "inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
+        "inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
         FOCUS,
-        // on the blue primary the ring needs an offset to stay visible
-        variant === "primary" && "focus-visible:ring-offset-1 focus-visible:ring-offset-elevated",
-        variant === "primary" && "border-transparent bg-brand text-white hover:bg-[#0588f0]",
-        variant === "secondary" && "border-line bg-elevated text-fg hover:border-line-strong hover:bg-hover",
-        variant === "quiet" && "border-transparent text-fg-muted hover:bg-hover hover:text-fg",
+        // on the light primary the ring needs an offset to stay visible
+        variant === "primary" && "focus-visible:ring-offset-1 focus-visible:ring-offset-muted",
+        variant === "primary" && "border-transparent bg-foreground text-background hover:bg-foreground/88",
+        variant === "secondary" && "border-border bg-muted text-foreground hover:border-input hover:bg-accent",
+        variant === "quiet" && "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
-      <span aria-hidden className={cn("tabular hidden text-[10.5px] group-focus-within/card:inline", variant === "primary" ? "text-white/70" : "text-fg-faint")}>{n}</span>
+      <span aria-hidden className={cn("tabular hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/60" : "text-muted-foreground/70")}>{n}</span>
       <span className="min-w-0 truncate">{children}</span>
-      {enter && <span aria-hidden className="hidden text-[10.5px] text-white/70 group-focus-within/card:inline">⏎</span>}
+      {enter && <span aria-hidden className={cn("hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/60" : "text-muted-foreground/70")}>⏎</span>}
     </button>
   )
 }
@@ -219,7 +219,7 @@ export function optionLabel(o: PermissionOption): ReactNode {
   if (o.kind === "allow_always" && pattern)
     return (
       <>
-        Always allow <code className="font-mono text-[11.5px]">{pattern}</code>
+        Always allow <code className="font-mono text-xs">{pattern}</code>
       </>
     )
   const rest = o.name

@@ -30,15 +30,15 @@ export const ToolStatusDot = memo(function ToolStatusDot({
   return (
     <span title={DOT_TITLE[display]} className={cn("inline-flex size-3.5 shrink-0 items-center justify-center", className)}>
       {display === "running" ? (
-        <LoaderCircle size={11} strokeWidth={2.5} className="animate-spin-slow text-st-working" />
+        <LoaderCircle size={11} strokeWidth={2.5} className="animate-spin-steps text-st-working" />
       ) : display === "awaiting_permission" ? (
-        <span className={cn("size-[7px] rotate-45 rounded-[1px]", tone === "input" ? "bg-st-input" : "bg-st-perm")} />
+        <span className={cn("size-[7px] rotate-45 rounded-sm", tone === "input" ? "bg-st-input" : "bg-st-perm")} />
       ) : display === "failed" ? (
         <span className="size-[7px] rounded-full bg-st-error" />
       ) : display === "done" ? (
-        <span className="size-[5px] rounded-full bg-fg-faint/70" />
+        <span className="size-[5px] rounded-full bg-muted-foreground/50" />
       ) : (
-        <span className="size-[7px] rounded-full border border-fg-faint" />
+        <span className="size-[7px] rounded-full border border-muted-foreground/70" />
       )}
     </span>
   )
@@ -49,14 +49,14 @@ export function Chevron({ open, className }: { open: boolean; className?: string
     <ChevronRight
       size={12}
       strokeWidth={2}
-      className={cn("shrink-0 text-fg-faint transition-transform duration-150", open && "rotate-90", className)}
+      className={cn("shrink-0 text-muted-foreground/70 transition-transform duration-150", open && "rotate-90", className)}
     />
   )
 }
 
 /** Indented detail panel under a row, on a 1px rail (Cline disclosure "rail" presentation). */
 export function Rail({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("ml-[7px] border-l border-line-subtle pt-1 pb-1.5 pl-[18px]", className)}>{children}</div>
+  return <div className={cn("ml-[7px] border-l border-border pt-1 pb-1.5 pl-[18px]", className)}>{children}</div>
 }
 
 /** Small mono block for tool output. */
@@ -64,7 +64,7 @@ export function CodeBlock({ children, className }: { children: ReactNode; classN
   return (
     <pre
       className={cn(
-        "overflow-auto rounded-[4px] border border-line-subtle bg-chrome px-2.5 py-1.5 font-mono text-[12px] leading-[18px] whitespace-pre text-fg-muted select-text",
+        "overflow-auto rounded-md border border-border bg-card px-2.5 py-1.5 font-mono text-xs leading-[18px] whitespace-pre text-muted-foreground select-text",
         className,
       )}
     >
@@ -75,5 +75,5 @@ export function CodeBlock({ children, className }: { children: ReactNode; classN
 
 /** VS Code-style 11px uppercase sub-label. */
 export function MicroLabel({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("section-label mb-1 text-[10px]", className)}>{children}</div>
+  return <div className={cn("text-xs font-medium text-muted-foreground mb-1 text-xs", className)}>{children}</div>
 }

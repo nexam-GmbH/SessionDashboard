@@ -117,7 +117,7 @@ export const AttentionDock = memo(function AttentionDock({
     <div
       aria-live="polite"
       aria-relevant="additions"
-      className="mx-auto w-full max-w-[860px] px-5 pb-2"
+      className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-2"
     >
       {childNote}
       <DockSlot key={req.id} sessionId={sessionId}>

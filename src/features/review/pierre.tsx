@@ -71,12 +71,12 @@ export const DIFF_METRICS: VirtualFileMetrics = {
 
 /** Host variables: inherited into pierre's Shadow DOM. */
 export const DIFF_HOST_STYLE = {
-  "--diffs-font-family": "var(--font-code)",
-  "--diffs-header-font-family": "var(--font-ui)",
+  "--diffs-font-family": "var(--font-mono)",
+  "--diffs-header-font-family": "var(--font-sans)",
   "--diffs-font-size": "12px",
   "--diffs-line-height": `${LINE_PX}px`,
-  "--diffs-dark-bg": "var(--bg-canvas)",
-  "--diffs-light-bg": "var(--bg-canvas)",
+  "--diffs-dark-bg": "var(--background)",
+  "--diffs-light-bg": "var(--background)",
   "--diffs-tab-size": "2",
   colorScheme: "dark",
 } as CSSProperties
