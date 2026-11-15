@@ -5,7 +5,7 @@
 // Vibe Kanban session header (no code copied).
 import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { RewindDialog } from "./RewindDialog"
-import { AppWindow, Archive, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil } from "lucide-react"
+import { AppWindow, Archive, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil, Rows3 } from "lucide-react"
 import { IN_TAURI } from "@/lib/platform"
 import { POPOUT } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
@@ -17,10 +17,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { TRANSCRIPT_VIEWS, setTranscriptView } from "../transcript/view"
+import type { TranscriptView } from "../transcript/rowModel"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { STATUS_LABEL, capabilities } from "@/lib/status"
 import { homePath, plural } from "@/lib/format"
@@ -191,6 +199,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
               <History /> Rewind…
               <DropdownMenuShortcut>Esc Esc</DropdownMenuShortcut>
             </DropdownMenuItem>
+            <TranscriptViewMenu />
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(resumeCommand(s))}>
               <Copy /> Copy resume command
@@ -206,6 +215,32 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
     </div>
   )
 })
+
+/** Transcript view (Claude Code desktop): how much of the work the chat shows; Ctrl+O cycles. */
+function TranscriptViewMenu() {
+  const view = useApp((s) => s.settings.transcriptView ?? "normal")
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <Rows3 /> Transcript view
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-64">
+        <DropdownMenuRadioGroup value={view} onValueChange={(v) => setTranscriptView(v as TranscriptView)}>
+          {TRANSCRIPT_VIEWS.map((v) => (
+            <DropdownMenuRadioItem key={v.id} value={v.id} className="flex-col items-start gap-0">
+              <span>{v.label}</span>
+              <span className="text-xs text-muted-foreground">{v.hint}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="flex items-center justify-between text-xs font-normal text-muted-foreground">
+          Cycle the views <DropdownMenuShortcut>Ctrl+O</DropdownMenuShortcut>
+        </DropdownMenuLabel>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
 
 /** Show or hide the details panel beside the chat (environment, context, changes, usage). */
 function DetailsToggle() {

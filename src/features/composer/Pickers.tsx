@@ -180,7 +180,7 @@ function SettingMenu<T extends string>({
 
 export function ModePicker({ value, onChange, disabled, disabledReason }: { value: PermissionMode; onChange: (v: PermissionMode) => void; disabled?: boolean; disabledReason?: string }) {
   const allowBypass = useApp((s) => s.settings.allowBypass || s.caps?.defaultMode === "bypassPermissions")
-  const options = MODES.filter((m) => m.value !== "bypassPermissions" || allowBypass || value === "bypassPermissions").map((m) => ({
+  const options = MODES.filter((m) => m.value === value || (m.value === "bypassPermissions" ? allowBypass : m.value !== "dontAsk")).map((m) => ({
     value: m.value,
     label: m.label,
     note: m.note,
@@ -201,7 +201,7 @@ export function ModePicker({ value, onChange, disabled, disabledReason }: { valu
       disabledReason={disabledReason}
       trigger={
         <>
-          <cur.icon size={13} className={cn("shrink-0", value === "bypassPermissions" ? "text-st-error-fg" : "text-muted-foreground/70")} />
+          <cur.icon size={14} className={cn("shrink-0", value === "bypassPermissions" ? "text-st-error-fg" : "text-muted-foreground/70")} />
           <span className={cn("truncate", value === "bypassPermissions" && "text-st-error-fg")}>{cur.label}</span>
         </>
       }

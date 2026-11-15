@@ -1,101 +1,72 @@
-// Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-prompt-queue.tsx (Apache-2.0). Modified for session-dashboard.
-// Also adapted from vercel/ai-elements@ca8be60:packages/elements/src/queue.tsx (Apache-2.0): hover-revealed item actions.
-// Changes: lucide icons, our store actions (edit / send now / remove), dense rows; no
-// header line: the clock glyph and its tooltip say "queued".
-import { memo, useState } from "react"
-import { Check, Clock3, CornerDownLeft, Paperclip, Pencil, X } from "lucide-react"
+// Messages waiting for Claude, stacked above the prompt box (Claude Code desktop's queue). Each row
+// is one line of its text with an edit pencil and a remove ×. Editing opens the message in the
+// prompt box (so does ↑ in an empty box, for the newest); the row stays in its place, marked,
+// until Enter puts it back or Esc cancels.
+import { memo } from "react"
+import { Paperclip, Pencil, X } from "lucide-react"
 import type { ID } from "@/lib/model"
-import { removeQueued } from "@/store/actions"
 import { cn } from "@/lib/utils"
-import { editQueued, sendQueuedNow, useQueued } from "../sessionStore"
+import { editQueuedInBox, removeQueuedMessage, useQueued, useQueueEdit } from "../sessionStore"
 
-const ACTION = "inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+const ACTION =
+  "inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+
+/** Focus the session's prompt box (the queue sits outside it). */
+function focusBox(sessionId: ID) {
+  requestAnimationFrame(() => {
+    const ta = document.querySelector<HTMLTextAreaElement>(`[data-session-view="${sessionId}"] [data-prompt-box] textarea`)
+    if (!ta) return
+    ta.focus()
+    ta.setSelectionRange(ta.value.length, ta.value.length)
+  })
+}
 
 export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId: ID }) {
   const items = useQueued(sessionId)
-  const [editingId, setEditingId] = useState<ID | null>(null)
-  const [draft, setDraft] = useState("")
+  const editId = useQueueEdit(sessionId)?.id
   if (!items.length) return null
-  const save = (id: ID) => {
-    if (draft.trim()) editQueued(sessionId, id, draft.trim())
-    setEditingId(null)
-  }
   return (
-    <div className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-1.5">
-      <ul className="flex flex-col gap-px" aria-label="Queued messages">
+    <div className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-2">
+      <ul className="flex flex-col gap-1" aria-label="Queued messages">
         {items.map((q) => {
-          const editing = editingId === q.id
+          const editing = q.id === editId
           return (
             <li
               key={q.id}
+              aria-current={editing || undefined}
               className={cn(
-                "group/q flex min-h-7 min-w-0 items-center gap-2 rounded-md border border-border bg-card px-2 text-xs",
-                editing && "border-input",
+                "group/q flex h-8 min-w-0 items-center gap-2 rounded-lg bg-card/60 pr-1 pl-3 text-sm ring-1 ring-foreground/10",
+                editing && "bg-accent ring-ring",
               )}
             >
-              <Clock3 size={12} className="shrink-0 text-muted-foreground/70" aria-label="Queued" />
-              {editing ? (
-                <textarea
-                  autoFocus
-                  rows={1}
-                  value={draft}
-                  aria-label="Edit queued message"
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault()
-                      setEditingId(null)
-                    } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                      e.preventDefault()
-                      save(q.id)
-                    }
-                  }}
-                  className="my-1 min-w-0 flex-1 resize-none bg-transparent text-xs leading-[18px] text-foreground outline-none"
-                />
-              ) : (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground" title={`Queued: sent after this turn\n${q.text}${q.attachments?.length ? `\n${q.attachments.join(", ")}` : ""}`}>
-                  {q.text}
-                </span>
-              )}
-              {!editing && q.attachments?.length ? (
-                <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground/70" aria-label={`${q.attachments.length} attached`}>
-                  <Paperclip size={11} />
+              <span className={cn("min-w-0 flex-1 truncate", editing ? "text-foreground" : "text-muted-foreground")} title={`Sent when Claude finishes this turn\n\n${q.text}`}>
+                {q.text}
+              </span>
+              {q.attachments?.length ? (
+                <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70" aria-label={`${q.attachments.length} attached`} title={q.attachments.join("\n")}>
+                  <Paperclip size={14} />
                   <span className="tabular">{q.attachments.length}</span>
                 </span>
               ) : null}
-              <span className={cn("flex shrink-0 items-center gap-0.5", !editing && "opacity-0 group-hover/q:opacity-100 focus-within:opacity-100")}>
-                {editing ? (
-                  <>
-                    <button type="button" aria-label="Save queued message" className={ACTION} onClick={() => save(q.id)}>
-                      <Check size={12} />
-                    </button>
-                    <button type="button" aria-label="Cancel editing" className={ACTION} onClick={() => setEditingId(null)}>
-                      <X size={12} />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button type="button" aria-label="Send now" title="Send now" className={ACTION} onClick={() => sendQueuedNow(sessionId, q.id)}>
-                      <CornerDownLeft size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Edit queued message"
-                      title="Edit"
-                      className={ACTION}
-                      onClick={() => {
-                        setDraft(q.text)
-                        setEditingId(q.id)
-                      }}
-                    >
-                      <Pencil size={12} />
-                    </button>
-                    <button type="button" aria-label="Remove queued message" title="Remove" className={ACTION} onClick={() => removeQueued(sessionId, q.id)}>
-                      <X size={12} />
-                    </button>
-                  </>
-                )}
-              </span>
+              {editing ? (
+                <span className="shrink-0 px-2 text-xs text-muted-foreground">Editing</span>
+              ) : (
+                <button
+                  type="button"
+                  aria-label="Edit queued message"
+                  title="Edit"
+                  className={ACTION}
+                  onClick={() => {
+                    editQueuedInBox(sessionId, q.id)
+                    focusBox(sessionId)
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+              <button type="button" aria-label="Remove queued message" title="Remove" className={ACTION} onClick={() => removeQueuedMessage(sessionId, q.id)}>
+                <X size={14} />
+              </button>
             </li>
           )
         })}

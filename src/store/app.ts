@@ -66,6 +66,8 @@ export interface Settings {
   terminalHeight: number
   /** the session details panel beside the chat */
   detailsOpen: boolean
+  /** chat transcript detail (Claude Code desktop): tool calls folded, + thinking, or every step (Ctrl+O cycles) */
+  transcriptView: "normal" | "thinking" | "verbose"
 }
 
 export interface Workspace {
@@ -158,6 +160,7 @@ function loadSettings(): Settings {
     sidebarHidden: false,
     terminalHeight: 280,
     detailsOpen: true,
+    transcriptView: "normal",
   }
   try {
     const raw = localStorage.getItem("sd.settings")

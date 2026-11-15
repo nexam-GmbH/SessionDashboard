@@ -35,3 +35,6 @@ export function takeImages(names: string[] | undefined): { images: string[]; res
   }
   return { images, rest }
 }
+
+/** The picture behind a chip name (for its thumbnail), while it waits to be sent. */
+export const imageUrl = (name: string): string | undefined => store.get(name)

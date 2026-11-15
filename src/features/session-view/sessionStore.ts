@@ -34,7 +34,6 @@ export function useTranscriptShape(sessionId: ID) {
 export const useItem = (sessionId: ID, itemId: ID) =>
   useApp((s) => s.transcripts[sessionId]?.items[itemId])
 
-export const useQueued = (sessionId: ID) => useApp((s) => s.transcripts[sessionId]?.queued ?? EMPTY_QUEUE)
 export const useTodos = (sessionId: ID) => useApp((s) => s.transcripts[sessionId]?.todos ?? EMPTY_TODOS)
 
 /** Tool items of a group, as a shallow-compared tuple (re-renders only when one of them changes). */
@@ -113,7 +112,7 @@ export function useExpanded(key: string, defaultOpen = false): [boolean, (open: 
 export const focusDockRequest = (sessionId: ID, requestId: ID) => setUiValue(`dock:${sessionId}`, requestId)
 export const useDockFocus = (sessionId: ID) => useUiValue<ID | null>(`dock:${sessionId}`, null)
 
-// ---------- queue ----------
+// ---------- queue and drafts ----------
 function patchTranscript(sessionId: ID, patch: (t: Transcript) => Partial<Transcript>) {
   setApp((s) => {
     const t = s.transcripts[sessionId]
@@ -122,25 +121,152 @@ function patchTranscript(sessionId: ID, patch: (t: Transcript) => Partial<Transc
   })
 }
 
-export function editQueued(sessionId: ID, queuedId: ID, text: string) {
-  patchTranscript(sessionId, (t) => ({ queued: t.queued.map((q) => (q.id === queuedId ? { ...q, text } : q)) }))
+export type Queued = Transcript["queued"][number]
+export interface Draft {
+  text: string
+  attachments: string[]
+}
+const EMPTY_DRAFT: Draft = { text: "", attachments: [] }
+
+/**
+ * What is typed in a session's prompt box, kept per session for as long as the app runs: switching
+ * sessions and coming back finds it as you left it. Cleared when it is sent.
+ */
+export const useDraft = (sessionId: ID) => useUiValue<Draft>(`draft:${sessionId}`, EMPTY_DRAFT)
+export const getDraft = (sessionId: ID) => getUiValue<Draft>(`draft:${sessionId}`, EMPTY_DRAFT)
+export function setDraft(sessionId: ID, next: Draft | ((d: Draft) => Draft)) {
+  setUiValue(`draft:${sessionId}`, typeof next === "function" ? next(getDraft(sessionId)) : next)
 }
 
-/** "Steer": take a queued message out of the queue and send it now (SDK priority "now"). */
-export function sendQueuedNow(sessionId: ID, queuedId: ID) {
-  const q = getApp().transcripts[sessionId]?.queued.find((x) => x.id === queuedId)
-  if (!q) return
-  removeQueued(sessionId, queuedId)
-  sendMessage(sessionId, q.text, "now", q.attachments)
+/**
+ * Messages for a real session the app can't write to while it works (a headless one it started
+ * before a restart): they wait here, outside its transcript (which is re-read from disk at times),
+ * and go out together once its turn is over. Mock sessions queue in `Transcript.queued`.
+ */
+const outboxIds = new Set<ID>()
+const outboxKey = (sessionId: ID) => `outbox:${sessionId}`
+const getOutbox = (sessionId: ID) => getUiValue<Queued[]>(outboxKey(sessionId), EMPTY_QUEUE)
+let outboxWatch: (() => void) | null = null
+
+function setOutbox(sessionId: ID, items: Queued[]) {
+  setUiValue(outboxKey(sessionId), items)
+  if (items.length) outboxIds.add(sessionId)
+  else outboxIds.delete(sessionId)
+  if (outboxIds.size && !outboxWatch) outboxWatch = useApp.subscribe((s) => s.sessions, deliverOutbox)
+  else if (!outboxIds.size && outboxWatch) {
+    outboxWatch()
+    outboxWatch = null
+  }
 }
 
-/** Up arrow in an empty composer: pull the last queued message back for editing (Claude Code CLI). */
-export function takeLastQueued(sessionId: ID): string | undefined {
-  const t = getApp().transcripts[sessionId]
-  const last = t?.queued.at(-1)
-  if (!last) return undefined
-  removeQueued(sessionId, last.id)
-  return last.text
+const asText = (q: Queued) => (q.attachments?.length ? `${q.text}\n\n${q.attachments.map((a) => `[attached: ${a}]`).join("\n")}` : q.text)
+
+/** Send what waits in the outbox of every session whose turn is over (in one message, like Claude Code's queue). */
+function deliverOutbox() {
+  for (const id of [...outboxIds]) {
+    const s = getApp().sessions[id]
+    const items = getOutbox(id)
+    if (!s) {
+      setOutbox(id, [])
+      continue
+    }
+    if (s.status !== "idle" && s.status !== "done_unseen") continue
+    // the one open in the prompt box stays until it is saved back
+    const editing = getUiValue<QueueEdit | null>(`qedit:${id}`, null)?.id
+    const ready = items.filter((q) => q.id !== editing)
+    if (!ready.length) continue
+    setOutbox(id, items.filter((q) => q.id === editing))
+    const text = ready.map(asText).join("\n\n")
+    // a terminal session continues here (nothing is lost); one the app runs takes it as a message
+    if (s.control === "observed") void import("@/backend/real").then((r) => r.realTakeOver(id, text))
+    else sendMessage(id, text, "now")
+  }
+}
+
+export function useQueued(sessionId: ID) {
+  const mock = useApp((s) => s.transcripts[sessionId]?.queued ?? EMPTY_QUEUE)
+  const real = useUiValue<Queued[]>(outboxKey(sessionId), EMPTY_QUEUE)
+  return REAL ? real : mock
+}
+const queuedOf = (sessionId: ID): Queued[] => (REAL ? getOutbox(sessionId) : (getApp().transcripts[sessionId]?.queued ?? EMPTY_QUEUE))
+
+/** Add a message to the session's queue: sent when Claude is done with this turn. */
+export function queueMessage(sessionId: ID, text: string, attachments?: string[]) {
+  if (!REAL) return sendMessage(sessionId, text, "queue", attachments)
+  setOutbox(sessionId, [...getOutbox(sessionId), { id: `q_${Date.now().toString(36)}_${outboxIds.size}`, text, ...(attachments?.length ? { attachments } : {}) }])
+  deliverOutbox()
+}
+
+function editQueued(sessionId: ID, queuedId: ID, text: string, attachments: string[]) {
+  const edit = (q: Queued): Queued => (q.id === queuedId ? { id: q.id, text, ...(attachments.length ? { attachments } : {}) } : q)
+  if (REAL) setOutbox(sessionId, getOutbox(sessionId).map(edit))
+  else patchTranscript(sessionId, (t) => ({ queued: t.queued.map(edit) }))
+}
+
+export function removeQueuedMessage(sessionId: ID, queuedId: ID) {
+  if (getUiValue<QueueEdit | null>(`qedit:${sessionId}`, null)?.id === queuedId) cancelQueueEdit(sessionId)
+  if (REAL) setOutbox(sessionId, getOutbox(sessionId).filter((q) => q.id !== queuedId))
+  else removeQueued(sessionId, queuedId)
+}
+
+/** A queued message open in the prompt box for editing, and what the box held before. */
+export interface QueueEdit {
+  id: ID
+  stash: Draft
+}
+export const useQueueEdit = (sessionId: ID) => useUiValue<QueueEdit | null>(`qedit:${sessionId}`, null)
+
+/**
+ * Open a queued message in the prompt box (↑ in an empty box takes the newest, the pencil any of
+ * them). It stays in its place in the queue, marked; Enter puts it back, Esc cancels, an empty box
+ * removes it.
+ */
+export function editQueuedInBox(sessionId: ID, queuedId?: ID): boolean {
+  const list = queuedOf(sessionId)
+  const q = queuedId ? list.find((x) => x.id === queuedId) : list.at(-1)
+  if (!q) return false
+  const cur = getUiValue<QueueEdit | null>(`qedit:${sessionId}`, null)
+  setUiValue(`qedit:${sessionId}`, { id: q.id, stash: cur ? cur.stash : getDraft(sessionId) })
+  setDraft(sessionId, { text: q.text, attachments: q.attachments ?? [] })
+  return true
+}
+
+export function cancelQueueEdit(sessionId: ID) {
+  const cur = getUiValue<QueueEdit | null>(`qedit:${sessionId}`, null)
+  if (!cur) return
+  setUiValue(`qedit:${sessionId}`, null)
+  setDraft(sessionId, cur.stash)
+}
+
+/** Enter while editing: back into its place (or out of the queue, when emptied). */
+export function saveQueueEdit(sessionId: ID, text: string, attachments: string[]) {
+  const cur = getUiValue<QueueEdit | null>(`qedit:${sessionId}`, null)
+  if (!cur) return
+  const still = queuedOf(sessionId).some((q) => q.id === cur.id)
+  setUiValue(`qedit:${sessionId}`, null)
+  setDraft(sessionId, cur.stash)
+  if (!text.trim() && !attachments.length) {
+    if (still) removeQueuedMessage(sessionId, cur.id)
+  } else if (still) editQueued(sessionId, cur.id, text.trim(), attachments)
+  // it went out while you edited it: the edited text follows as a new message
+  else queueMessage(sessionId, text.trim(), attachments)
+  if (REAL) deliverOutbox()
+}
+
+/**
+ * A message sent to a session the app runs while Claude works goes in at once (Claude Code reads
+ * it after the current step). The prompt box says so until the transcript moves past it.
+ */
+export function markSteered(sessionId: ID) {
+  setUiValue(`steer:${sessionId}`, getApp().transcripts[sessionId]?.order.length ?? 0)
+}
+export function useSteerPending(sessionId: ID): boolean {
+  const at = useUiValue<number | null>(`steer:${sessionId}`, null)
+  return useApp((s) => {
+    if (at === null) return false
+    const st = s.sessions[sessionId]?.status
+    return (st === "working" || st === "starting") && (s.transcripts[sessionId]?.order.length ?? 0) <= at
+  })
 }
 
 /** Interrupt + close the live item so its caret stops and the turn reads "interrupted". */

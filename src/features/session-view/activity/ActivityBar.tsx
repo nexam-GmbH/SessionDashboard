@@ -3,9 +3,9 @@
 // Calm rules: small chips, only for things that carry signal — a plan that is in
 // progress, running subagents, changed files (opens Review) and permission requests
 // raised by subagents (with once-options). Hidden when there is nothing to show.
-import { memo } from "react"
+import { memo, useSyncExternalStore } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { Bot, ChevronDown, CircleCheck, CircleDashed, CircleDot, ListChecks, Repeat, ShieldAlert } from "lucide-react"
+import { Bot, Circle, CircleCheck, ListChecks, LoaderCircle, Pin, PinOff, Repeat, ShieldAlert } from "lucide-react"
 import type { ID, PermissionRequest } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { usePendingRequests, useSubagentIds, subagentAsStatus } from "@/store/selectors"
@@ -28,44 +28,89 @@ const CHIP =
 /** A plan with work left: shown above the prompt box (Claude Code desktop's plan card). */
 const planOpen = (todos: readonly { status: string }[]) => todos.length > 0 && todos.some((t) => t.status !== "completed")
 
-/** Claude's todo list above the prompt box, while it has work left. Click the header to fold it. */
+// pinned above the prompt box, or folded into a chip beside the others (your choice, remembered)
+const PIN_KEY = "sd.planPinned"
+const pinListeners = new Set<() => void>()
+const readPinned = () => {
+  try {
+    return localStorage.getItem(PIN_KEY) !== "0"
+  } catch {
+    return true
+  }
+}
+function setPlanPinned(on: boolean) {
+  try {
+    localStorage.setItem(PIN_KEY, on ? "1" : "0")
+  } catch {
+    // private mode: the choice lasts until the window closes
+  }
+  pinListeners.forEach((l) => l())
+}
+const usePlanPinned = () =>
+  useSyncExternalStore(
+    (cb) => {
+      pinListeners.add(cb)
+      return () => pinListeners.delete(cb)
+    },
+    readPinned,
+  )
+
+/** Claude's todo list, pinned above the prompt box while it has work left. */
 function PlanCard({ sessionId }: { sessionId: ID }) {
   const todos = useTodos(sessionId)
-  const [open, setOpen] = useExpanded(`plan:${sessionId}`, true)
-  if (!planOpen(todos)) return null
+  const pinned = usePlanPinned()
+  if (!pinned || !planOpen(todos)) return null
   const done = todos.filter((t) => t.status === "completed").length
   return (
-    <div className="mb-2 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="flex h-6 w-full items-center gap-2 rounded-md text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-      >
+    <section aria-label="Plan" className="mb-2 rounded-xl bg-card py-1 pr-1 pl-3 ring-1 ring-foreground/10">
+      <div className="flex h-8 items-center gap-2 text-xs text-muted-foreground">
         <ListChecks size={14} className="shrink-0" />
-        <span className="font-medium">Plan</span>
+        <span className="font-medium text-foreground">Plan</span>
         <span className="tabular text-muted-foreground/70">
-          {done} of {todos.length} done
+          {done} of {todos.length}
         </span>
-        <ChevronDown size={13} className={cn("ml-auto shrink-0 transition-transform", !open && "-rotate-90")} />
-      </button>
-      {open && (
-        <ul className="mt-1 flex max-h-44 flex-col gap-0.5 overflow-y-auto pb-0.5">
-          {todos.map((t, i) => (
-            <li key={i} className="flex min-w-0 items-start gap-2 py-0.5 text-sm">
-              {t.status === "completed" ? (
-                <CircleCheck size={15} className="mt-0.5 shrink-0 text-muted-foreground/70" />
-              ) : t.status === "in_progress" ? (
-                <CircleDot size={15} className="mt-0.5 shrink-0 text-st-working" />
-              ) : (
-                <CircleDashed size={15} className="mt-0.5 shrink-0 text-muted-foreground/70" />
-              )}
-              <span className={cn("min-w-0", t.status === "completed" ? "text-muted-foreground/70 line-through" : t.status === "in_progress" ? "text-foreground" : "text-muted-foreground")}>{t.content}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+        <span className="flex-1" />
+        <button type="button" aria-label="Unpin the plan" title="Unpin: keep it in the chat only" onClick={() => setPlanPinned(false)} className={PIN_BTN}>
+          <PinOff size={14} />
+        </button>
+      </div>
+      <ul className="flex max-h-44 flex-col overflow-y-auto pr-2 pb-1">
+        {todos.map((t, i) => (
+          <li key={i} className="flex min-w-0 items-start gap-2 py-1 text-sm leading-5">
+            {t.status === "completed" ? (
+              <CircleCheck size={14} className="mt-0.5 shrink-0 text-muted-foreground/70" />
+            ) : t.status === "in_progress" ? (
+              <LoaderCircle size={14} className="mt-0.5 shrink-0 animate-spin-steps text-st-working" />
+            ) : (
+              <Circle size={14} className="mt-0.5 shrink-0 text-muted-foreground/70" />
+            )}
+            <span className={cn("min-w-0", t.status === "completed" ? "text-muted-foreground/70 line-through" : t.status === "in_progress" ? "text-foreground" : "text-muted-foreground")}>
+              {t.content}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+const PIN_BTN =
+  "inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+
+/** The plan, unpinned: a chip with its progress; a click pins it above the prompt box again. */
+function PlanChip({ sessionId }: { sessionId: ID }) {
+  const todos = useTodos(sessionId)
+  const pinned = usePlanPinned()
+  if (pinned || !planOpen(todos)) return null
+  const done = todos.filter((t) => t.status === "completed").length
+  return (
+    <button type="button" className={CHIP} title="Pin the plan above the prompt box" onClick={() => setPlanPinned(true)}>
+      <ListChecks size={14} className="text-muted-foreground/70" />
+      <span className="tabular">
+        Plan {done}/{todos.length}
+      </span>
+      <Pin size={12} className="text-muted-foreground/70" />
+    </button>
   )
 }
 
@@ -174,6 +219,7 @@ export const ActivityBar = memo(function ActivityBar({ sessionId }: { sessionId:
       <StuckCard sessionId={sessionId} canSend={control ? capabilities(control).send : false} />
       <PlanCard sessionId={sessionId} />
       <div className="flex min-w-0 flex-wrap items-center gap-1">
+      <PlanChip sessionId={sessionId} />
       <AgentsChip sessionId={sessionId} />
       {child[0] && (
         <div className="ml-auto max-w-full min-w-0">

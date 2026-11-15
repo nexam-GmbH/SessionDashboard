@@ -1,7 +1,7 @@
 // Session settings as the Claude Code desktop app names them: permission modes
 // Manual / Accept edits / Plan / Auto (+ Bypass permissions only when allowed in Settings), a
 // model picker and an effort picker under the prompt box.
-import { Hand, ListChecks, PencilLine, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { Ban, Hand, ListChecks, PencilLine, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
 import type { Effort, PermissionMode } from "@/lib/model"
 
 export const MODELS = [
@@ -37,6 +37,8 @@ export const MODES: { value: PermissionMode; label: string; note: string; icon: 
   { value: "plan", label: "Plan", note: "Reads and plans, changes nothing", icon: ListChecks },
   { value: "auto", label: "Auto", note: "Runs safe actions, asks for risky ones", icon: ShieldCheck },
   { value: "bypassPermissions", label: "Bypass permissions", note: "Never asks. Use only in a sandbox", icon: ShieldOff },
+  // set from the CLI (--permission-mode dontAsk): listed only while a session runs in it
+  { value: "dontAsk", label: "Don't ask", note: "Denies anything not allowed in advance", icon: Ban },
 ]
 
 export function modeOption(mode: PermissionMode) {

@@ -14,6 +14,7 @@ import {
 import { stepZoom } from "@/app/zoom"
 import { openPicker } from "@/features/composer/options"
 import { toggleTerminal } from "@/features/terminal/terminals"
+import { cycleTranscriptView } from "@/features/session-view/transcript/view"
 
 /**
  * Global keyboard map (tinykeys, MIT), terminal-tab speed:
@@ -24,6 +25,7 @@ import { toggleTerminal } from "@/features/terminal/terminals"
  *   Ctrl+K search, Ctrl+N new session, Ctrl+, settings (? shortcuts: app/ShortcutsHelp)
  *   Ctrl+Shift+M / I / E   permission mode, model, effort menus (Claude Code desktop)
  *   Ctrl+`          the terminal of what is on screen
+ *   Ctrl+O          transcript view: Normal → Thinking → Verbose (Claude Code desktop)
  */
 function blocked() {
   const s = getApp()
@@ -53,6 +55,7 @@ export function installShortcuts() {
     "$mod+Shift+KeyM": mod(() => openPicker("mode")),
     "$mod+Shift+KeyI": mod(() => openPicker("model")),
     "$mod+Shift+KeyE": mod(() => openPicker("effort")),
+    "$mod+KeyO": mod(() => cycleTranscriptView()),
     ...Object.fromEntries(
       Array.from({ length: 9 }, (_, i) => [
         `Alt+Digit${i + 1}`,

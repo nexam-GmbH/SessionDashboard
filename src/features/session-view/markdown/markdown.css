@@ -1,21 +1,21 @@
 /*
  * Adapted from cline/cline@72b3d71:sdk/packages/ui/components/markdown.css (Apache-2.0).
- * Modified for session-dashboard: our tokens, 13px IDE scale,
+ * Modified for session-dashboard: our tokens, 14px chat prose with relaxed leading,
  * 4px radii, bordered single-box code blocks, no mermaid block styles.
  * Unlayered on purpose so it wins over streamdown's Tailwind utilities.
  */
 .sd-markdown {
   min-width: 0;
   max-width: 100%;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--foreground);
   overflow-wrap: anywhere;
   user-select: text;
 }
 
 .sd-markdown > :not(:last-child) {
-  margin-block-end: 0.6rem;
+  margin-block-end: 0.75rem;
 }
 
 .sd-markdown p {
@@ -32,13 +32,13 @@
   margin-block-start: 0;
 }
 .sd-markdown h1 {
-  font-size: 15px;
+  font-size: 17px;
 }
 .sd-markdown h2 {
-  font-size: 14px;
+  font-size: 15.5px;
 }
 .sd-markdown :is(h3, h4, h5, h6) {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .sd-markdown strong {
@@ -85,7 +85,7 @@
   border: 0;
   background: var(--accent);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--foreground);
 }
 
@@ -95,7 +95,7 @@
   padding: 0;
   gap: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
   max-width: 100%;
 }
@@ -104,9 +104,9 @@
 }
 .sd-markdown [data-streamdown="code-block-body"] {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--card);
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.875rem;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
@@ -147,12 +147,12 @@
   gap: 0;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 8px;
   background: transparent;
 }
 .sd-markdown [data-streamdown="table"] {
   min-width: 100%;
-  font-size: 12px;
+  font-size: 13px;
 }
 .sd-markdown [data-streamdown="table"] :is(th, td) {
   padding: 4px 10px;
@@ -175,7 +175,8 @@
 /* Muted variant for thoughts and secondary prose. */
 .sd-markdown.sd-markdown-muted {
   color: var(--muted-foreground);
-  font-size: 12.5px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 /*
@@ -191,4 +192,19 @@
   content: var(--streamdown-caret);
   color: var(--muted-foreground);
   margin-left: 1px;
+}
+
+/* "Thinking view · …" after Ctrl+O: shows, then fades away by itself (no timers). */
+@keyframes sd-view-notice {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+.sd-view-notice {
+  animation: sd-view-notice 2.2s ease-in forwards;
 }

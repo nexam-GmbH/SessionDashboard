@@ -1,13 +1,13 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-composer.tsx (AgentComposer; Apache-2.0). Modified for session-dashboard.
-// The prompt box, shaped like the Claude Code desktop app: an auto-growing box with
-// "+" (files or photos, add folder, mention a file, slash commands) at the bottom left, dictation
-// and send / stop at the bottom right, and the settings row (mode, model, effort, context) passed
-// in as `footer` and drawn under the box. Shared by the chat and the New session screen; the
-// session-only key semantics (queue vs. send now, Esc interrupt, ↑ edit queued, Esc Esc rewind,
-// Shift+Tab mode) come in through callbacks.
-import { addImages } from "./images"
+// The prompt box, shaped like the Claude Code desktop app: one rounded box with the attachments
+// above the text, "+" (files or photos, add folder, mention a file, slash commands) at the bottom
+// left and send / stop at the bottom right; the settings row (mode, model, effort, context) comes
+// in as `footer` and sits under the box. Shared by the chat and the New session screen; the
+// chat keeps its text per session (`value` / `onValueChange`), and its key semantics (Esc stops,
+// ↑ edits a queued message, Esc Esc rewinds, Shift+Tab cycles the mode) come in through callbacks.
+import { addImages, imageUrl } from "./images"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
-import { ArrowUp, AtSign, Check, FolderPlus, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
+import { ArrowUp, AtSign, Check, FileText, FolderPlus, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,27 +28,44 @@ import { ComposerMenu, type MenuItem } from "./ComposerMenu"
 import { ComposerTextarea } from "./ComposerTextarea"
 import { fuzzy, highlightRanges, SLASH_COMMANDS, triggerAt, type Trigger } from "./tokens"
 
+/** What the box holds: the text and the names of the attached files and pictures. */
+export interface PromptValue {
+  text: string
+  attachments: string[]
+}
+
 export interface PromptBoxProps {
   /** files of the session's repo, for @-mentions */
   files: readonly string[]
   placeholder: string
   /** screen-reader description of the keys */
   keysHint: string
+  /** the keys that matter right now, shown under the box while you type in it */
+  hint?: string
   /** tooltip of the send button */
   sendHint: string
   initialText?: string
+  /** the box's content kept by the caller (the chat keeps one per session); else the box keeps it */
+  value?: PromptValue
+  onValueChange?: (update: (v: PromptValue) => PromptValue) => void
   /** a turn is running: an empty box shows Stop instead of Send */
   busy?: boolean
   onStop?: () => void
+  /** a queued message is open in the box: Enter saves it (an empty box removes it) */
+  editing?: boolean
   /** Enter → "queue", Ctrl/⌘+Enter → "now". Return false to keep the text in the box. */
   onSubmit: (text: string, attachments: string[], how: "queue" | "now") => boolean | void
-  /** Esc in an empty box (after the menus had their turn) */
+  /** Esc (after the menus had their turn): return true when handled */
+  onEscape?: (e: React.KeyboardEvent) => boolean
+  /** Esc in an empty box */
   onEscapeEmpty?: (e: React.KeyboardEvent) => void
-  /** ↑ in an empty box: text to edit (the last queued message) */
-  onArrowUpEmpty?: () => string | undefined
+  /** ↑ in an empty box: return true when it did something (opened the newest queued message) */
+  onArrowUpEmpty?: () => boolean
   onShiftTab?: () => void
   /** "+ → Add folder": the repos you can add (`--add-dir`) and the ones already added */
   folders?: { candidates: { id: ID; name: string }[]; added: ID[]; onAdd: (id: ID) => void; onRemove?: (id: ID) => void; chips?: boolean }
+  /** above the box's text, inside it (a note about the message being read) */
+  header?: ReactNode
   /** the row under the box (mode, model, effort, context; folder and worktree on New session) */
   footer?: ReactNode
   size?: "md" | "lg"
@@ -69,18 +86,26 @@ const Speech: SpeechCtor | undefined =
   typeof window !== "undefined" ? ((window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition ?? (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition) : undefined
 
 const ICON_BTN =
-  "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-foreground"
+  "inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
+const PRIMARY_BTN =
+  "inline-flex size-8 items-center justify-center rounded-lg bg-foreground text-background outline-none transition-colors hover:bg-foreground/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:bg-accent disabled:text-muted-foreground"
+
+const EMPTY: PromptValue = { text: "", attachments: [] }
+const isImage = (f: File) => f.type.startsWith("image/")
 
 export function PromptBox(props: PromptBoxProps) {
-  const { files, placeholder, keysHint, sendHint, busy, onStop, onSubmit, folders, footer, size = "md", autoFocus, disabled } = props
+  const { files, placeholder, keysHint, hint, sendHint, busy, onStop, onSubmit, folders, header, footer, size = "md", autoFocus, disabled, editing } = props
   const fileSet = useMemo(() => new Set(files), [files])
   const repoNames = useApp((s) => s.repos)
-  const [text, setText] = useState(props.initialText ?? "")
-  const [attachments, setAttachments] = useState<string[]>([])
+  const [own, setOwn] = useState<PromptValue>(() => (props.initialText ? { text: props.initialText, attachments: [] } : EMPTY))
+  const { text, attachments } = props.value ?? own
+  const update = (fn: (v: PromptValue) => PromptValue) => (props.onValueChange ? props.onValueChange(fn) : setOwn(fn))
+  const setText = (t: string) => update((v) => ({ ...v, text: t }))
   const [trigger, setTrigger] = useState<Trigger | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [anchor, setAnchor] = useState({ left: 0, bottom: 0 })
   const [listening, setListening] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -132,8 +157,8 @@ export function PromptBox(props: PromptBoxProps) {
   }
 
   const insertAtEnd = (token: "/" | "@") => {
-    const next = token === "/" && text ? text : text && !text.endsWith(" ") ? `${text} ${token}` : `${text}${token}`
     if (token === "/" && text) return taRef.current?.focus()
+    const next = text && !text.endsWith(" ") ? `${text} ${token}` : `${text}${token}`
     setText(next)
     requestAnimationFrame(() => {
       taRef.current?.focus()
@@ -157,10 +182,10 @@ export function PromptBox(props: PromptBoxProps) {
 
   const submit = (how: "queue" | "now") => {
     const value = text.trim()
-    if (!value || disabled) return
+    // an emptied queued message is removed by "saving" it
+    if ((!value && !editing) || disabled) return
     if (onSubmit(value, attachments, how) === false) return
-    setText("")
-    setAttachments([])
+    update(() => EMPTY)
     setTrigger(null)
   }
 
@@ -177,7 +202,7 @@ export function PromptBox(props: PromptBoxProps) {
     rec.onresult = (e) => {
       let said = ""
       for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) said += e.results[i][0].transcript
-      if (said) setText((t) => (t && !t.endsWith(" ") ? `${t} ${said.trim()}` : `${t}${said.trim()}`))
+      if (said) update((v) => ({ ...v, text: v.text && !v.text.endsWith(" ") ? `${v.text} ${said.trim()}` : `${v.text}${said.trim()}` }))
     }
     rec.onend = () => setListening(false)
     speech.current = rec
@@ -185,27 +210,38 @@ export function PromptBox(props: PromptBoxProps) {
     setListening(true)
   }
 
-  const addFiles = (names: string[]) => names.length && setAttachments((a) => [...a, ...names])
-  const showStop = busy && !text.trim() && !!onStop
+  const addNames = (names: string[]) => names.length && update((v) => ({ ...v, attachments: [...v.attachments, ...names] }))
+  /** files go by name; pictures go with the message (and show in the chat) */
+  const addFiles = (list: File[]) => {
+    addNames(list.filter((f) => !isImage(f)).map((f) => f.name))
+    const imgs = list.filter(isImage)
+    if (imgs.length) void addImages(imgs).then(addNames)
+  }
+  const removeAttachment = (i: number) => update((v) => ({ ...v, attachments: v.attachments.filter((_, j) => j !== i) }))
+  const showStop = busy && !text.trim() && !editing && !!onStop
+  const folderChips = folders?.chips !== false && folders ? folders.added : []
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="group/composer @container/composer flex flex-col gap-1">
       <div
         ref={boxRef}
         data-prompt-box
         className={cn(
-          "relative rounded-lg border border-border bg-muted transition-colors focus-within:border-input",
+          "relative rounded-2xl bg-card ring-1 ring-foreground/10 transition-shadow focus-within:ring-foreground/20",
+          dragging && "ring-2 ring-ring",
           disabled && "opacity-60",
         )}
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={(e) => {
+          e.preventDefault()
+          if (!dragging && e.dataTransfer.types.includes("Files")) setDragging(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
+        }}
         onDrop={(e) => {
           e.preventDefault()
-          {
-            const files = [...e.dataTransfer.files]
-            const imgs = files.filter((f) => f.type.startsWith("image/"))
-            addFiles(files.filter((f) => !f.type.startsWith("image/")).map((f) => f.name))
-            if (imgs.length) void addImages(imgs).then(addFiles)
-          }
+          setDragging(false)
+          addFiles([...e.dataTransfer.files])
         }}
       >
         {menuOpen && (
@@ -220,13 +256,14 @@ export function PromptBox(props: PromptBoxProps) {
             onAria={onMenuAria}
           />
         )}
-        {(attachments.length > 0 || (folders?.chips !== false && folders && folders.added.length > 0)) && (
-          <div className="flex flex-wrap gap-1 px-3 pt-2.5">
-            {folders?.chips !== false && folders?.added.map((id) => (
-              <Chip key={`dir:${id}`} icon={<FolderPlus size={11} />} label={repoNames[id]?.name ?? id} onRemove={folders.onRemove ? () => folders.onRemove!(id) : undefined} />
+        {header}
+        {(attachments.length > 0 || folderChips.length > 0) && (
+          <div className="flex flex-wrap gap-2 px-3 pt-3">
+            {folderChips.map((id) => (
+              <Chip key={`dir:${id}`} icon={<FolderPlus size={14} />} label={repoNames[id]?.name ?? id} onRemove={folders?.onRemove ? () => folders.onRemove!(id) : undefined} />
             ))}
             {attachments.map((a, i) => (
-              <Chip key={`${a}:${i}`} icon={<Paperclip size={11} />} label={a} mono onRemove={() => setAttachments((x) => x.filter((_, j) => j !== i))} />
+              <Chip key={`${a}:${i}`} icon={<FileText size={14} />} thumb={imageUrl(a)} label={a} onRemove={() => removeAttachment(i)} />
             ))}
           </div>
         )}
@@ -245,7 +282,7 @@ export function PromptBox(props: PromptBoxProps) {
           aria-controls={menuOpen ? menuAria.listId : undefined}
           aria-activedescendant={menuOpen ? menuAria.optionId : undefined}
           placeholder={placeholder}
-          className={cn("px-3.5 pt-3 pb-1", size === "lg" ? "min-h-[84px] text-sm leading-[22px]" : "text-sm leading-[21px]")}
+          className={cn("px-4 pt-3 pb-1 text-sm leading-[22px]", size === "lg" && "min-h-[88px]")}
           onChange={(e) => {
             setText(e.target.value)
             syncTrigger(e.target.value, e.target.selectionStart)
@@ -256,11 +293,10 @@ export function PromptBox(props: PromptBoxProps) {
           }}
           onBlur={() => setTrigger(null)}
           onPaste={(e) => {
-            const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"))
+            const imgs = [...e.clipboardData.files].filter(isImage)
             if (imgs.length) {
               e.preventDefault()
-              // the picture itself goes with the message (and shows in the chat), not just its name
-              void addImages(imgs).then(addFiles)
+              addFiles(imgs)
             }
           }}
           onKeyDown={(e) => {
@@ -293,14 +329,11 @@ export function PromptBox(props: PromptBoxProps) {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               submit(e.metaKey || e.ctrlKey ? "now" : "queue")
-            } else if (e.key === "Escape" && !text) {
-              props.onEscapeEmpty?.(e)
+            } else if (e.key === "Escape") {
+              if (props.onEscape?.(e)) e.preventDefault()
+              else if (!text) props.onEscapeEmpty?.(e)
             } else if (e.key === "ArrowUp" && !text && props.onArrowUpEmpty) {
-              const prev = props.onArrowUpEmpty()
-              if (prev !== undefined) {
-                e.preventDefault()
-                setText(prev)
-              }
+              if (props.onArrowUpEmpty()) e.preventDefault()
             } else if (e.key === "Tab" && e.shiftKey && props.onShiftTab) {
               e.preventDefault()
               props.onShiftTab()
@@ -310,7 +343,7 @@ export function PromptBox(props: PromptBoxProps) {
         <span id={hintId} className="sr-only">
           {keysHint}
         </span>
-        <div className="flex h-10 items-center gap-0.5 px-1.5 pb-1">
+        <div className="flex items-center gap-1 px-2 pt-1 pb-2">
           <input
             ref={fileInput}
             type="file"
@@ -319,7 +352,7 @@ export function PromptBox(props: PromptBoxProps) {
             tabIndex={-1}
             aria-hidden
             onChange={(e) => {
-              addFiles([...(e.target.files ?? [])].map((f) => f.name))
+              addFiles([...(e.target.files ?? [])])
               e.target.value = ""
             }}
           />
@@ -332,9 +365,9 @@ export function PromptBox(props: PromptBoxProps) {
                   </button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent side="top">Add files, folders, commands</TooltipContent>
+              <TooltipContent side="top">Add files, photos, commands</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent side="top" align="start" sideOffset={6} className="w-60">
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-56">
               <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
                 <Paperclip /> Add files or photos
               </DropdownMenuItem>
@@ -376,7 +409,7 @@ export function PromptBox(props: PromptBoxProps) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button type="button" aria-label={listening ? "Stop dictation" : "Dictate"} aria-pressed={listening} disabled={disabled} onClick={toggleDictation} className={cn(ICON_BTN, listening && "text-st-error-fg")}>
-                  <Mic size={15} />
+                  <Mic size={16} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top">{listening ? "Stop dictation" : "Dictate"}</TooltipContent>
@@ -385,13 +418,8 @@ export function PromptBox(props: PromptBoxProps) {
           {showStop ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Stop"
-                  onClick={onStop}
-                  className="ml-0.5 inline-flex size-7 items-center justify-center rounded-md bg-foreground text-background outline-none hover:bg-foreground/88 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-muted"
-                >
-                  <Square size={10} fill="currentColor" />
+                <button type="button" aria-label="Stop" onClick={onStop} className={PRIMARY_BTN}>
+                  <Square size={12} fill="currentColor" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top">Stop · Esc</TooltipContent>
@@ -401,41 +429,64 @@ export function PromptBox(props: PromptBoxProps) {
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Send"
-                  disabled={!text.trim() || disabled}
+                  aria-label={editing ? "Save queued message" : "Send"}
+                  disabled={(!text.trim() && !editing) || disabled}
                   onClick={() => submit("queue")}
-                  className="ml-0.5 inline-flex size-7 items-center justify-center rounded-md bg-foreground text-background outline-none hover:bg-foreground/88 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-muted disabled:bg-accent disabled:text-muted-foreground/70"
+                  className={PRIMARY_BTN}
                 >
-                  <ArrowUp size={15} strokeWidth={2.4} />
+                  {editing ? <Check size={16} strokeWidth={2.4} /> : <ArrowUp size={16} strokeWidth={2.4} />}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">{sendHint}</TooltipContent>
+              <TooltipContent side="top">{editing ? "Save · Enter" : sendHint}</TooltipContent>
             </Tooltip>
           )}
         </div>
       </div>
-      {footer && <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-0.5">{footer}</div>}
+      {(footer || hint) && (
+        <div className={cn("flex min-h-8 min-w-0 flex-wrap items-center gap-1", hint && "justify-end")}>
+          {hint && (
+            <span aria-hidden className="invisible hidden min-w-0 flex-1 truncate px-2 @lg/composer:block text-xs text-muted-foreground/70 group-has-[textarea:focus]/composer:visible">
+              {hint}
+            </span>
+          )}
+          {footer}
+        </div>
+      )}
     </div>
   )
 }
 
-function Chip({ icon, label, mono, onRemove }: { icon: ReactNode; label: string; mono?: boolean; onRemove?: () => void }) {
-  return (
-    <span className={cn("inline-flex h-6 items-center gap-1 rounded-md border border-border bg-card pr-0.5 pl-2 text-xs text-muted-foreground", mono && "font-mono")}>
-      {icon}
-      {label}
+/** An attachment above the text: a picture's thumbnail (bigger on hover) or a file's name. */
+function Chip({ icon, thumb, label, onRemove }: { icon: ReactNode; thumb?: string; label: string; onRemove?: () => void }) {
+  const chip = (
+    <span className="inline-flex h-8 max-w-64 min-w-0 items-center gap-2 rounded-lg bg-muted pr-1 pl-1 text-xs text-muted-foreground ring-1 ring-foreground/10">
+      {thumb ? (
+        <img src={thumb} alt="" className="size-6 shrink-0 rounded-md object-cover" />
+      ) : (
+        <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground/70">{icon}</span>
+      )}
+      <span className="min-w-0 truncate">{label}</span>
       {onRemove ? (
         <button
           type="button"
           aria-label={`Remove ${label}`}
-          className="inline-flex size-5 items-center justify-center rounded-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           onClick={onRemove}
         >
-          <X size={11} />
+          <X size={14} />
         </button>
       ) : (
         <span className="w-1" />
       )}
     </span>
+  )
+  if (!thumb) return chip
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{chip}</TooltipTrigger>
+      <TooltipContent side="top" className="p-1">
+        <img src={thumb} alt={label} className="max-h-60 max-w-60 rounded-md object-contain" />
+      </TooltipContent>
+    </Tooltip>
   )
 }

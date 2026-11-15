@@ -1,28 +1,38 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-chat/index.tsx (ThinkingBlock, WorkActivity, Apache-2.0). Modified for session-dashboard.
 // Also adapted from cline/cline@72b3d71:apps/examples/desktop-app/webview/components/views/chat/messages/{work-block,reasoning-block,turn-receipt}.tsx
 // (Apache-2.0) and BloopAI/vibe-kanban@5f06193:packages/ui/src/components/{ChatAggregatedToolEntries,ChatCollapsedThinking}.tsx (Apache-2.0).
-// Changes: each row is memoized and selects only its own item by id, so
-// only the live agent message re-renders while streaming; "Worked for 2m 14s · 9 tools"
-// groups start collapsed and keep the last tool visible while the turn runs; calm
-// rules: user messages are label-less bubbles with the time on hover, receipts
-// show only while hovering their turn, diff stats on hover; notices carry a retry.
+// Changes: laid out like the Claude Code desktop Code tab. User messages are right-aligned bubbles
+// with their pictures inside; assistant prose is always shown in full; a run of tool calls is one
+// muted line ("Read 3 files, edited 2 files, ran a command +12 −3") that opens to one line per
+// call, and while it runs the line says what is happening now, with a spinner; thinking is a
+// "Thought for 9s" line; a finished turn that edited files ends with an "Edited N files" card.
+// Each row is memoized and selects only its own item by id, so only the live agent message
+// re-renders while streaming.
 import { memo, useState } from "react"
-import { Check, Copy, FileDiff, History, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
+import { Check, ChevronRight, Copy, FileDiff, FilePen, History, Info, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
 import type { ID, ToolCall, Turn } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { openReview, sendMessage } from "@/store/actions"
 import { DiffStat } from "@/components/common/bits"
-import { useNow } from "@/components/common/RelativeTime"
+import { Button } from "@/components/ui/button"
 import { capabilities } from "@/lib/status"
 import { compact, plural, usd } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { Chevron } from "../common"
+import { Chevron, openChatFile, Spin, ToolStatus, useSessionCwd } from "../common"
 import { Markdown } from "../markdown/Markdown"
 import { CachedMarkdown } from "../markdown/CachedMarkdown"
 import { useCoalescedItem, useExpanded, useItem, useItems } from "../sessionStore"
 import { ToolRow } from "../tools/ToolRow"
+import { ToolLabel } from "../tools/ToolLine"
 import { Pictures, SharedFiles } from "./Media"
-import { formatWorkDuration, summarizeWork } from "../tools/toolSummary"
+import { buildToolSummary, formatWorkDuration, relPath, summarizeWork } from "../tools/toolSummary"
+import type { TranscriptView } from "./rowModel"
+
+/** The 14px slot at the left of every meta line (chevron, spinner, kind icon): text lines up under it. */
+const SLOT = "inline-flex size-3.5 shrink-0 items-center justify-center"
+/** A muted one-line row (thinking, tool groups): the whole line toggles, links on it sit above. */
+const META_ROW = "group/meta relative -mx-1.5 flex h-7 max-w-[calc(100%+12px)] min-w-0 items-center gap-2 rounded-md px-1.5 text-sm text-muted-foreground"
+const STRETCHED = "absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
 // ---------- user ----------
 // One shared formatter: toLocaleTimeString per row is slow when many rows mount at once.
@@ -35,9 +45,9 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
   })
   if (item?.type !== "user_message") return null
   return (
-    <div className="group/user flex items-start justify-end gap-2 pt-3 pb-2">
+    <div className="group/user flex items-start justify-end gap-2 pt-6 pb-3">
       {/* on hover: time, Copy and "Rewind to here" (Claude Code desktop's per-message rewind) */}
-      <div className="mt-1.5 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100">
+      <div className="mt-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100">
         <time className="tabular mr-1 text-xs text-muted-foreground/70" dateTime={item.at}>
           {TIME.format(new Date(item.at))}
         </time>
@@ -48,19 +58,19 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
             title="Rewind to here"
             aria-label="Rewind to here"
             onClick={() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId: item.turnId } }))}
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           >
-            <History size={11} />
+            <History size={13} />
           </button>
         )}
       </div>
-      <div className="max-w-[85%] min-w-0 rounded-md bg-muted px-3 py-1.5">
-        {item.images && item.images.length > 0 && <Pictures pictures={item.images} className={item.text ? "mb-1.5" : "my-0.5"} />}
-        {item.text && <div className="text-sm leading-[20px] whitespace-pre-wrap text-foreground select-text">{item.text}</div>}
+      <div className="max-w-[85%] min-w-0 rounded-2xl bg-muted px-4 py-2.5">
+        {item.images && item.images.length > 0 && <Pictures pictures={item.images} className={item.text ? "mb-2" : "my-0.5"} />}
+        {item.text && <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text">{item.text}</div>}
         {item.attachments && item.attachments.length > 0 && (
-          <div className="mt-1 mb-0.5 flex flex-wrap gap-1">
+          <div className="mt-1.5 mb-0.5 flex flex-wrap gap-1">
             {item.attachments.map((a) => (
-              <span key={a} className="inline-flex h-5 items-center gap-1 rounded-sm border border-border px-1.5 font-mono text-xs text-muted-foreground">
+              <span key={a} className="inline-flex h-5 items-center gap-1 rounded-md bg-background/60 px-1.5 font-mono text-xs text-muted-foreground">
                 <Paperclip size={10} /> {a}
               </span>
             ))}
@@ -91,9 +101,9 @@ function CopyButton({ text }: { text: string }) {
         setDone(true)
         setTimeout(() => setDone(false), 1200)
       }}
-      className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+      className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
     >
-      {done ? <Check size={11} /> : <Copy size={11} />}
+      {done ? <Check size={13} /> : <Copy size={13} />}
     </button>
   )
 }
@@ -102,9 +112,9 @@ export const AgentRow = memo(function AgentRow({ sessionId, itemId, eager }: { s
   const item = useItem(sessionId, itemId)
   if (item?.type !== "agent_message") return null
   return (
-    <div className="group/msg relative py-1.5">
+    <div className="group/msg relative py-2">
       <CachedMarkdown cacheKey={itemId} content={item.text} eager={eager} />
-      <div className="absolute -top-1 right-0 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100">
+      <div className="absolute top-0 -right-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100">
         <CopyButton text={item.text} />
       </div>
     </div>
@@ -116,37 +126,47 @@ export const LiveAgentRow = memo(function LiveAgentRow({ sessionId, itemId }: { 
   const item = useCoalescedItem(sessionId, itemId)
   if (item?.type !== "agent_message") return null
   return (
-    <div className="py-1.5">
+    <div className="py-2">
       <Markdown content={item.text} streaming={item.streaming} />
     </div>
   )
 })
 
 // ---------- thought ----------
-/** "Thinking" while the duration is unknown, "Thought for Ns" once it is (Cline formatThoughtLabel). */
-function thoughtLabel(ms?: number) {
-  if (ms === undefined) return "Thinking"
-  return `Thought for ${ms === 0 ? 0 : Math.max(1, Math.round(ms / 1000))}s`
+function thoughtLabel(ms: number | undefined, live: boolean) {
+  if (live) return "Thinking…"
+  if (ms === undefined) return "Thought"
+  return `Thought for ${formatWorkDuration(ms)}`
 }
 
-export const ThoughtRow = memo(function ThoughtRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
+/** "Thought for 9s" (Thinking view: collapsed, Verbose: open); "Thinking…" with a spinner while it lasts. */
+export const ThoughtRow = memo(function ThoughtRow({
+  sessionId,
+  itemId,
+  durationMs,
+  live,
+  view,
+}: {
+  sessionId: ID
+  itemId: ID
+  durationMs?: number
+  live: boolean
+  view: TranscriptView
+}) {
   const item = useItem(sessionId, itemId)
-  const [open, setOpen] = useExpanded(`th:${itemId}`)
+  const [open, setOpen] = useExpanded(`th:${view}:${itemId}`, view === "verbose")
   if (item?.type !== "thought") return null
+  const label = thoughtLabel(durationMs, live)
   return (
-    <div className="py-px">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="group/th -ml-1 flex h-7 items-center gap-1.5 rounded-md px-1 text-sm text-muted-foreground/80 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-      >
-        <span>{thoughtLabel(item.durationMs)}</span>
-        <Chevron open={open} className="opacity-60 group-hover/th:opacity-100" />
-      </button>
+    <div className="py-0.5">
+      <div className={cn(META_ROW, "w-fit pr-2 hover:text-foreground")}>
+        <button type="button" aria-expanded={open} aria-label={label} onClick={() => setOpen(!open)} className={STRETCHED} />
+        <span className={SLOT}>{live ? <Spin size={12} /> : <Chevron open={open} />}</span>
+        <span className="pointer-events-none">{label}</span>
+      </div>
       {open && (
-        <div className="ml-[3px] border-l border-border py-1 pl-3">
-          <Markdown content={item.text} className="sd-markdown-muted" />
+        <div className="ml-[6px] border-l border-border py-1 pr-1 pl-[15px]">
+          <Markdown content={item.text} className="sd-markdown-muted" streaming={live} />
         </div>
       )}
     </div>
@@ -154,87 +174,75 @@ export const ThoughtRow = memo(function ThoughtRow({ sessionId, itemId }: { sess
 })
 
 // ---------- tool group ----------
-/** Ticking duration, only mounted for active groups (finished ones don't subscribe to the clock). */
-function Elapsed({ since }: { since: number }) {
-  const now = useNow()
-  return <>{formatWorkDuration(Math.max(0, now - (since || now)))}</>
-}
-
 function groupStats(calls: (ToolCall | undefined)[]) {
-  let start = Infinity
-  let end = 0
-  let running = false
-  let waiting = false
   let failed = 0
+  let denied = 0
   let added = 0
   let removed = 0
+  let current: ToolCall | undefined
   for (const c of calls) {
     if (!c) continue
-    start = Math.min(start, Date.parse(c.startedAt))
-    if (c.completedAt) end = Math.max(end, Date.parse(c.completedAt))
-    if (c.display === "running") running = true
-    if (c.display === "awaiting_permission") waiting = true
+    if (c.display === "running" || c.display === "awaiting_permission") current = c
     if (c.display === "failed") failed++
-    for (const d of c.diff ?? []) {
-      added += d.added
-      removed += d.removed
-    }
+    if (c.display === "rejected") denied++
+    if (c.display === "done" || c.display === "awaiting_permission")
+      for (const d of c.diff ?? []) {
+        added += d.added
+        removed += d.removed
+      }
   }
-  return { start, end, running, waiting, failed, added, removed }
+  return { failed, denied, added, removed, current }
 }
 
+/**
+ * A run of tool calls as one muted line: "Read 3 files, edited 2 files, ran a command +12 −3".
+ * While the run is live, the line says what happens now ("Running `npm test`") with a spinner.
+ * Open (always in the Verbose view): one line per call.
+ */
 export const ToolGroupRow = memo(function ToolGroupRow({
   sessionId,
   itemIds,
   groupKey,
   live,
+  view,
 }: {
   sessionId: ID
   itemIds: ID[]
   groupKey: string
   live: boolean
+  view: TranscriptView
 }) {
   const items = useItems(sessionId, itemIds)
-  const [open, setOpen] = useExpanded(groupKey, false)
+  const [open, setOpen] = useExpanded(`${groupKey}:${view === "verbose" ? "v" : "n"}`, view === "verbose")
   const calls = items.map((it) => (it?.type === "tool_call" ? it.call : undefined))
   const st = groupStats(calls)
-  const active = live && (st.running || st.waiting)
-  const start = Number.isFinite(st.start) ? st.start : 0
-  // While the turn runs, the last tool stays visible under the collapsed header: it is what Claude is doing now.
-  const lastId = live ? itemIds.at(-1) : undefined
+  const summary = summarizeWork(calls.filter((c): c is ToolCall => !!c))
+  const now = live ? st.current : undefined
+  const nowSummary = now ? buildToolSummary(now) : undefined
   return (
-    <div className="py-px">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="group/grp -ml-1 flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-sm text-muted-foreground/80 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-      >
-        <span className={cn("min-w-0 truncate", active && "text-muted-foreground")}>
-          {summarizeWork(calls.filter((c): c is ToolCall => !!c))}
-          {active && (
-            <span className="tabular text-muted-foreground/70">
-              {" · "}
-              <Elapsed since={start} />
-            </span>
-          )}
-          {st.failed > 0 && <span className="text-st-error-fg"> · {st.failed} failed</span>}
-        </span>
-        {(st.added > 0 || st.removed > 0) && <DiffStat added={st.added} removed={st.removed} className="ml-1 shrink-0" />}
-        <Chevron open={open} className="opacity-60 group-hover/grp:opacity-100" />
-      </button>
-      {open ? (
-        <div className="ml-[3px] flex flex-col border-l border-border pl-2">
+    <div className="py-0.5">
+      <div className={cn(META_ROW, "hover:text-foreground")}>
+        <button type="button" aria-expanded={open} aria-label={nowSummary ? `${summary}, now: ${nowSummary.verb} ${nowSummary.target?.text ?? ""}` : summary} onClick={() => setOpen(!open)} className={STRETCHED} />
+        <span className={SLOT}>{now?.display === "running" ? <Spin size={12} /> : <Chevron open={open} />}</span>
+        {now && nowSummary ? (
+          <>
+            <ToolLabel sessionId={sessionId} summary={nowSummary} />
+            {now.display === "awaiting_permission" && <ToolStatus display={now.display} asks={nowSummary.family === "question"} />}
+            <span className="pointer-events-none shrink-0 text-xs text-muted-foreground/60">· {plural(itemIds.length, "step")}</span>
+          </>
+        ) : (
+          <span className="pointer-events-none min-w-0 truncate">{summary}</span>
+        )}
+        {st.failed > 0 && <span className="pointer-events-none shrink-0 text-st-error-fg">· {st.failed} failed</span>}
+        {st.denied > 0 && <span className="pointer-events-none shrink-0 text-muted-foreground/70">· {st.denied} denied</span>}
+        <DiffStat added={st.added} removed={st.removed} className="pointer-events-none shrink-0" />
+      </div>
+      {open && (
+        <div className="ml-[6px] flex flex-col border-l border-border py-0.5 pl-3">
           {itemIds.map((id) => (
             <ToolRow key={id} sessionId={sessionId} itemId={id} />
           ))}
         </div>
-      ) : (
-        lastId && (
-          <div className="ml-[3px] flex flex-col border-l border-border pl-2">
-            <ToolRow sessionId={sessionId} itemId={lastId} />
-          </div>
-        )
       )}
     </div>
   )
@@ -242,8 +250,74 @@ export const ToolGroupRow = memo(function ToolGroupRow({
 
 export const SingleToolRow = memo(function SingleToolRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   return (
-    <div className="py-px">
+    <div className="py-0.5">
       <ToolRow sessionId={sessionId} itemId={itemId} />
+    </div>
+  )
+})
+
+// ---------- what a turn edited ----------
+interface EditedFile {
+  path: string
+  added: number
+  removed: number
+  created: boolean
+}
+
+/** "Edited 3 files" at the end of a finished turn: each file it changed, a click opens it in Review. */
+export const EditsCard = memo(function EditsCard({ sessionId, itemIds }: { sessionId: ID; itemIds: ID[] }) {
+  const items = useItems(sessionId, itemIds)
+  const cwd = useSessionCwd(sessionId)
+  const byPath = new Map<string, EditedFile>()
+  for (const it of items) {
+    // only edits that went through: denied, failed or waiting ones never touched the file
+    if (it?.type !== "tool_call" || it.call.display !== "done") continue
+    for (const d of it.call.diff ?? []) {
+      const f = byPath.get(d.path) ?? { path: d.path, added: 0, removed: 0, created: false }
+      f.added += d.added
+      f.removed += d.removed
+      if (d.op === "add") f.created = true
+      byPath.set(d.path, f)
+    }
+  }
+  const files = [...byPath.values()]
+  if (!files.length) return null
+  const added = files.reduce((a, f) => a + f.added, 0)
+  const removed = files.reduce((a, f) => a + f.removed, 0)
+  return (
+    <div className="my-3 overflow-hidden rounded-xl border border-border">
+      <div className="flex h-10 items-center gap-2 pr-1.5 pl-3">
+        <FilePen size={14} strokeWidth={1.75} className="shrink-0 text-muted-foreground" aria-hidden />
+        <span className="text-sm text-foreground">Edited {plural(files.length, "file")}</span>
+        <DiffStat added={added} removed={removed} />
+        <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => openReview(sessionId)}>
+          Review
+          <ChevronRight data-icon="inline-end" />
+        </Button>
+      </div>
+      <ul>
+        {files.map((f) => {
+          const shown = relPath(f.path, cwd)
+          const slash = shown.lastIndexOf("/")
+          return (
+            <li key={f.path} className="border-t border-border">
+              <button
+                type="button"
+                title={`Review ${f.path}`}
+                onClick={() => openChatFile(sessionId, f.path, true)}
+                className="flex h-8 w-full min-w-0 items-center gap-2 px-3 text-left outline-none hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                  {slash > 0 && <span className="text-muted-foreground/70">{shown.slice(0, slash + 1)}</span>}
+                  {shown.slice(slash + 1)}
+                </span>
+                {f.created && <span className="shrink-0 text-xs text-muted-foreground/70">new</span>}
+                <DiffStat added={f.added} removed={f.removed} className="shrink-0" />
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 })
@@ -252,10 +326,11 @@ export const SingleToolRow = memo(function SingleToolRow({ sessionId, itemId }: 
 export const CompactionRow = memo(function CompactionRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   const item = useItem(sessionId, itemId)
   if (item?.type !== "compaction") return null
+  const how = item.trigger === "auto" ? "Compacted automatically" : "Compacted with /compact"
   return (
-    <div className="flex items-center gap-3 py-3 text-xs text-muted-foreground/70">
+    <div className="flex items-center gap-3 pt-4 pb-1 text-xs text-muted-foreground/70" role="separator" aria-label="Conversation compacted">
       <div className="h-px flex-1 bg-border" />
-      <span title={`${item.trigger === "auto" ? "Automatic" : "Manual"} · ${compact(item.preTokens)} tokens summarized`}>Context compacted</span>
+      <span title={item.preTokens ? `${how} · ${compact(item.preTokens)} tokens summarized` : how}>Conversation compacted · earlier messages are summarized</span>
       <div className="h-px flex-1 bg-border" />
     </div>
   )
@@ -269,43 +344,35 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
     return c ? capabilities(c).send : false
   })
   if (item?.type !== "notice") return null
-  if (item.severity === "info") {
-    return (
-      <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground/70">
-        <span className="min-w-0 select-text">{item.text}</span>
-        {/\/mcp\b/.test(item.text) && (
-          <button
-            type="button"
-            onClick={() => void import("@/features/terminal/terminals").then((t) => t.runSlashInTerminal("/mcp", sessionId))}
-            className="h-5 shrink-0 rounded-sm border border-border px-1.5 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            Open /mcp
-          </button>
-        )}
-      </div>
-    )
-  }
-  const Icon = item.severity === "error" ? OctagonX : TriangleAlert
+  const error = item.severity === "error"
+  const Icon = error ? OctagonX : item.severity === "warning" ? TriangleAlert : Info
+  const mcp = item.severity === "info" && /\/mcp\b/.test(item.text)
   return (
-    <div className="py-1.5">
-      <div
-        className={cn(
-          "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
-          item.severity === "error" ? "border-st-error/35 bg-st-error-tint text-st-error-fg" : "border-st-input/30 bg-st-input-tint text-st-input-fg",
-        )}
-      >
-        <Icon size={13} className="mt-[3px] shrink-0" />
-        <span className="min-w-0 flex-1 leading-[19px] select-text">{item.text}</span>
-        {item.severity === "error" && canSend && (
-          <button
-            type="button"
-            onClick={() => sendMessage(sessionId, "continue", "now")}
-            className="h-5 shrink-0 rounded-sm border border-st-error/40 px-1.5 text-xs text-st-error-fg outline-none hover:border-st-error/70 focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            Retry
-          </button>
-        )}
-      </div>
+    <div
+      className={cn(
+        "flex min-h-7 items-start gap-2 py-1",
+        error ? "text-sm text-st-error-fg" : item.severity === "warning" ? "text-sm text-st-input-fg" : "text-xs text-muted-foreground/70",
+      )}
+    >
+      <span className={cn(SLOT, item.severity === "info" ? "mt-px" : "mt-[3px]")}>
+        <Icon size={item.severity === "info" ? 12 : 14} strokeWidth={1.75} aria-hidden />
+      </span>
+      <span className={cn("min-w-0 flex-1 select-text", item.severity === "info" ? "leading-[18px]" : "leading-relaxed")}>{item.text}</span>
+      {error && canSend && (
+        <Button size="xs" variant="outline" className="shrink-0" onClick={() => sendMessage(sessionId, "continue", "now")}>
+          Retry
+        </Button>
+      )}
+      {mcp && (
+        <Button
+          size="xs"
+          variant="outline"
+          className="-my-0.5 shrink-0"
+          onClick={() => void import("@/features/terminal/terminals").then((t) => t.runSlashInTerminal("/mcp", sessionId))}
+        >
+          Open /mcp
+        </Button>
+      )}
     </div>
   )
 })
@@ -315,7 +382,7 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
 export const ReceiptRow = memo(function ReceiptRow({ sessionId, receipt }: { sessionId: ID; receipt: NonNullable<Turn["receipt"]> }) {
   return (
     <div
-      className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/turn:opacity-100 focus-within:opacity-100"
+      className="flex h-7 items-center gap-1.5 text-xs text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/turn:opacity-100 focus-within:opacity-100"
       title={`${compact(receipt.tokens)} tokens`}
     >
       <span className="tabular">{formatWorkDuration(receipt.durationMs)}</span>

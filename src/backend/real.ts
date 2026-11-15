@@ -1170,7 +1170,10 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
     return
   }
   patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images))
-  setStatusLocal(id, "working", { activity: "Thinking", waitingFor: undefined })
+  // mid-turn it goes in at once too: claude reads it after its current step (steering), so what it
+  // is doing right now stays on screen
+  const busy = s.status === "working" || s.status === "starting"
+  setStatusLocal(id, "working", busy ? { waitingFor: undefined } : { activity: "Thinking", waitingFor: undefined })
   invoke("claude_send", { key: id, text: body, images }).catch((e) => noticeError(id, String(e)))
 }
 

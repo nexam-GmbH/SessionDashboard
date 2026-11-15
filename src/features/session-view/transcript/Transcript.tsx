@@ -2,17 +2,18 @@
 // Older turns inside TanStack Virtual, the live tail (last turn) rendered after the
 // virtualizer, a bottom lock and a jump-to-latest affordance. Changes: our row model,
 // turn blocks as virtual items, memoized rows that select their own item.
-import { memo, useLayoutEffect, useMemo, useRef } from "react"
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { ArrowDown } from "lucide-react"
 import type { ID } from "@/lib/model"
-import { getApp } from "@/store/app"
+import { getApp, useApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { useTranscriptShape } from "../sessionStore"
-import { buildRows, groupBlocks, tailStartIndex, type Block, type Row } from "./rowModel"
+import { buildRows, groupBlocks, tailStartIndex, type Block, type Row, type TranscriptView } from "./rowModel"
 import { DoneLine, LiveSpinner } from "./Spinner"
 import { useTranscriptVirtualizer } from "./useTranscriptVirtualizer"
+import { TRANSCRIPT_VIEWS } from "./view"
 import {
   AgentRow,
   CompactionRow,
@@ -24,9 +25,12 @@ import {
   ToolGroupRow,
   UserRow,
   FilesRow,
+  EditsCard,
 } from "./rows"
 
-const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail }: { sessionId: ID; row: Row; liveItemId?: ID; inTail?: boolean }) {
+type ViewProps = { sessionId: ID; liveItemId?: ID; inTail?: boolean; view: TranscriptView }
+
+const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view }: ViewProps & { row: Row }) {
   switch (row.kind) {
     case "user":
       return <UserRow sessionId={sessionId} itemId={row.itemId} />
@@ -37,13 +41,15 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail }: { 
         <AgentRow sessionId={sessionId} itemId={row.itemId} eager={inTail} />
       )
     case "thought":
-      return <ThoughtRow sessionId={sessionId} itemId={row.itemId} />
+      return <ThoughtRow sessionId={sessionId} itemId={row.itemId} durationMs={row.durationMs} live={row.live} view={view} />
     case "tools":
-      return <ToolGroupRow sessionId={sessionId} itemIds={row.itemIds} groupKey={row.key} live={row.live} />
+      return <ToolGroupRow sessionId={sessionId} itemIds={row.itemIds} groupKey={row.key} live={row.live} view={view} />
     case "tool":
       return <SingleToolRow sessionId={sessionId} itemId={row.itemId} />
     case "files":
       return <FilesRow sessionId={sessionId} itemId={row.itemId} />
+    case "edits":
+      return <EditsCard sessionId={sessionId} itemIds={row.itemIds} />
     case "compaction":
       return <CompactionRow sessionId={sessionId} itemId={row.itemId} />
     case "notice":
@@ -55,12 +61,12 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail }: { 
   }
 })
 
-const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail }: { sessionId: ID; block: Block; liveItemId?: ID; inTail?: boolean }) {
+const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail, view }: ViewProps & { block: Block }) {
   // group/turn: the turn receipt shows only while the pointer is over its turn
   return (
     <div className="group/turn">
       {block.rows.map((row) => (
-        <RowView key={row.key} sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} />
+        <RowView key={row.key} sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} view={view} />
       ))}
     </div>
   )
@@ -70,8 +76,10 @@ const COLUMN = "mx-auto w-full max-w-[var(--chat-w)] px-5"
 
 export const Transcript = memo(function Transcript({ sessionId }: { sessionId: ID }) {
   const { ready, order, turns, liveItemId } = useTranscriptShape(sessionId)
+  // Normal: tool calls folded · Thinking: + Claude's thinking · Verbose: every step open (Ctrl+O)
+  const view = useApp((s) => s.settings.transcriptView ?? "normal")
   // Rows depend on item *types* only, which never change: recompute on append, not on stream ticks.
-  const rows = useMemo(() => buildRows(order, getApp().transcripts[sessionId]?.items ?? {}, turns), [order, turns, sessionId])
+  const rows = useMemo(() => buildRows(order, getApp().transcripts[sessionId]?.items ?? {}, turns, view), [order, turns, sessionId, view])
   const blocks = useMemo(() => groupBlocks(rows), [rows])
   const split = useMemo(() => tailStartIndex(blocks, turns), [blocks, turns])
   const head = useMemo(() => blocks.slice(0, split), [blocks, split])
@@ -111,7 +119,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
       >
         {ready && !rows.length && <EmptyState>No messages yet.</EmptyState>}
         {!ready && <TranscriptSkeleton />}
-        <div ref={contentRef} className="pt-1 pb-6">
+        <div ref={contentRef} className="pb-8">
           {head.length > 0 && (
             <div className="relative w-full" style={{ height: totalSize }}>
               {virtualItems.map((v) => {
@@ -126,7 +134,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
                     style={{ transform: `translateY(${v.start}px)` }}
                   >
                     <div className={COLUMN}>
-                      <BlockView sessionId={sessionId} block={block} liveItemId={liveItemId} />
+                      <BlockView sessionId={sessionId} block={block} liveItemId={liveItemId} view={view} />
                     </div>
                   </div>
                 )
@@ -135,12 +143,13 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
           )}
           <div className={COLUMN}>
             {tail.map((block) => (
-              <BlockView key={block.key} sessionId={sessionId} block={block} liveItemId={liveItemId} inTail />
+              <BlockView key={block.key} sessionId={sessionId} block={block} liveItemId={liveItemId} inTail view={view} />
             ))}
             <LiveSpinner sessionId={sessionId} />
           </div>
         </div>
       </div>
+      <ViewNotice view={view} />
       {!isAtBottom && (
         <button
           type="button"
@@ -154,6 +163,27 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
     </div>
   )
 })
+
+/** After Ctrl+O (or the menu) the view changed: say which one, briefly (it fades out by CSS). */
+function ViewNotice({ view }: { view: TranscriptView }) {
+  const [prev, setPrev] = useState(view)
+  const [changed, setChanged] = useState(0)
+  if (prev !== view) {
+    setPrev(view)
+    setChanged((n) => n + 1)
+  }
+  if (!changed) return null
+  const v = TRANSCRIPT_VIEWS.find((x) => x.id === view)
+  return (
+    <div
+      key={changed}
+      role="status"
+      className="sd-view-notice pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1 text-xs text-muted-foreground shadow-md"
+    >
+      <span className="text-foreground">{v?.label} view</span> · {v?.hint}
+    </div>
+  )
+}
 
 /** While a chat is read: the shape of its latest messages, at the bottom where the chat opens. */
 function TranscriptSkeleton() {

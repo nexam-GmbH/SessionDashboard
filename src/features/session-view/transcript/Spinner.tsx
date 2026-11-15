@@ -1,5 +1,5 @@
 // Claude Code's own voice in the chat: while a session works, the live line under the last message
-// ("· Drizzling… (12s · esc to interrupt)"), and when a turn ends, "✻ Cooked for 26s · done 19:49".
+// ("✻ Drizzling… 12s · Running npm test"), and when a turn ends, "✻ Cooked for 26s · done 19:49".
 // The words are the installed claude's (read from it at start, see discover.rs spinner_verbs); the
 // glyph steps through the same frames as the terminal.
 import { useEffect, useState } from "react"
@@ -38,22 +38,23 @@ function nowDoing(t: Transcript | undefined): string {
     const it = t.items[t.order[i]]
     if (!it) continue
     if (it.type === "tool_call") {
-      if (it.call.display === "running") return describeActivity(it.call)
-      if (it.call.display === "awaiting_permission") return "Waiting for your answer"
+      if (it.call.display === "running" || it.call.display === "awaiting_permission") return describeActivity(it.call)
       break
     }
     if (it.type === "agent_message" && it.streaming) return "Writing"
-    if (it.type === "thought" || it.type === "user_message" || it.type === "agent_message") break
+    if (it.type === "thought") return "Thinking"
+    if (it.type === "user_message" || it.type === "agent_message") break
   }
   return t.thinkingNow ? "Thinking" : "Working"
 }
 
-/** The live line while the session works: what it does now and for how long (Claude Code desktop). */
+/** The live line while the session works: Claude Code's verb, for how long, and what it does now. */
 export function LiveSpinner({ sessionId }: { sessionId: ID }) {
   const status = useApp((s) => s.sessions[sessionId]?.status)
   const turn = useApp((s) => s.transcripts[sessionId]?.turns.at(-1))
   const since = useApp((s) => s.sessions[sessionId]?.statusObservedAt)
   const doing = useApp((s) => nowDoing(s.transcripts[sessionId]))
+  const present = useApp((s) => s.verbs?.present)
   const still = useApp((s) => s.settings.reduceMotion)
   const working = status === "working" || status === "starting"
   const [frame, setFrame] = useState(0)
@@ -66,15 +67,17 @@ export function LiveSpinner({ sessionId }: { sessionId: ID }) {
   if (!working) return null
   const start = Date.parse(turn?.status === "in_progress" ? turn.startedAt : (since ?? "")) || now
   const secs = Math.max(0, Math.round((now - start) / 1000))
+  const verb = present?.length ? pick(present, turn?.id ?? sessionId) : "Working"
   return (
-    <div className="flex h-8 items-center gap-2 pt-1 text-sm" role="status" aria-label={doing}>
-      <span className="inline-block w-3 text-center text-spark" aria-hidden>
+    <div className="flex h-9 min-w-0 items-center gap-2 pt-1 text-sm" role="status" aria-label={`${verb}: ${doing}`}>
+      <span className="inline-flex size-3.5 shrink-0 items-center justify-center text-spark" aria-hidden>
         {still ? "✻" : FRAMES[frame]}
       </span>
-      <span className="text-muted-foreground">{doing}</span>
-      <span className="tabular text-xs text-muted-foreground/70" aria-hidden>
+      <span className="shrink-0 text-foreground/90">{verb}…</span>
+      <span className="tabular shrink-0 text-xs text-muted-foreground/70" aria-hidden>
         {secs < 60 ? `${secs}s` : formatWorkDuration(secs * 1000)}
       </span>
+      {doing !== "Working" && <span className="min-w-0 truncate text-muted-foreground">· {doing}</span>}
     </div>
   )
 }
@@ -84,7 +87,7 @@ export function DoneLine({ turnId, durationMs, at }: { turnId: ID; durationMs: n
   const past = useApp((s) => s.verbs?.past) ?? PAST
   return (
     <div className="flex h-7 items-center gap-2 text-xs text-muted-foreground/70">
-      <span className="inline-block w-3 text-center" aria-hidden>
+      <span className="inline-flex size-3.5 shrink-0 items-center justify-center" aria-hidden>
         ✻
       </span>
       <span>
