@@ -347,6 +347,10 @@ pub fn status_local() -> Value {
 
 /// Install (or remove) the hook on this computer. The first change keeps a backup of settings.json.
 pub fn set_local(install: bool, port: u16) -> Result<Value, String> {
+    // the hook is a POSIX shell script; Windows has no sh by default
+    if cfg!(windows) && install {
+        return Err("Hooks need a POSIX shell (sh) and are not available on Windows yet. Sessions are still found and shown without them.".into());
+    }
     let path = settings_path();
     let before = std::fs::read_to_string(&path).unwrap_or_default();
     let after = merge(&before, install)?;

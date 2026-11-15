@@ -1,7 +1,7 @@
 // The session's details beside the chat (Claude Code desktop's right panel): where it runs, what
 // fills its context window, its changes and pull request, and the plan's limits.
-import { useEffect, useState, type ReactNode } from "react"
-import { CircleAlert, CircleCheck, CircleDashed, CircleX, LoaderCircle, Radio, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { CircleAlert, CircleCheck, CircleDashed, CircleX, LoaderCircle, Radio, UserRound, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
 import { openReview, sendMessage } from "@/store/actions"
@@ -20,7 +20,7 @@ import { PortChips } from "@/components/common/PortChips"
 import { usePorts } from "@/backend/ports"
 import { RelativeTime } from "@/components/common/RelativeTime"
 import { Meter } from "@/features/usage/Meter"
-import { useUsage } from "@/features/usage/usageData"
+import { recentBySession, useUsage } from "@/features/usage/usageData"
 
 // validated categorical steps for the dark surface, in a fixed order (dataviz reference palette)
 const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
@@ -36,7 +36,7 @@ export function DetailsPanel({ sessionId }: { sessionId: ID }) {
       <Context s={s} />
       <Changes s={s} />
       <Checks id={s.id} />
-      <Limits cost={s.usage.costUsd} />
+      <Limits cost={s.usage.costUsd} id={s.id} />
     </aside>
   )
 }
@@ -87,6 +87,11 @@ function Environment({ s }: { s: Session }) {
         </Row>
       )}
       <Serving id={s.id} />
+      {s.configDir && (
+        <Row icon={<UserRound />} title="The Claude Code config folder (account) this session belongs to">
+          <span className="font-mono text-xs">{homePath(s.configDir)}</span>
+        </Row>
+      )}
     </Section>
   )
 }
@@ -379,7 +384,15 @@ function Checks({ id }: { id: ID }) {
   )
 }
 
-function Limits({ cost }: { cost: number }) {
+/** This session's part of what the plan's last 5 hours used (from the usage ledger). */
+function WindowShare({ id }: { id: ID }) {
+  const ledger = useUsage((st) => st.ledger)
+  const share = useMemo(() => (ledger ? recentBySession(ledger).rows.find((r) => r.id === id)?.share : undefined), [ledger, id])
+  if (!share || share < 0.01) return null
+  return <p className="text-xs text-muted-foreground">{Math.round(share * 100)}% of what the last 5 hours used was this session</p>
+}
+
+function Limits({ cost, id }: { cost: number; id: ID }) {
   const limits = useUsage((st) => st.limits?.limits)
   const session = limits?.find((l) => l.group === "session")
   const week = limits?.find((l) => l.kind === "weekly_all") ?? limits?.find((l) => l.group === "weekly")
@@ -388,6 +401,7 @@ function Limits({ cost }: { cost: number }) {
       {session && <Meter label="Current session (5 h)" percent={session.percent} />}
       {week && <Meter label="This week" percent={week.percent} />}
       {cost > 0 && <p className="text-xs text-muted-foreground">This session so far: ${cost.toFixed(2)} at API prices</p>}
+      <WindowShare id={id} />
     </Section>
   )
 }

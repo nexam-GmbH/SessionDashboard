@@ -4,7 +4,8 @@ A desktop app for running many Claude Code sessions at once. It finds every sess
 your servers over ssh), shows at a glance which ones need you, and lets you answer, review and switch between
 them as fast as terminal tabs.
 
-Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS builds come from the same code.
+Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS builds come from the same code
+(on Windows the optional hooks are not available yet; dev-server ports are shown on Linux).
 
 ## What it does
 
@@ -30,6 +31,11 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
   waits. Dev servers a session started show as `:5173` chips that open in the browser, and a working
   session that has written nothing for five minutes says so.
 - **After a restart.** The sessions that were running when the app closed are offered back in one go.
+- **At the usage limit.** Sessions that stopped at the plan's limit are listed with the reset time; tick
+  the ones that should go on and they continue one by one after the reset.
+- **Side by side.** Any session opens in its own window (session menu or `Ctrl+K`), for a second screen.
+- **More than one account.** Other Claude Code config folders (`CLAUDE_CONFIG_DIR`) are read too, and a
+  workspace can start its new sessions in one of them.
 - **Pull requests.** Status and checks in the details panel; a red check's failing log lines go to the
   session with one click.
 - **Permissions you granted.** Settings → Permissions lists every "always allow" rule from your user and
@@ -43,10 +49,12 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
 - **Usage.** Tokens, value at API prices, prompts and sessions per day, week, month, year or all time,
   an activity heatmap, per-model breakdown, where the value goes (cache reads, cache writes, output), and
   your plan's 5-hour and weekly limits over time. The history is kept in its own ledger, so it survives
-  Claude Code cleaning up old transcripts. Next to the prompt box, a session whose prompt cache has expired
-  says what the next message costs to re-read the conversation.
+  Claude Code cleaning up old transcripts. "Last 5 hours by session" shows which session uses the plan's
+  5-hour window. Next to the prompt box, a session whose prompt cache has expired says what the next
+  message costs to re-read the conversation.
 - **Review.** Files that deserve a look first (secrets, CI, migrations, auth, dependencies) lead the list
-  and tests come last; very large diffs suggest going turn by turn.
+  and tests come last; files not opened yet carry a dot; very large diffs suggest going turn by turn.
+  Approving a plan can allow the checks it names (tests, builds) for the rest of the session.
 - **Git loose ends.** Worktrees and branches with uncommitted or unpushed work, per repository.
 - **Fast.** Sessions switch instantly, chats load from the end of their transcript, and nothing polls
   harder than it has to.
@@ -65,6 +73,12 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
 | `Ctrl+B` | Show / hide the session list |
 | `Ctrl+Shift+M` / `I` / `E` | Permission mode, model, effort |
 | `?` | All shortcuts |
+
+## Download
+
+Installers for Linux (`.AppImage`, `.deb`, `.rpm`), macOS (Apple silicon and Intel) and Windows are on the
+[Releases](https://github.com/shamilbasarov/SessionDashboard/releases/latest) page. They are not signed
+yet: on macOS right-click the app → Open the first time, on Windows choose "More info → Run anyway".
 
 ## Requirements
 

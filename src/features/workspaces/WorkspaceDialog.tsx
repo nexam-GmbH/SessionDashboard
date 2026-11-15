@@ -3,7 +3,7 @@
 // repository however many checkouts and worktrees it has; "Add folder" lists the repos inside a
 // folder you name. Sessions of a picked repo show in the workspace wherever they run.
 import { useMemo, useState } from "react"
-import { Check, Cloud, FolderGit2, FolderPlus, Layers, Search, Server } from "lucide-react"
+import { Check, Cloud, FolderGit2, FolderPlus, Layers, Search, Server, UserRound } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -80,6 +80,8 @@ function Editor({ edit, onDone }: { edit?: Workspace; onDone: () => void }) {
   const all = useCandidates(extra)
   // the main folder: one agent for all the repos (empty = the folder that holds them)
   const [homeDir, setHomeDir] = useState(edit?.home ?? "")
+  const accounts = useApp((st) => st.settings.claudeConfigDirs ?? [])
+  const [configDir, setConfigDir] = useState(edit?.configDir ?? "")
   const derivedHome = useMemo(() => {
     const paths = all.filter((c) => picked.has(c.key) && c.path).map((c) => homePath(c.path!).split("/"))
     if (paths.length < 2) return undefined
@@ -140,10 +142,10 @@ function Editor({ edit, onDone }: { edit?: Workspace; onDone: () => void }) {
     })
     const st = getApp().settings
     if (edit) {
-      patchSettings({ workspaces: st.workspaces.map((w) => (w.id === edit.id ? { ...w, name: nm, repos, folders: undefined, home: homeDir.trim() || undefined } : w)) })
+      patchSettings({ workspaces: st.workspaces.map((w) => (w.id === edit.id ? { ...w, name: nm, repos, folders: undefined, home: homeDir.trim() || undefined, configDir: configDir || undefined } : w)) })
     } else {
       const id = `${nm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "ws"}-${Date.now().toString(36).slice(-4)}`
-      patchSettings({ workspaces: [...st.workspaces, { id, name: nm, repos, ...(homeDir.trim() ? { home: homeDir.trim() } : {}) }], workspace: id })
+      patchSettings({ workspaces: [...st.workspaces, { id, name: nm, repos, ...(homeDir.trim() ? { home: homeDir.trim() } : {}), ...(configDir ? { configDir } : {}) }], workspace: id })
     }
     onDone()
   }
@@ -207,6 +209,22 @@ function Editor({ edit, onDone }: { edit?: Workspace; onDone: () => void }) {
         </label>
         <Input id="ws-home" value={homeDir} onChange={(e) => setHomeDir(e.target.value)} placeholder={derivedHome ?? "the folder that holds the repos"} className="h-8 flex-1 font-mono text-xs placeholder:font-sans" spellCheck={false} autoCapitalize="off" />
       </div>
+      {accounts.length > 0 && (
+        <div className="flex items-center gap-2 border-t border-border px-5 py-3">
+          <UserRound size={14} className="shrink-0 text-muted-foreground/70" />
+          <label htmlFor="ws-account" className="shrink-0 text-xs text-muted-foreground" title="The Claude Code config folder (account) new sessions in this workspace use">
+            Claude account
+          </label>
+          <select id="ws-account" value={configDir} onChange={(e) => setConfigDir(e.target.value)} className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-input/30">
+            <option value="">~/.claude (main)</option>
+            {accounts.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
         <Button size="sm" variant="ghost" onClick={onDone}>
           Cancel

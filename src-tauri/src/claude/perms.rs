@@ -39,7 +39,11 @@ fn read(path: &Path, scope: &'static str, project: Option<&str>) -> Option<RuleF
 /// The rule files of this computer: the user's, and each given project's shared and local ones.
 pub fn list(projects: &[String]) -> Vec<RuleFile> {
     let mut out = Vec::new();
-    out.extend(read(&claude_dir().join("settings.json"), "user", None));
+    for (i, dir) in super::discover::claude_dirs().iter().enumerate() {
+        // another account's settings: shown under its folder
+        let label = if i == 0 { None } else { Some(dir.to_string_lossy().to_string()) };
+        out.extend(read(&dir.join("settings.json"), "user", label.as_deref()));
+    }
     let mut seen: Vec<&String> = Vec::new();
     for p in projects {
         if seen.contains(&p) {
@@ -57,7 +61,7 @@ pub fn list(projects: &[String]) -> Vec<RuleFile> {
 fn allowed(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let parent = path.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-    let user = path == claude_dir().join("settings.json");
+    let user = super::discover::claude_dirs().iter().any(|d| path == d.join("settings.json"));
     user || (parent == ".claude" && (name == "settings.json" || name == "settings.local.json"))
 }
 

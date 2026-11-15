@@ -302,6 +302,7 @@ const FileRow = memo(function FileRow({
   onSelect: (key: string) => void
 }) {
   const mark = useReviewStore((s) => s.marks[file.key])
+  const seen = useReviewStore((s) => !!s.seen[file.cacheKey])
   const comments = useReviewStore((s) => {
     let n = 0
     for (const c of s.comments)
@@ -322,7 +323,7 @@ const FileRow = memo(function FileRow({
         active ? "bg-accent" : "hover:bg-accent"
       )}
     >
-      {mark && <MarkGlyph mark={mark} size={12} />}
+      {mark ? <MarkGlyph mark={mark} size={12} /> : !seen && <span aria-label="Not opened yet" title="Not opened yet" className="size-1.5 shrink-0 rounded-full bg-foreground/70" />}
       <span
         className={cn(
           "max-w-[75%] shrink-0 truncate text-xs",

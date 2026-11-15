@@ -15,6 +15,7 @@ import { riskOf } from "@/features/requests/risk"
 import { OverlapLine } from "@/components/common/OverlapNote"
 import { PortChips } from "@/components/common/PortChips"
 import { RestoreCard } from "./RestoreCard"
+import { ParkedCard } from "./ParkedCard"
 import { RelativeTime, useQuietMinutes } from "@/components/common/RelativeTime"
 import { onceOptions, OnceButtons } from "@/features/requests/OnceAnswers"
 import { capabilities } from "@/lib/status"
@@ -37,6 +38,7 @@ export default function Overview() {
   return (
     <div className="ov h-full w-full overflow-auto" style={{ "--n": repoOrder.length } as React.CSSProperties}>
       <RestoreCard />
+      <ParkedCard />
       <div className="ov-tree">
         {hasMain && (
           <div className="ov-main-wrap gap-6">

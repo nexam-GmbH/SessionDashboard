@@ -11,6 +11,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Shortcut } from "@/components/common/bits"
 import { useApp } from "@/store/app"
+import { POPOUT } from "@/backend/mode"
 import { activeWorkspace, selectNeedsYou } from "@/store/selectors"
 import { currentSessionId, goToNextWaiting } from "@/store/actions"
 import { SessionHeader } from "@/features/session-view/header/SessionHeader"
@@ -23,11 +24,15 @@ export function SiteHeader() {
   const native = useApp((s) => s.settings.nativeTitlebar)
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <SidebarTrigger className="-ml-1" />
-      <Separator orientation="vertical" className="mx-1 h-4 data-vertical:self-auto" />
+      {!POPOUT && (
+        <>
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mx-1 h-4 data-vertical:self-auto" />
+        </>
+      )}
       <ScreenTitle />
       <UndoNotice />
-      <NeedsYou />
+      {!POPOUT && <NeedsYou />}
       <TerminalButton />
       {customChrome(native) && <WindowControls />}
     </header>

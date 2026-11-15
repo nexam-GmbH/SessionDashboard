@@ -14,6 +14,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useNow } from "@/components/common/RelativeTime"
 import { cn } from "@/lib/utils"
+import { useApp } from "@/store/app"
+import { openSession } from "@/store/actions"
 import { Meter, until } from "./Meter"
 import {
   FAMILIES,
@@ -26,6 +28,7 @@ import {
   modelName,
   perDay,
   previousRange,
+  recentBySession,
   rangeStart,
   refreshUsage,
   series,
@@ -163,7 +166,10 @@ function Dashboard({ range }: { range: Range }) {
         </Card>
       </div>
 
-      <LimitsChart samples={limits?.samples ?? []} />
+      <div className="grid gap-4 @3xl/main:grid-cols-2">
+        <RecentSessions />
+        <LimitsChart samples={limits?.samples ?? []} />
+      </div>
 
       <DailyTable range={range} />
     </>
@@ -281,6 +287,49 @@ const limitsConfig = {
   s: { label: "Session (5 h)", color: "var(--chart-1)" },
   w: { label: "Weekly", color: "var(--chart-3)" },
 } satisfies ChartConfig
+
+/** Which sessions used the plan's current 5-hour window, by value; a row opens its session. */
+function RecentSessions() {
+  const ledger = useUsage((s) => s.ledger)!
+  const sessions = useApp((s) => s.sessions)
+  const now = useNow()
+  const { total, rows } = useMemo(() => recentBySession(ledger, 5, now), [ledger, now])
+  return (
+    <Card className="@container/card">
+      <CardHeader>
+        <CardTitle>Last 5 hours by session</CardTitle>
+        <CardDescription>Who uses the plan's 5-hour window, by value at API prices ({usdFmt(total)} in all); subagents count for their session</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {!rows.length ? (
+          <p className="text-sm text-muted-foreground">Nothing in the last 5 hours.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {rows.slice(0, 8).map((r) => {
+              const s = sessions[r.id]
+              return (
+                <li key={r.id}>
+                  <button type="button" disabled={!s} onClick={() => s && openSession(r.id)} className="flex w-full flex-col gap-1 text-left enabled:hover:opacity-80">
+                    <span className="flex w-full items-baseline gap-2 text-sm">
+                      <span className="min-w-0 flex-1 truncate">{s?.title ?? `Session ${r.id.slice(0, 8)}`}</span>
+                      <span className="tabular text-xs text-muted-foreground">{compactTokens(r.tokens)}</span>
+                      <span className="tabular w-20 text-right font-medium">
+                        {usdFmt(r.cost)} <span className="text-xs font-normal text-muted-foreground">{Math.round(r.share * 100)}%</span>
+                      </span>
+                    </span>
+                    <span className="block h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(r.share * 100, 0.5)}%` }} />
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 
 function LimitsChart({ samples }: { samples: LimitSample[] }) {
   const [span, setSpan] = useState("24")

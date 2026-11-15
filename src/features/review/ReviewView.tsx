@@ -55,6 +55,7 @@ import {
   markSent,
   selectScopeComments,
   setActive,
+  markSeen,
   setDiffStyle,
   setMarks,
   setTurn,
@@ -91,6 +92,11 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
     ? storedActive
     : model?.files[0]?.key
   const apiRef = useRef<DiffListApi | null>(null)
+  // a file counts as opened once its diff has been the one on screen
+  useEffect(() => {
+    const f = model?.files.find((x) => x.key === activeKey)
+    if (f) markSeen(f.cacheKey)
+  }, [model, activeKey])
 
   const goTo = useCallback(
     (key: string) => {
@@ -244,6 +250,17 @@ export default function ReviewView({ sessionId }: { sessionId: string }) {
   )
 }
 
+/** How many changed files have not been on screen yet (their content as it is now). */
+function Unopened({ files }: { files: { cacheKey: string }[] }) {
+  const n = useReviewStore((s) => files.reduce((c, f) => (s.seen[f.cacheKey] ? c : c + 1), 0))
+  if (!n) return null
+  return (
+    <span className="shrink-0 self-center text-xs text-muted-foreground" title="Files whose diff you have not looked at yet; marked with a dot in the list">
+      {n} not opened
+    </span>
+  )
+}
+
 function LoadingLayout() {
   return (
     <div className="flex h-full">
@@ -328,6 +345,7 @@ const ReviewHeader = memo(function ReviewHeader({
             <DiffStat added={model.totals.added} removed={model.totals.removed} />
           </span>
         )}
+        {model && <Unopened files={model.files} />}
         {/* past about 400 changed lines, reviewers find far fewer defects per line (Cisco/SmartBear study) */}
         {model && turn === "all" && model.totals.added + model.totals.removed > 400 && (
           <button

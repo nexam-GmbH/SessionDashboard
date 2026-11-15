@@ -4,10 +4,10 @@
 // app starts stream their events (`claude-event`) and get their permission prompts answered here.
 // The store and its actions stay the API: components don't know which backend runs.
 import { invoke } from "@tauri-apps/api/core"
-import { listen } from "@tauri-apps/api/event"
+import { emit, listen } from "@tauri-apps/api/event"
 import { getApp, setApp, useApp } from "@/store/app"
 import { selectNeedsYou } from "@/store/selectors"
-import { REAL } from "./mode"
+import { POPOUT, REAL } from "./mode"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
 import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, type MapState } from "./mapTranscript"
@@ -48,6 +48,7 @@ interface Meta {
   lastText?: string
   lastActivity?: string
   edited?: string[]
+  configDir?: string
 }
 interface Live {
   pid?: number
@@ -61,6 +62,7 @@ interface Live {
   state?: string
   /** what a "waiting" session waits for ("input needed", "dialog open", "sandbox request"…) */
   waitingFor?: string
+  configDir?: string
   updatedAt?: number
   statusUpdatedAt?: number
 }
@@ -481,6 +483,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     lastPrompt: meta?.lastPrompt,
     lastText: meta?.lastText,
     editedPaths: meta?.edited && prev?.editedPaths && sameList(prev.editedPaths, meta.edited) ? prev.editedPaths : meta?.edited,
+    configDir: meta?.configDir ?? live?.configDir ?? prev?.configDir,
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
     model: own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5"),
@@ -690,7 +693,20 @@ function sync() {
 }
 
 // ---------- polling ----------
+/** A session window: take on the sessions the main window runs, so their events and sends work here. */
+async function attachRunning() {
+  if (!POPOUT) return
+  try {
+    const keys = await invoke<string[]>("claude_running")
+    for (const k of keys) if (!owned.has(k)) owned.set(k, { cwd: getApp().sessions[k]?.cwd ?? metas.get(k)?.cwd ?? "", sending: false })
+    for (const k of [...owned.keys()]) if (!keys.includes(k)) owned.delete(k)
+  } catch {
+    /* ignore */
+  }
+}
+
 async function pollPids() {
+  void attachRunning()
   try {
     const list = await invoke<Live[]>("claude_pids")
     pidLive = new Map(list.filter((l) => l.sessionId).map((l) => [l.sessionId, l]))
@@ -995,6 +1011,8 @@ interface StartOpts {
   prompt?: string
   resume?: string
   fork?: boolean
+  /** another Claude Code config folder (account); a resumed session keeps its own */
+  configDir?: string
   model?: string
   effort?: string
   permissionMode?: string
@@ -1014,6 +1032,8 @@ export function homeDir() {
 
 /** Start (or resume) a session the app runs; returns its id at once, the process starts behind. */
 export function realStart(opts: StartOpts): ID {
+  // a session of another account is found (and continued) only in that account's folder
+  if (opts.resume && opts.configDir === undefined) opts = { ...opts, configDir: getApp().sessions[opts.resume]?.configDir }
   const id = opts.resume && !opts.fork ? opts.resume : crypto.randomUUID()
   const host = opts.machine && opts.machine !== CLOUD ? opts.machine : undefined
   owned.set(id, { cwd: opts.cwd, sending: false, host, fresh: !opts.resume })
@@ -1377,8 +1397,16 @@ function answerOffer(id: string, decision: Record<string, unknown>) {
 function respond(requestId: string, response: Record<string, unknown>) {
   const t = toolOf.get(requestId)
   if (!t) return
-  toolOf.delete(requestId)
   invoke("claude_respond", { key: t.key, requestId, response }).catch((e) => noticeError(t.key, String(e)))
+  void emit("sd-answered", { requestId }).catch(() => undefined)
+  settleLocal(requestId)
+}
+
+/** A request answered (here or in another window): mark it, and the session works again. */
+function settleLocal(requestId: string) {
+  const t = toolOf.get(requestId)
+  if (!t) return
+  toolOf.delete(requestId)
   setApp((s) => {
     const req = s.requests[requestId]
     return req ? { requests: { ...s.requests, [requestId]: { ...req, state: req.type === "question" ? "answered" : "selected" } as PendingRequest } } : s
@@ -1387,12 +1415,22 @@ function respond(requestId: string, response: Record<string, unknown>) {
   setStatusLocal(t.key, "working", { waitingFor: undefined })
 }
 
+const planAllow = new Map<ID, string[]>()
+/** Bash rules (`npm test:*`) to allow for the rest of the session when this plan is approved. */
+export function setPlanAllow(requestId: ID, rules: string[]) {
+  if (rules.length) planAllow.set(requestId, rules)
+  else planAllow.delete(requestId)
+}
+
 /** Allow once / always / deny, or a plan decision. */
 export function realResolve(requestId: ID, optionId: string, feedback?: string): boolean {
   const o = offerById.get(requestId)
   if (o) {
     if (optionId === "reject" || optionId === "keep-planning") return answerOffer(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this.") })
     if (optionId === "allow-always") return answerOffer(requestId, { behavior: "allow", updatedPermissions: o.suggestions ?? [] })
+    const extra = planAllow.get(requestId)
+    planAllow.delete(requestId)
+    if (extra?.length) return answerOffer(requestId, { behavior: "allow", updatedPermissions: [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] })
     return answerOffer(requestId, { behavior: "allow" })
   }
   const t = toolOf.get(requestId)
@@ -1405,7 +1443,11 @@ export function realResolve(requestId: ID, optionId: string, feedback?: string):
     respond(requestId, { behavior: "allow", updatedInput: t.input, updatedPermissions: t.suggestions ?? [] })
     return true
   }
-  respond(requestId, { behavior: "allow", updatedInput: t.input })
+  // a plan approved with its checks allowed: session-only rules, gone when the session ends
+  const extra = planAllow.get(requestId)
+  planAllow.delete(requestId)
+  const rules = (optionId === "approve-accept" || optionId === "approve-manual") && extra?.length ? [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] : undefined
+  respond(requestId, { behavior: "allow", updatedInput: t.input, ...(rules ? { updatedPermissions: rules } : {}) })
   if (optionId === "approve-accept" || optionId === "approve-manual") {
     const mode: PermissionMode = optionId === "approve-accept" ? "acceptEdits" : "default"
     realSettings(t.key, { permissionMode: mode })
@@ -1534,7 +1576,9 @@ function onEvent({ key, event, exit }: EventPayload) {
           return { sessions: { ...s.sessions, [key]: { ...prev, usage: { ...prev.usage, costUsd: cost } } } }
         })
       // background work still running (state events say "running"): it is not done yet
-      if (failed || own.state !== "running") setStatusLocal(key, failed ? "error" : onScreen ? "idle" : "done_unseen", { waitingFor: undefined, activity: undefined })
+      // a failed turn says why (a usage limit: "You've hit your limit · resets 4pm")
+      const why = failed && typeof event.result === "string" ? { errorMessage: event.result.slice(0, 200) } : {}
+      if (failed || own.state !== "running") setStatusLocal(key, failed ? "error" : onScreen ? "idle" : "done_unseen", { waitingFor: undefined, activity: undefined, ...why })
       askContext(key)
       break
     }
@@ -1572,8 +1616,17 @@ export async function startReal() {
     /* ignore */
   }
   registerSync(sync)
-  void import("./ports").then((p) => p.startPorts())
+  if (!POPOUT) void import("./ports").then((p) => p.startPorts())
+  // other accounts' folders are read too (set before the first scan)
+  await invoke("claude_set_config_dirs", { dirs: getApp().settings.claudeConfigDirs ?? [] }).catch(() => undefined)
+  useApp.subscribe(
+    (st) => st.settings.claudeConfigDirs,
+    (dirs) => void invoke("claude_set_config_dirs", { dirs: dirs ?? [] }).then(() => pollScan().then(sync)).catch(() => undefined),
+  )
   await listen<EventPayload>("claude-event", (e) => onEvent(e.payload))
+  // a prompt answered in another window of the app
+  await listen<{ requestId: string }>("sd-answered", (e) => settleLocal(e.payload.requestId))
+  await attachRunning()
   void loadCaps()
   // the installed claude's spinner words ("Drizzling…", "Cooked for 26s")
   invoke<{ present: string[]; past: string[] }>("claude_verbs")
@@ -1594,7 +1647,7 @@ export async function startReal() {
   sync()
   setApp({ ready: true })
   // what ran last time and runs no more (after pid polling has had a few rounds)
-  setTimeout(() => void import("@/features/overview/restore").then((r) => r.startRestore()), 6000)
+  if (!POPOUT) setTimeout(() => void import("@/features/overview/restore").then((r) => r.startRestore()), 6000)
   // read ahead the chats that need you, once the first paint is done
   setTimeout(pruneTranscripts, 1500)
   setInterval(() => void pollPids().then(sync), 2000)
@@ -1604,12 +1657,13 @@ export async function startReal() {
   setInterval(pruneTranscripts, 60_000)
   setInterval(() => void tailElsewhere(), 2500)
   // hooks (exact states, VPS sessions), machines over ssh, the cloud, git, system notifications
-  startNotify()
+  if (!POPOUT) startNotify()
   onMovedOn(sessionMovedOn)
   void startHooks()
   await listen<{ id: string; event: { session_id: string; agent_id?: string; tool_name: string; tool_input: Record<string, unknown>; permission_suggestions?: unknown[] }; at: number }>("hook-permission", (e) => onOffer(e.payload))
   await listen<{ id: string; by: string }>("hook-permission-done", (e) => dropOffer(e.payload.id, false))
   void refreshHooks()
+  if (POPOUT) return
   void startMachines()
   // the cloud list: every 5 s while a cloud session runs or is on screen, else every minute
   const cloudLoop = async () => {

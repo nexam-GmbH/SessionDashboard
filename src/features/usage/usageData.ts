@@ -4,6 +4,7 @@
 import { create } from "zustand"
 import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
+import { getApp } from "@/store/app"
 
 export interface Tokens {
   i: number
@@ -18,6 +19,8 @@ export interface Hour {
   p: number
   t: number
   s: number[]
+  /** session index → model → tokens (the last days only) */
+  sm?: Record<string, Record<string, Tokens>>
 }
 export interface Ledger {
   hours: Record<string, Hour>
@@ -233,6 +236,32 @@ export function totals(l: Ledger, from: number, to = Infinity): Totals {
   }
 }
 
+/**
+ * Which sessions used the last `hours` (the plan's 5-hour window, by whole UTC hours: the current hour
+ * and the ones before it), by value at API prices; subagents count for their session.
+ */
+export function recentBySession(l: Ledger, hours = 5, now = Date.now()) {
+  const from = new Date(now - hours * 3600_000).toISOString().slice(0, 13)
+  const by = new Map<string, { cost: number; tokens: number }>()
+  let total = 0
+  for (const [k, h] of Object.entries(l.hours)) {
+    if (k < from || !h.sm) continue
+    for (const [six, models] of Object.entries(h.sm)) {
+      const id = l.sessions[Number(six)]
+      if (!id) continue
+      const e = by.get(id) ?? { cost: 0, tokens: 0 }
+      for (const [m, t] of Object.entries(models)) {
+        const c = costOf(m, t)
+        e.cost += c
+        e.tokens += totalTokens(t)
+        total += c
+      }
+      by.set(id, e)
+    }
+  }
+  return { total, rows: [...by.entries()].map(([id, v]) => ({ id, ...v, share: total ? v.cost / total : 0 })).sort((a, b) => b.cost - a.cost) }
+}
+
 /** Tokens and cost per local day. */
 export function perDay(l: Ledger) {
   const days = new Map<string, { tokens: number; cost: number; prompts: number }>()
@@ -401,7 +430,20 @@ function mockLedger(): Ledger {
       s: [Math.floor(rnd() * 20), Math.floor(rnd() * 20)],
     }
   }
-  return { hours, sessions: Array.from({ length: 20 }, (_, i) => `s${i}`) }
+  // the last hours split by session (the demo world's sessions, when the app has them)
+  const ids = Object.keys(getApp().sessions).slice(0, 6)
+  const sessions = ids.length ? ids : Array.from({ length: 6 }, (_, i) => `s${i}`)
+  for (let h = 0; h < 6; h++) {
+    const k = new Date(now - h * 3600e3).toISOString().slice(0, 13)
+    const hr = (hours[k] ??= { m: {}, p: 3, t: 12, s: [] })
+    hr.sm = {}
+    sessions.forEach((_, i) => {
+      if (rnd() < 0.3) return
+      const scale = rnd() * 3e6 * (i === 1 ? 3 : 1)
+      hr.sm![String(i)] = { "claude-opus-5-5": { i: 100, o: Math.round(scale * 0.003), w5: 0, w1: Math.round(scale * 0.02), r: Math.round(scale), n: 20 } }
+    })
+  }
+  return { hours, sessions }
 }
 
 function mockLimits(): Limits {

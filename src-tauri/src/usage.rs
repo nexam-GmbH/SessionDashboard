@@ -43,7 +43,14 @@ pub struct Hour {
     pub t: u64,
     /// sessions active this hour (indexes into Ledger::sessions)
     pub s: Vec<u32>,
+    /// tokens per session and model (session index as text → model → tokens), for which session uses
+    /// the plan's 5-hour window; kept for the last days only (DETAIL_DAYS)
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sm: BTreeMap<String, BTreeMap<String, Tokens>>,
 }
+
+/// How long the per-session detail stays in the ledger.
+const DETAIL_DAYS: i64 = 8;
 
 /// Ledger format: a ledger written by an older counting is read again from the transcripts.
 /// 2: a message's usage is its largest values (streamed lines repeat it with growing output).
@@ -57,6 +64,9 @@ pub struct Ledger {
     pub hours: BTreeMap<String, Hour>,
     /// session ids in the order first seen
     pub sessions: Vec<String>,
+    /// 1 once the per-session detail of the last days was filled in from the transcripts
+    #[serde(default)]
+    pub d: u32,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -73,7 +83,7 @@ struct Index {
     files: HashMap<String, FileState>,
     /// usage counted for recent messages: a later line of the same message (a reply is written as
     /// several lines while it streams, its output growing) adds only what grew
-    recent: HashMap<u64, (String, String, Tokens)>,
+    recent: HashMap<u64, (String, String, Tokens, Option<u32>)>,
     recent_order: std::collections::VecDeque<u64>,
 }
 
@@ -234,7 +244,7 @@ impl Index {
         // output growing while it streams; count the largest values once
         let key = h64(&["u", msg.id.unwrap_or(""), l.request_id.unwrap_or(l.uuid.unwrap_or(""))]);
         if !self.seen.insert(key) {
-            let Some((hour, m, counted)) = self.recent.get_mut(&key) else { return };
+            let Some((hour, m, counted, six)) = self.recent.get_mut(&key) else { return };
             // cache writes grow by their total (a line may lack the 5-minute/1-hour split)
             let w_grow = (now.w5 + now.w1).saturating_sub(counted.w5 + counted.w1);
             let grow = Tokens {
@@ -252,29 +262,28 @@ impl Index {
             counted.o = counted.o.max(now.o);
             counted.w1 += w_grow;
             counted.r = counted.r.max(now.r);
-            let (hour, m) = (hour.clone(), m.clone());
-            if let Some(t) = self.ledger.hours.get_mut(&hour).and_then(|h| h.m.get_mut(&m)) {
-                t.i += grow.i;
-                t.o += grow.o;
-                t.w5 += grow.w5;
-                t.w1 += grow.w1;
-                t.r += grow.r;
+            let (hour, m, six) = (hour.clone(), m.clone(), *six);
+            if let Some(h) = self.ledger.hours.get_mut(&hour) {
+                if let Some(t) = h.m.get_mut(&m) {
+                    add(t, &grow);
+                }
+                if let Some(t) = six.and_then(|i| h.sm.get_mut(&i.to_string())).and_then(|x| x.get_mut(&m)) {
+                    add(t, &grow);
+                }
             }
             return;
         }
-        if let Some(sid) = l.session_id {
+        let six = l.session_id.map(|sid| {
             self.mark_session(ts, sid);
-        }
+            self.session(sid)
+        });
         let Some(hk) = ts.get(..13).map(str::to_string) else { return };
         let Some(h) = self.hour(ts) else { return };
-        let t = h.m.entry(model.to_string()).or_default();
-        t.i += now.i;
-        t.o += now.o;
-        t.w5 += now.w5;
-        t.w1 += now.w1;
-        t.r += now.r;
-        t.n += 1;
-        self.recent.insert(key, (hk, model.to_string(), now));
+        add(h.m.entry(model.to_string()).or_default(), &now);
+        if let Some(i) = six {
+            add(h.sm.entry(i.to_string()).or_default().entry(model.to_string()).or_default(), &now);
+        }
+        self.recent.insert(key, (hk, model.to_string(), now, six));
         self.recent_order.push_back(key);
         if self.recent_order.len() > 4096 {
             if let Some(old) = self.recent_order.pop_front() {
@@ -351,6 +360,70 @@ impl Index {
         ix
     }
 
+    /// Once: fill the per-session detail of the last DETAIL_DAYS from the transcripts still there
+    /// (the ledger kept only totals before). A message counts once, with its largest values.
+    fn backfill_detail(&mut self, files: &[PathBuf]) {
+        let since_ms = now_ms() as i64 - DETAIL_DAYS * 24 * 3600 * 1000;
+        let cutoff = chrono_hour(since_ms);
+        let mut best: HashMap<u64, (String, u32, String, Tokens)> = HashMap::new();
+        for f in files {
+            let recent = std::fs::metadata(f).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64 >= since_ms).unwrap_or(false);
+            if !recent {
+                continue;
+            }
+            let Ok(text) = std::fs::read(f) else { continue };
+            for line in text.split(|b| *b == b'\n') {
+                if !find(line, br#""type":"assistant""#) || !find(line, br#""usage""#) {
+                    continue;
+                }
+                let Ok(l) = serde_json::from_slice::<Line>(line) else { continue };
+                let (Some(ts), Some(sid), Some(msg)) = (l.timestamp, l.session_id, l.message) else { continue };
+                let Some(hk) = ts.get(..13) else { continue };
+                if hk < cutoff.as_str() {
+                    continue;
+                }
+                let (Some(u), model) = (msg.usage, msg.model.unwrap_or("unknown")) else { continue };
+                if model == "<synthetic>" {
+                    continue;
+                }
+                let (w5, w1) = match &u.cache_creation {
+                    Some(c) if c.ephemeral_5m_input_tokens + c.ephemeral_1h_input_tokens > 0 => (c.ephemeral_5m_input_tokens, c.ephemeral_1h_input_tokens),
+                    _ => (0, u.cache_creation_input_tokens),
+                };
+                let now = Tokens { i: u.input_tokens, o: u.output_tokens, w5, w1, r: u.cache_read_input_tokens, n: 1 };
+                let key = h64(&["u", msg.id.unwrap_or(""), l.request_id.unwrap_or(l.uuid.unwrap_or(""))]);
+                let six = self.session(sid);
+                let e = best.entry(key).or_insert_with(|| (hk.to_string(), six, model.to_string(), Tokens::default()));
+                let t = &mut e.3;
+                t.i = t.i.max(now.i);
+                t.o = t.o.max(now.o);
+                t.w5 = t.w5.max(now.w5);
+                t.w1 = t.w1.max(now.w1);
+                t.r = t.r.max(now.r);
+                t.n = 1;
+            }
+        }
+        for h in self.ledger.hours.values_mut() {
+            h.sm.clear();
+        }
+        for (hk, six, model, t) in best.into_values() {
+            let h = self.ledger.hours.entry(hk).or_default();
+            add(h.sm.entry(six.to_string()).or_default().entry(model).or_default(), &t);
+        }
+        self.ledger.d = 1;
+    }
+
+    /// Drop the per-session detail of hours older than DETAIL_DAYS.
+    fn prune_detail(&mut self) {
+        let cutoff = chrono_hour(now_ms() as i64 - DETAIL_DAYS * 24 * 3600 * 1000);
+        for (k, h) in self.ledger.hours.iter_mut() {
+            if k.as_str() >= cutoff.as_str() {
+                break;
+            }
+            h.sm.clear();
+        }
+    }
+
     fn save(&self) -> Result<(), String> {
         let d = dir();
         std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
@@ -367,6 +440,33 @@ impl Index {
         }
         write("usage-seen.bin", &seen)
     }
+}
+
+fn add(t: &mut Tokens, x: &Tokens) {
+    t.i += x.i;
+    t.o += x.o;
+    t.w5 += x.w5;
+    t.w1 += x.w1;
+    t.r += x.r;
+    t.n += x.n;
+}
+
+/// "YYYY-MM-DDTHH" (UTC) of a unix time in ms, the ledger's hour key.
+fn chrono_hour(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let days = secs.div_euclid(86400);
+    let hour = secs.rem_euclid(86400) / 3600;
+    // civil date from days since 1970-01-01 (Howard Hinnant's algorithm)
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:04}-{:02}-{:02}T{:02}", if m <= 2 { y + 1 } else { y }, m, d, hour)
 }
 
 fn transcripts(root: &Path, out: &mut Vec<PathBuf>) {
@@ -391,10 +491,16 @@ pub fn scan() -> Result<Value, String> {
     }
     let ix = guard.as_mut().unwrap();
     let mut files = Vec::new();
-    transcripts(&crate::claude::discover::claude_dir().join("projects"), &mut files);
+    for dir in crate::claude::discover::claude_dirs() {
+        transcripts(&dir.join("projects"), &mut files);
+    }
     for f in &files {
         ix.file(f);
     }
+    if ix.ledger.d < 1 {
+        ix.backfill_detail(&files);
+    }
+    ix.prune_detail();
     ix.save()?;
     serde_json::to_value(&ix.ledger).map_err(|e| e.to_string())
 }
@@ -455,6 +561,13 @@ mod tests {
 
     /// A message's usage counts once (its blocks repeat it), across files too; prompts and tool
     /// calls are counted; tool results and meta lines are not prompts.
+    #[test]
+    fn hour_keys() {
+        assert_eq!(chrono_hour(0), "1970-01-01T00");
+        assert_eq!(chrono_hour(1_794_757_254_058), "2026-11-15T15");
+        assert_eq!(chrono_hour(951_782_400_000), "2000-02-29T00");
+    }
+
     #[test]
     fn counts_once() {
         let mut ix = Index::default();

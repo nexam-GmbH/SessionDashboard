@@ -54,6 +54,8 @@ interface ReviewState {
   turnByScope: Record<ID, number | "all">
   activeByScope: Record<ID, string>
   sent: Record<ID, { count: number; at: number }>
+  /** files whose diff has been on screen, by content (a changed file counts as unseen again) */
+  seen: Record<string, true>
 }
 
 function readDiffStyle(): DiffStyle {
@@ -75,6 +77,7 @@ export const useReviewStore = create<ReviewState>()(() => ({
   diffStyle: readDiffStyle(),
   turnByScope: {},
   activeByScope: {},
+  seen: {},
   sent: {},
 }))
 
@@ -116,6 +119,11 @@ export function setDiffStyle(diffStyle: DiffStyle) {
 export function setTurn(scope: ID, turn: number | "all") {
   set((s) => ({ turnByScope: { ...s.turnByScope, [scope]: turn } }))
 }
+export function markSeen(cacheKey: string) {
+  if (get().seen[cacheKey]) return
+  set((s) => ({ seen: { ...s.seen, [cacheKey]: true } }))
+}
+
 export function setActive(scope: ID, key: string) {
   if (get().activeByScope[scope] === key) return
   set((s) => ({ activeByScope: { ...s.activeByScope, [scope]: key } }))

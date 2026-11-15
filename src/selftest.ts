@@ -169,6 +169,23 @@ export async function runSelftest() {
     return `${Object.keys(ports).length} sessions serving (${Object.values(ports).flat().join(", ") || "none"}) in ${Math.round(performance.now() - t0)} ms; cleanupPeriodDays ${days ?? "default"}`
   })
 
+  await step("usage: last 5 hours by session (detail filled once)", async () => {
+    const { recentBySession } = await import("@/features/usage/usageData")
+    const l = await invoke<{ hours: Record<string, { sm?: Record<string, unknown> }>; sessions: string[]; d?: number }>("usage_scan")
+    if (l.d !== 1) throw new Error(`detail flag ${l.d}`)
+    const r = recentBySession(l as never)
+    const withDetail = Object.values(l.hours).filter((h) => h.sm && Object.keys(h.sm).length).length
+    return `${withDetail} hours with per-session detail; last 5 h: ${r.rows.length} sessions, $${r.total.toFixed(2)}, top ${Math.round((r.rows[0]?.share ?? 0) * 100)}%`
+  })
+
+  await step("accounts: another config folder is read and dropped again", async () => {
+    // a folder that does not exist is ignored; the list goes back to the settings' own after
+    await invoke("claude_set_config_dirs", { dirs: ["/tmp/sd-no-such-claude-dir"] })
+    const n = (await invoke<unknown[]>("claude_scan")).length
+    await invoke("claude_set_config_dirs", { dirs: getApp().settings.claudeConfigDirs ?? [] })
+    return `${n} transcripts with an extra (missing) folder set`
+  })
+
   await step("slash: /mcp goes to Claude Code's menu", async () => {
     const { terminalCommandFor } = await import("@/features/terminal/slash")
     const c = terminalCommandFor("/mcp")

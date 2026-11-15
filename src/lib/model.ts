@@ -159,6 +159,8 @@ export interface Session {
   lastText?: string
   /** files it edited lately (absolute paths, newest last): two sessions on one file collide */
   editedPaths?: string[]
+  /** the other Claude Code config folder (account) it belongs to; unset: the main one */
+  configDir?: string
   lastStopReason?: "end_turn" | "max_tokens" | "refusal" | "cancelled" | "error"
   errorMessage?: string
   model: string

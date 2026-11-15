@@ -21,6 +21,33 @@ pub fn claude_dir() -> PathBuf {
     Path::new(&home).join(".claude")
 }
 
+static EXTRA_DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Other Claude Code config folders (other accounts, `CLAUDE_CONFIG_DIR=~/.claude-work`), set from
+/// the app's settings. Their sessions, transcripts and usage are read too.
+pub fn set_extra_dirs(dirs: &[String]) {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let main = claude_dir();
+    let list = dirs
+        .iter()
+        .map(|d| if let Some(rest) = d.strip_prefix("~/") { Path::new(&home).join(rest) } else { PathBuf::from(d) })
+        .filter(|d| d.is_dir() && *d != main)
+        .collect();
+    *EXTRA_DIRS.lock().unwrap() = list;
+}
+
+/// Every config folder: the main one first.
+pub fn claude_dirs() -> Vec<PathBuf> {
+    let mut v = vec![claude_dir()];
+    v.extend(EXTRA_DIRS.lock().unwrap().iter().cloned());
+    v
+}
+
+/// The other config folder a path lies in, if any (None for the main one).
+pub fn extra_dir_of(path: &Path) -> Option<String> {
+    EXTRA_DIRS.lock().unwrap().iter().find(|d| path.starts_with(d)).map(|d| d.to_string_lossy().to_string())
+}
+
 /// The `claude` binary: what the user's shell would run. Desktop launches often have a minimal
 /// PATH, so the usual install places are tried too.
 pub fn claude_bin() -> String {
@@ -82,7 +109,7 @@ fn is_helper(pid: u64) -> bool {
 /// that started the CLI may ask: cloud sessions and their transcripts.
 pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<serde_json::Map<String, Value>, String> {
     use std::io::{BufRead, BufReader, Write};
-    let mut cmd = Command::new(claude_bin());
+    let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
         .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
         .stdin(Stdio::piped())
@@ -246,7 +273,7 @@ pub struct Helper {
 impl HostHelper {
     fn spawn() -> Result<Helper, String> {
         use std::io::{BufRead, BufReader, Write};
-        let mut cmd = Command::new(claude_bin());
+        let mut cmd = crate::sys::command(claude_bin());
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
             .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
             .stdin(Stdio::piped())
@@ -347,7 +374,7 @@ pub fn cloud_send(session_id: &str, text: &str) -> Result<Value, String> {
     if !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err("bad session id".into());
     }
-    let mut cmd = Command::new(claude_bin());
+    let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--cloud", session_id, "--output-format", "json"])
         .current_dir(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
         .stdin(Stdio::piped())
@@ -378,7 +405,7 @@ pub fn cloud_send(session_id: &str, text: &str) -> Result<Value, String> {
 
 /// `claude agents --json`: running sessions (interactive and background) with their status.
 pub fn live_sessions() -> Result<Value, String> {
-    let mut lc = Command::new(claude_bin());
+    let mut lc = crate::sys::command(claude_bin());
     clean_env(&mut lc);
     let mut child = lc
         .args(["agents", "--json"])
@@ -449,6 +476,9 @@ pub struct SessionMeta {
     /// day only: two sessions editing the same file are about to collide
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edited: Vec<String>,
+    /// the other config folder (account) it belongs to; None for the main one
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
 }
 
 const EDITED_MAX: usize = 40;
@@ -479,9 +509,19 @@ fn note_edits(m: &mut SessionMeta, parts: &[Value]) {
 /// seconds. An entry counts only while its process is alive and is the same process (pid reuse is
 /// checked against the recorded start time).
 pub fn pid_sessions() -> Vec<Value> {
-    let dir = claude_dir().join("sessions");
     let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(&dir) else { return out };
+    // without /proc (macOS, Windows): one listing of every process for all the pid files
+    let live = crate::sys::live_pids();
+    for root in claude_dirs() {
+        pid_sessions_in(&root, &mut out, live.as_ref());
+    }
+    out
+}
+
+fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collections::HashSet<u32>>) {
+    let dir = root.join("sessions");
+    let extra = extra_dir_of(root);
+    let Ok(entries) = fs::read_dir(&dir) else { return };
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("json") {
@@ -500,17 +540,26 @@ pub fn pid_sessions() -> Vec<Value> {
         if is_helper(pid) || hidden(pid) {
             continue;
         }
-        let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
-        // field 22 (starttime) comes after the parenthesised command name
-        let start = stat.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().nth(19).unwrap_or("").to_string()).unwrap_or_default();
-        if let Some(rec) = v.get("procStart").and_then(Value::as_str) {
-            if rec != start {
+        if let Some(set) = live {
+            if !set.contains(&(pid as u32)) {
                 continue;
             }
+        } else {
+            let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+            // field 22 (starttime) comes after the parenthesised command name
+            let start = stat.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().nth(19).unwrap_or("").to_string()).unwrap_or_default();
+            if let Some(rec) = v.get("procStart").and_then(Value::as_str) {
+                if rec != start {
+                    continue;
+                }
+            }
+        }
+        let mut v = v;
+        if let (Some(x), Some(obj)) = (&extra, v.as_object_mut()) {
+            obj.insert("configDir".into(), Value::String(x.clone()));
         }
         out.push(v);
     }
-    out
 }
 
 fn tool_activity(name: &str, input: &Value) -> String {
@@ -742,7 +791,7 @@ fn now_ms() -> u64 {
 fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {
     let session_id = path.file_stem()?.to_str()?.to_string();
     let mut f = File::open(path).ok()?;
-    let mut m = SessionMeta { session_id, path: path.to_string_lossy().into(), updated_ms: mtime, size, ..Default::default() };
+    let mut m = SessionMeta { session_id, path: path.to_string_lossy().into(), updated_ms: mtime, size, config_dir: extra_dir_of(path), ..Default::default() };
     if size <= HEAD + TAIL {
         let all = read_range(&mut f, 0, size);
         parse_chunk(&mut m, &all, false, false);
@@ -759,11 +808,10 @@ fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {
 
 /// Every session transcript under ~/.claude/projects (subagent transcripts excluded).
 pub fn scan(cache: &ScanCache) -> Vec<SessionMeta> {
-    let root = claude_dir().join("projects");
     let mut out = Vec::new();
     let mut seen = Vec::new();
-    let Ok(dirs) = fs::read_dir(&root) else { return out };
-    for d in dirs.flatten() {
+    let dirs: Vec<_> = claude_dirs().iter().filter_map(|c| fs::read_dir(c.join("projects")).ok()).flat_map(|rd| rd.flatten().collect::<Vec<_>>()).collect();
+    for d in dirs {
         let Ok(files) = fs::read_dir(d.path()) else { continue };
         for f in files.flatten() {
             let p = f.path();

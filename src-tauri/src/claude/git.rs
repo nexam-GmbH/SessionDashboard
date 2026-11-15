@@ -3,7 +3,7 @@
 //! locally or over ssh on a VPS (one script, one round trip).
 
 use serde::Serialize;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 #[derive(Serialize, Default, Clone)]
@@ -194,7 +194,7 @@ fn parse(path: &str, out: &str) -> GitState {
 
 /// Git state of a folder on this computer (`quick`: only its own worktree).
 pub fn local(path: &str, quick: bool) -> GitState {
-    let mut c = Command::new("sh");
+    let mut c = crate::sys::command(crate::sys::sh());
     c.args(["-c", SCRIPT, "sd-git", path, if quick { "quick" } else { "full" }]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     // never let git ask for anything
     c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_OPTIONAL_LOCKS", "0");
@@ -259,12 +259,12 @@ pub fn pr_status(cwd: &str) -> serde_json::Value {
     };
     let fields = "number,url,title,state,isDraft,reviewDecision,mergeable,statusCheckRollup";
     // never let gh hang the panel on a slow network
-    let mut c = Command::new("timeout");
-    c.args(["12", "gh", "pr", "view", "--json", fields]);
-    c.current_dir(&dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut c = crate::sys::command("gh");
+    c.args(["pr", "view", "--json", fields]);
+    c.current_dir(&dir);
     c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0");
-    match c.output() {
-        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null),
+    match crate::sys::output_timeout(&mut c, 12) {
+        Some(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null),
         _ => serde_json::Value::Null,
     }
 }
@@ -274,11 +274,11 @@ pub fn pr_status(cwd: &str) -> serde_json::Value {
 pub fn ci_failure_log(cwd: &str, runs: &[u64]) -> Result<String, String> {
     let mut out = String::new();
     for id in runs.iter().take(3) {
-        let mut c = Command::new("timeout");
-        c.args(["30", "gh", "run", "view", &id.to_string(), "--log-failed"]);
-        c.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut c = crate::sys::command("gh");
+        c.args(["run", "view", &id.to_string(), "--log-failed"]);
+        c.current_dir(cwd);
         c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0").env("NO_COLOR", "1");
-        let o = c.output().map_err(|e| e.to_string())?;
+        let o = crate::sys::output_timeout(&mut c, 30).ok_or("gh did not answer in 30 s")?;
         if !o.status.success() {
             return Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect());
         }

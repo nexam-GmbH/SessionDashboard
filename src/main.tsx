@@ -11,7 +11,7 @@ import { startEngine } from "./mocks/engine"
 import { installShortcuts } from "./features/palette/shortcuts"
 import { installZoom } from "./app/zoom"
 import { installChrome } from "./app/chrome"
-import { REAL } from "./backend/mode"
+import { POPOUT, REAL } from "./backend/mode"
 import { IN_TAURI } from "./lib/platform"
 import { startReal } from "./backend/real"
 import { startUsage } from "./features/usage/usageData"
@@ -20,7 +20,7 @@ import { startUsage } from "./features/usage/usageData"
 if (REAL) {
   void startReal()
   // a test copy started with SD_SELFTEST=1 checks its real paths and logs the result
-  void import("@tauri-apps/api/core")
+  if (!POPOUT) void import("@tauri-apps/api/core")
     .then(({ invoke }) => invoke<boolean>("sd_selftest"))
     .then(async (on) => {
       if (on) await (await import("./selftest")).runSelftest()
@@ -31,7 +31,7 @@ else startEngine()
 installShortcuts()
 installZoom()
 installChrome()
-startUsage()
+if (!POPOUT) startUsage()
 
 ;(window as unknown as { __sdLog?: (m: string, level?: number) => void }).__sdLog?.(`started ${innerWidth}x${innerHeight}`, 3)
 

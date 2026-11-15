@@ -325,6 +325,17 @@ export function resumeSession(id: ID) {
   openSession(id)
 }
 
+/**
+ * "continue" for a session that stopped (at a usage limit, say): sent in the app, or by taking a
+ * terminal session over (it stops there and goes on here).
+ */
+export function continueSession(id: ID) {
+  const s = getApp().sessions[id]
+  if (!s) return
+  if (REAL && s.control === "observed") void realTakeOver(id, "continue")
+  else sendMessage(id, "continue", "now")
+}
+
 /** Bring several sessions back at once (after a restart), without leaving the screen; staggered. */
 export function resumeMany(ids: ID[]) {
   ids.forEach((id, i) =>
@@ -382,7 +393,7 @@ export function startFresh(id: ID, brief: string) {
   if (!s || !brief.trim()) return
   const name = `${s.title.replace(/ \(continued\)$/, "")} (continued)`
   if (REAL) {
-    openSession(realStart({ cwd: s.cwd, machine: s.machine, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, name }))
+    openSession(realStart({ cwd: s.cwd, machine: s.machine, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, name, configDir: s.configDir }))
     return
   }
   if (!s.repoId) return
@@ -434,6 +445,8 @@ export function createSession(input: NewSessionInput): ID {
     return realStart({
       cwd: repo.rootPath,
       machine: repo.machine,
+      // the workspace's account, when it has its own
+      configDir: st.settings.workspaces.find((w) => w.id === repo.workspace)?.configDir,
       prompt: input.prompt,
       model: input.model,
       effort: input.effort,

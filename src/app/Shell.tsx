@@ -1,5 +1,6 @@
 import { Activity, lazy, Suspense, useState, type CSSProperties } from "react"
 import { useApp } from "@/store/app"
+import { POPOUT } from "@/backend/mode"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { toggleSidebar } from "@/store/actions"
 import { ResizeEdges } from "./chrome"
@@ -52,21 +53,25 @@ export function Shell() {
 
   return (
     <SidebarProvider data-tauri-drag-region open={open} onOpenChange={(v) => v !== open && toggleSidebar()} style={LAYOUT} className="h-svh min-h-0 overflow-hidden">
-      <ErrorBoundary label="Sessions">
-        <AppSidebar />
-      </ErrorBoundary>
+      {!POPOUT && (
+        <ErrorBoundary label="Sessions">
+          <AppSidebar />
+        </ErrorBoundary>
+      )}
       <SidebarInset className="min-w-0 overflow-hidden">
         <SiteHeader />
         <div className="relative min-h-0 flex-1">
           {/* both screens stay mounted (React <Activity>): going to the overview and back keeps the
               open sessions' scroll position and switching stays instant */}
-          <Activity mode={overview ? "visible" : "hidden"}>
-            <div className="absolute inset-0 flex">
-              <ErrorBoundary label="Overview">
-                <Overview />
-              </ErrorBoundary>
-            </div>
-          </Activity>
+          {!POPOUT && (
+            <Activity mode={overview ? "visible" : "hidden"}>
+              <div className="absolute inset-0 flex">
+                <ErrorBoundary label="Overview">
+                  <Overview />
+                </ErrorBoundary>
+              </div>
+            </Activity>
+          )}
           <Activity mode={overview ? "hidden" : "visible"}>
             <div className="absolute inset-0">
               <ContentHost />

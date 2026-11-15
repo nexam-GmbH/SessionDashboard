@@ -301,3 +301,10 @@ pub async fn claude_user_setting(key: String) -> Result<Value, String> {
 pub async fn claude_set_user_setting(key: String, value: Value) -> Result<(), String> {
     blocking(move || perms::set_user_setting(&key, value)).await
 }
+
+/// Other Claude Code config folders (accounts) to read sessions and usage from.
+#[tauri::command]
+pub async fn claude_set_config_dirs(dirs: Vec<String>) -> Result<(), String> {
+    discover::set_extra_dirs(&dirs);
+    Ok(())
+}

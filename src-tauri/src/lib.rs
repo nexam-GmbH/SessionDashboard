@@ -1,5 +1,6 @@
 mod claude;
 mod term;
+pub mod sys;
 mod usage;
 
 use tauri::webview::PageLoadEvent;
@@ -116,6 +117,7 @@ pub fn run() {
             claude::ci_failure_log,
             claude::claude_user_setting,
             claude::claude_set_user_setting,
+            claude::claude_set_config_dirs,
             claude::hooks_status,
             claude::hooks_set,
             claude::hooks_answer,
@@ -149,6 +151,14 @@ pub fn run() {
                         let _ = win.show();
                     }
                 });
+            }
+        })
+        // the main window closing quits the app, session windows included
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = event {
+                    window.app_handle().exit(0);
+                }
             }
         })
         .build(tauri::generate_context!())

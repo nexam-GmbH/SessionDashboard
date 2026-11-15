@@ -34,7 +34,7 @@ pub const REMOTE_PATH: &str = r#"PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$H
 
 /// An ssh command for `host` running `script` in a POSIX shell there.
 pub fn ssh_cmd(host: &str, script: &str) -> Command {
-    let mut c = Command::new(ssh_bin());
+    let mut c = crate::sys::command(ssh_bin());
     c.args([
         "-T",
         "-o",
@@ -192,7 +192,7 @@ pub fn set_tunnels(app: AppHandle, t: Tunnels, hosts: Vec<String>, local_port: u
 }
 
 fn open_tunnel(host: &str, local_port: u16) -> Result<Child, String> {
-    let mut c = Command::new(ssh_bin());
+    let mut c = crate::sys::command(ssh_bin());
     c.args([
         "-N",
         "-T",

@@ -5,7 +5,9 @@
 // Vibe Kanban session header (no code copied).
 import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { RewindDialog } from "./RewindDialog"
-import { Archive, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil } from "lucide-react"
+import { AppWindow, Archive, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil } from "lucide-react"
+import { IN_TAURI } from "@/lib/platform"
+import { POPOUT } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { forkSession, openReview, renameSession } from "@/store/actions"
@@ -177,6 +179,11 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
             <DropdownMenuItem onSelect={() => forkSession(sessionId)}>
               <GitFork /> Fork
             </DropdownMenuItem>
+            {IN_TAURI && !POPOUT && (
+              <DropdownMenuItem onSelect={() => void import("@/app/popout").then((p) => p.openSessionWindow(sessionId))}>
+                <AppWindow /> Open in new window
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => (renameNext.current = true)}>
               <Pencil /> Rename
             </DropdownMenuItem>

@@ -47,6 +47,7 @@ export const COMMANDS: Command[] = [
   { id: "rewind", title: "Rewind…", keywords: "undo checkpoint restore back", when: inSession, run: withSession((id) => setTimeout(() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: id })), 0)) },
   { id: "interrupt", title: "Interrupt", keywords: "stop", when: inSession, run: withSession(interrupt) },
   { id: "fork", title: "Fork session", keywords: "copy branch", when: inSession, run: withSession(forkSession) },
+  { id: "popout", title: "Open session in new window", keywords: "window detach side by side monitor", when: inSession, run: withSession((id) => void import("@/app/popout").then((p) => p.openSessionWindow(id))) },
   { id: "archive", title: "Archive session", keywords: "hide finish done", when: inSession, run: withSession((id) => archiveWithUndo([id])) },
 
   { id: "engine-toggle", title: "Pause or resume mock activity", keywords: "developer engine", run: () => setEngine({ running: !getApp().engine.running }) },

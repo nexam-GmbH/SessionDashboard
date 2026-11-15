@@ -12,7 +12,7 @@ import type {
 } from "@/lib/model"
 import type { RepoSpec } from "@/mocks/catalog"
 import { generateWorld, type World } from "@/mocks/world"
-import { REAL } from "@/backend/mode"
+import { POPOUT, REAL } from "@/backend/mode"
 
 /**
  * One normalized zustand store: records keyed by id, components
@@ -42,6 +42,8 @@ export interface Settings {
   mutedRepos: ID[]
   defaults: { model: string; effort: "low" | "medium" | "high" | "xhigh" | "max"; permissionMode: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions"; worktree: boolean }
   claudeConfigDir: string
+  /** other Claude Code config folders (accounts) whose sessions and usage are read too */
+  claudeConfigDirs: string[]
   /** VPS machines reached over ssh (an alias from ~/.ssh/config or user@host) */
   machines: { host: string }[]
   /** show the account's cloud sessions (claude.ai/code) */
@@ -78,6 +80,8 @@ export interface Workspace {
    * a fix that touches every repo). Unset: the folder that holds its repos.
    */
   home?: string
+  /** the Claude Code config folder (account) its new sessions use; unset: the main one */
+  configDir?: string
 }
 
 export interface DataState {
@@ -143,6 +147,7 @@ function loadSettings(): Settings {
     mutedRepos: [],
     defaults: { model: "claude-opus-5-5", effort: "high", permissionMode: "default", worktree: true },
     claudeConfigDir: "~/.claude",
+    claudeConfigDirs: [],
     machines: [],
     cloud: true,
     workspaces: [],
@@ -180,7 +185,8 @@ function loadSettings(): Settings {
       s.workspaces = [{ id: "work", name: "Work", folders }]
       s.workspace = "work"
     }
-    return s
+    // a session window: the system's frame, no session list (and it never saves settings)
+    return POPOUT ? { ...s, nativeTitlebar: true, sidebarHidden: true, detailsOpen: false } : s
   } catch {
     return defaults
   }
@@ -219,6 +225,7 @@ export const setApp = useApp.setState
 useApp.subscribe(
   (s) => s.settings,
   (settings) => {
+    if (POPOUT) return
     try {
       localStorage.setItem("sd.settings", JSON.stringify(settings))
     } catch {

@@ -24,7 +24,7 @@ export function RestoreCard() {
     <section aria-label="Sessions from last time" className="mx-auto mt-4 flex w-[min(720px,calc(100%-2rem))] flex-col gap-2 rounded-xl bg-card px-4 py-3 text-sm ring-1 ring-foreground/10">
       <header className="flex items-center gap-2">
         <History size={15} className="shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">{plural(ids.length, "session")} were running when the app last closed.</span>
+        <span className="min-w-0 flex-1">{plural(ids.length, "session")} {ids.length === 1 ? "was" : "were"} running when the app last closed.</span>
         <Button size="xs" variant="ghost" onClick={() => setOpen((v) => !v)}>
           {open ? "Hide" : "Choose"}
         </Button>

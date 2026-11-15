@@ -183,6 +183,52 @@ export function ReposPage() {
 
 /** Where sessions come from: hooks on this computer, the cloud, VPS machines over ssh. */
 /**
+ * Other Claude Code config folders (a second account: `CLAUDE_CONFIG_DIR=~/.claude-work claude`).
+ * Their sessions, transcripts and usage are read beside the main one; a workspace can start its new
+ * sessions in one of them (Workspaces → edit).
+ */
+function Accounts() {
+  const dirs = useApp((st) => st.settings.claudeConfigDirs ?? [])
+  const [draft, setDraft] = useState("")
+  const add = () => {
+    const d = draft.trim().replace(/\/+$/, "")
+    if (!d || dirs.includes(d) || d === "~/.claude") return
+    patchSettings({ claudeConfigDirs: [...dirs, d] })
+    setDraft("")
+  }
+  return (
+    <SettingRow
+      title="Other Claude accounts"
+      hint={dirs.length ? `${dirs.length}` : undefined}
+      description="Config folders of other Claude Code accounts (what CLAUDE_CONFIG_DIR points to, like ~/.claude-work). Their sessions and usage show here too, and a workspace can start new sessions in one of them. Plan limits shown are the main account's."
+    >
+      <div className="flex flex-col items-end gap-1.5">
+        {dirs.map((d) => (
+          <span key={d} className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+            {d}
+            <Button size="icon-xs" variant="ghost" aria-label={`Remove ${d}`} onClick={() => patchSettings({ claudeConfigDirs: dirs.filter((x) => x !== d) })}>
+              <Trash2 />
+            </Button>
+          </span>
+        ))}
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            add()
+          }}
+        >
+          <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="~/.claude-work" aria-label="Another Claude config folder" className="h-7 w-44 font-mono text-xs" spellCheck={false} autoCapitalize="off" />
+          <Button size="sm" variant="outline" type="submit" disabled={!draft.trim()}>
+            Add
+          </Button>
+        </form>
+      </div>
+    </SettingRow>
+  )
+}
+
+/**
  * Claude Code deletes transcripts older than cleanupPeriodDays (30 by default). The usage ledger
  * survives that, the chats themselves don't: offer a longer period, written on a click.
  */
@@ -250,6 +296,7 @@ export function SourcesPage() {
           <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
         </SettingRow>
         <KeepChats />
+        <Accounts />
         <SettingRow
           title="Exact states from hooks"
           hint={err ? "failed" : hooks?.installed ? "on" : undefined}

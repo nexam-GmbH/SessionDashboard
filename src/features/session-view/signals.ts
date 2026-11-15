@@ -141,3 +141,26 @@ export function usePromptCount(sessionId: ID): number {
     return n
   })
 }
+
+/**
+ * The test, build and lint commands a plan names (in backticks or code blocks), as Bash rule prefixes:
+ * `npm test -- --run` → `npm test:*`. Offered when approving the plan.
+ */
+export function planChecks(markdown: string): string[] {
+  const found = new Set<string>()
+  const spans = [...markdown.matchAll(/`([^`\n]{3,120})`/g)].map((m) => m[1])
+  for (const block of markdown.matchAll(/```[\w-]*\n([\s\S]*?)```/g)) spans.push(...block[1].split("\n"))
+  for (const raw of spans) {
+    for (const part of raw.split(/&&|;|\|\|/)) {
+      const cmd = part.trim().replace(/^\$\s*/, "")
+      if (!isCheck(cmd)) continue
+      const words: string[] = []
+      for (const w of cmd.split(/\s+/)) {
+        if (words.length >= 3 || w.startsWith("-") || /[/.=]/.test(w)) break
+        words.push(w)
+      }
+      if (words.length) found.add(`${words.join(" ")}:*`)
+    }
+  }
+  return [...found].slice(0, 6)
+}

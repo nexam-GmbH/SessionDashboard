@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -55,6 +55,8 @@ pub struct StartOpts {
     pub settings: Option<String>,
     /// run on this ssh host (VPS) instead of locally
     pub host: Option<String>,
+    /// another Claude Code config folder (account): CLAUDE_CONFIG_DIR for this session
+    pub config_dir: Option<String>,
 }
 
 fn mode_flag(m: &str) -> &str {
@@ -116,8 +118,12 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
             super::remote::ssh_cmd(host, &script)
         }
         None => {
-            let mut c = Command::new(claude_bin());
+            let mut c = crate::sys::command(claude_bin());
             c.args(&args).current_dir(&o.cwd);
+            if let Some(d) = o.config_dir.as_ref().filter(|d| !d.is_empty()) {
+                let home = std::env::var("HOME").unwrap_or_default();
+                c.env("CLAUDE_CONFIG_DIR", d.strip_prefix("~/").map(|r| format!("{home}/{r}")).unwrap_or_else(|| d.clone()));
+            }
             c
         }
     };
@@ -207,7 +213,7 @@ pub fn control(procs: &Procs, key: &str, request: Value, request_id: Option<Stri
 }
 
 fn term(pid: u32) {
-    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    crate::sys::terminate(pid);
 }
 
 /// Stop a session the app runs: SIGTERM so claude closes its MCP servers and shells, SIGKILL only
@@ -251,22 +257,26 @@ pub fn stop_all(procs: &Procs) {
 }
 
 fn alive(pid: u32) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
+    crate::sys::alive(pid)
 }
 
 /// Take over a session from a terminal: stop that claude the way Ctrl+C twice does (SIGINT, then
 /// SIGTERM if it is still there). Its conversation stays on disk, so the app resumes it next.
 pub fn takeover(pid: u32) -> Result<(), String> {
-    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| "that session is not running any more".to_string())?;
-    if !String::from_utf8_lossy(&cmdline).contains("claude") {
-        return Err("that process is not claude".into());
+    if !alive(pid) {
+        return Err("that session is not running any more".into());
     }
-    let signal = |sig: &str| {
-        let _ = Command::new("kill").args([sig, &pid.to_string()]).status();
-    };
-    signal("-INT");
+    // Linux can say what the process is: never stop something that is not claude
+    #[cfg(target_os = "linux")]
+    {
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        if !String::from_utf8_lossy(&cmdline).contains("claude") {
+            return Err("that process is not claude".into());
+        }
+    }
+    crate::sys::interrupt(pid);
     std::thread::sleep(std::time::Duration::from_millis(300));
-    signal("-INT");
+    crate::sys::interrupt(pid);
     for (i, step) in [20, 20].iter().enumerate() {
         for _ in 0..*step {
             if !alive(pid) {
@@ -275,7 +285,7 @@ pub fn takeover(pid: u32) -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         if i == 0 {
-            signal("-TERM");
+            crate::sys::terminate(pid);
         }
     }
     if alive(pid) {

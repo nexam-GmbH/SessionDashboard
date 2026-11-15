@@ -3,11 +3,14 @@
 // every ExitPlanMode option (several allow_always, one per target mode) is its own
 // button with a short label; "Keep planning" takes optional feedback;
 // calm chrome: "Approve plan?" over the plan, no instruction text.
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { ListChecks } from "lucide-react"
 import type { PermissionOption, PlanApproval } from "@/lib/model"
 import { Markdown } from "@/features/session-view/markdown/Markdown"
 import { resolveRequest } from "@/features/session-view/sessionStore"
+import { planChecks } from "@/features/session-view/signals"
+import { Checkbox } from "@/components/ui/checkbox"
+import { REAL } from "@/backend/mode"
 import { CardFrame, canStealFocus, FeedbackField, OptionButton, optionLabel, type Pager } from "./cardChrome"
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
@@ -29,10 +32,20 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
   useEffect(() => {
     if (autoFocus && canStealFocus()) ref.current?.focus({ preventScroll: true })
   }, [autoFocus, request.id])
+  // the checks the plan will run: allowed for the rest of the session with the approval, so carrying
+  // out an approved plan doesn't stop at every test run
+  const checks = useMemo(() => planChecks(request.planMarkdown), [request.planMarkdown])
+  const [skip, setSkip] = useState<Set<string>>(() => new Set())
   const choose = (o: PermissionOption) => {
     if (!canApprove) return
     if (isReject(o)) setFeedbackFor(o)
-    else resolveRequest(request, o.id)
+    else {
+      if (REAL) void import("@/backend/real").then((r) => {
+        r.setPlanAllow(request.id, checks.filter((c) => !skip.has(c)))
+        resolveRequest(request, o.id)
+      })
+      else resolveRequest(request, o.id)
+    }
   }
   const primary = request.options.find((o) => !isReject(o))
   return (
@@ -94,6 +107,29 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
       <div className="max-h-[200px] overflow-auto">
         <Markdown content={request.planMarkdown} />
       </div>
+      {checks.length > 0 && canApprove && (
+        <div className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2 text-xs">
+          <span className="text-muted-foreground">With the approval, run these without asking for the rest of this session:</span>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {checks.map((c) => (
+              <label key={c} className="flex cursor-pointer items-center gap-1.5">
+                <Checkbox
+                  checked={!skip.has(c)}
+                  onCheckedChange={(v) =>
+                    setSkip((prev) => {
+                      const next = new Set(prev)
+                      if (v) next.delete(c)
+                      else next.add(c)
+                      return next
+                    })
+                  }
+                />
+                <code className="font-mono">{c.replace(/:\*$/, "")}</code>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
     </CardFrame>
   )
 })

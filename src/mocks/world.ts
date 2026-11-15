@@ -424,6 +424,13 @@ export function generateWorld(now = Date.now()): World {
   }
   notifications.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
+  // one session stopped at the usage limit: the "continue at reset" card
+  const idle = Object.values(sessions).find((x) => x.status === "idle" && !x.archived && x.control !== "history" && x.role !== "main")
+  if (idle) {
+    idle.lastText = "You've hit your 5-hour limit · resets 4pm"
+    idle.activity = idle.lastText
+  }
+
   // two api-gateway sessions on the same file: the overlap warning
   const gw = Object.values(repos).find((r) => r.name === "api-gateway")
   const pair = gw ? (sessionIdsByRepo[gw.id] ?? []).map((id) => sessions[id]).filter((x) => x && !x.archived && x.control !== "history").slice(0, 2) : []
