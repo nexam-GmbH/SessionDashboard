@@ -11,10 +11,18 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
 - **Overview.** One tree for everything that runs: a main agent on top, a column per repository, each
   session as a card with what it is doing right now. What needs you is the only thing in colour.
 - **Needs you.** Permission prompts, questions, plan approvals and errors are counted in the header.
-  `Ctrl+J` jumps to the next one, and permissions can be answered right on the card.
+  `Ctrl+J` jumps to the one waiting longest, and routine permissions can be answered right on the card.
+  Requests that are hard to undo (force pushes, recursive deletes, secrets, deploys) get their own card:
+  the effect spelled out, no "always allow", never a single keypress.
+- **Calm notifications.** Only what blocks a session notifies, after 10 quiet seconds (a prompt you answer
+  in the terminal never pings), at most a few an hour; the rest arrive as one summary. Finished work is a
+  dot in the list, and nothing in the background spins.
 - **Sessions like Claude Code desktop.** A chat per session with readable work summaries
   ("Edited 2 files, ran a command +38 −17"), a live activity line, the plan as a checklist, and a details
   panel with the context window breakdown, changes, pull request status and plan limits.
+- **Back in context.** Return to a session after a while and a card says what you last asked and what
+  happened since. The details panel tells whether tests or checks ran after the last edit, and a banner
+  offers "Step back" when the same step has failed three times in a row.
 - **Finds sessions by itself.** Sessions started in any terminal show up on their own, grouped by
   repository (worktrees, servers and cloud sessions of one repo share a column). Optional hooks make their
   states exact and let you answer a terminal session's permission prompt from the app.
@@ -22,8 +30,10 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
   box runs there, and Claude Code commands that need its own interface (`/mcp`, `/login`, `/config`)
   open in it.
 - **Usage.** Tokens, value at API prices, prompts and sessions per day, week, month, year or all time,
-  an activity heatmap, per-model breakdown, and your plan's 5-hour and weekly limits over time. The history
-  is kept in its own ledger, so it survives Claude Code cleaning up old transcripts.
+  an activity heatmap, per-model breakdown, where the value goes (cache reads, cache writes, output), and
+  your plan's 5-hour and weekly limits over time. The history is kept in its own ledger, so it survives
+  Claude Code cleaning up old transcripts. Next to the prompt box, a session whose prompt cache has expired
+  says what the next message costs to re-read the conversation.
 - **Git loose ends.** Worktrees and branches with uncommitted or unpushed work, per repository.
 - **Fast.** Sessions switch instantly, chats load from the end of their transcript, and nothing polls
   harder than it has to.
@@ -33,7 +43,7 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
 | Keys | Action |
 |---|---|
 | `Ctrl+Tab` | Previous session (hold `Ctrl` for the recent list) |
-| `Ctrl+J` | Next session that needs you |
+| `Ctrl+J` | Session waiting longest for you |
 | `Ctrl+1` … `Ctrl+9`, `Ctrl+0` | Session by position, overview |
 | `Alt+↑` / `Alt+↓` | Up / down the session list |
 | `Ctrl+K` | Search sessions, including past ones |

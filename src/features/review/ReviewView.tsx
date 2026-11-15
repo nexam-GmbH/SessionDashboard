@@ -16,6 +16,7 @@ import {
   Rows3,
   Send,
   ShieldAlert,
+  TriangleAlert,
   X,
 } from "lucide-react"
 import { useShallow } from "zustand/react/shallow"
@@ -326,6 +327,18 @@ const ReviewHeader = memo(function ReviewHeader({
             <span className="tabular">{plural(total, "file")}</span>
             <DiffStat added={model.totals.added} removed={model.totals.removed} />
           </span>
+        )}
+        {/* past about 400 changed lines, reviewers find far fewer defects per line (Cisco/SmartBear study) */}
+        {model && turn === "all" && model.totals.added + model.totals.removed > 400 && (
+          <button
+            type="button"
+            disabled={model.turns.length < 2}
+            onClick={() => setTurn(sid, model.turns[0].index)}
+            className="hidden shrink-0 items-center gap-1 self-center text-xs text-muted-foreground not-disabled:hover:text-foreground @2xl:inline-flex"
+            title={`Reviews of more than about 400 changed lines catch far fewer problems per line.${model.turns.length > 1 ? " Click to go turn by turn, starting with the first." : " Ask Claude to split the change into smaller steps."}`}
+          >
+            <TriangleAlert size={12} /> Large: review in parts
+          </button>
         )}
         {turn !== "all" && (
           <button

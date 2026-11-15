@@ -503,6 +503,8 @@ export function generateTranscript(session: Session, big = false): Transcript {
     liveItemId,
     queued: session.status === "working" && rng.chance(0.4) ? [{ id: `q_${session.id}`, text: "Also update the changelog when you're done." }] : [],
     todos,
+    // the prompt cache after the newest call (the context ring's warm / cold note)
+    lastCall: { at: session.updatedAt, tokens: rng.int(40, 260) * 1000, ttl: 3600, model: session.model },
   }
 }
 

@@ -106,6 +106,8 @@ export interface UiState {
   /** most recently opened sessions, newest first: Ctrl+Tab order and the views kept mounted */
   recent: ID[]
   paletteOpen: boolean
+  /** the Settings dialog (Ctrl+,) and the section it shows */
+  settingsOpen: string | null
   /** null in the mock world */
   caps: ClaudeCaps | null
   /** Settings → Machines: reachability, tunnel and hook state per ssh host */
@@ -137,7 +139,7 @@ function loadSettings(): Settings {
     // one bar like Claude desktop / Zed: the app draws the title bar and window buttons itself
     nativeTitlebar: false,
     allowBypass: false,
-    notify: { permission: true, question: true, finished: true, error: true, sound: false },
+    notify: { permission: true, question: true, finished: false, error: true, sound: false },
     mutedRepos: [],
     defaults: { model: "claude-opus-5-5", effort: "high", permissionMode: "default", worktree: true },
     claudeConfigDir: "~/.claude",
@@ -167,6 +169,11 @@ function loadSettings(): Settings {
       if (Math.abs(s.uiScale - 1.1) < 0.01) s.uiScale = 1
       ;(s as Settings & { theme?: number }).theme = 2
     }
+    // a finished turn became a badge only (alerts are for what blocks a session): switch it off once
+    if ((saved as { notifyV?: number }).notifyV !== 2) {
+      s.notify = { ...defaults.notify, ...s.notify, finished: false }
+      ;(s as Settings & { notifyV?: number }).notifyV = 2
+    }
     // a first version kept plain folders: one workspace "Work"
     if (s.workspaces.some((w) => typeof w === "string")) {
       const folders = (s.workspaces as unknown as string[]).filter((w) => typeof w === "string")
@@ -194,6 +201,7 @@ export const useApp = create<AppState>()(
     screen: null,
     recent: [],
     paletteOpen: false,
+    settingsOpen: null,
     caps: null,
     machineStatus: {},
     cloudStatus: null,

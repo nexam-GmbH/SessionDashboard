@@ -33,7 +33,7 @@ export const RequestInline = memo(function RequestInline({
       ? "border-st-perm/35 bg-st-perm-tint text-st-perm-fg"
       : "border-st-input/30 bg-st-input-tint text-st-input-fg"
   const Icon = w.kind === "permission" ? ShieldAlert : w.kind === "plan" ? ListChecks : MessageCircleQuestion
-  const once = onceOptions(req)
+  const once = onceOptions(req, session.cwd)
   const subject = req && req.type === "permission" ? req.subject : undefined
   const SubjectIcon = subject?.type === "command" ? Terminal : FilePen
   return (
@@ -61,6 +61,8 @@ export const RequestInline = memo(function RequestInline({
             <OnceButtons once={once} />
           ) : !canApprove ? (
             <span className="text-xs text-muted-foreground/70">Approve in terminal</span>
+          ) : req?.type === "permission" ? (
+            <span className="text-xs text-muted-foreground">Hard to undo: answer in the session</span>
           ) : null}
         </div>
       )}

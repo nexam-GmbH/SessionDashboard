@@ -5,7 +5,8 @@
 import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Picture } from "@/lib/model"
 import { classifyTool } from "@/features/session-view/tools/toolSummary"
 
-type Rec = Record<string, unknown> & { type?: string; uuid?: string; timestamp?: string; message?: { id?: string; role?: string; content?: unknown; model?: string; stop_reason?: string } }
+type Usage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } }
+type Rec = Record<string, unknown> & { type?: string; uuid?: string; timestamp?: string; message?: { id?: string; role?: string; content?: unknown; model?: string; stop_reason?: string; usage?: Usage } }
 type Block = Record<string, unknown> & { type?: string }
 
 /** Per-transcript bookkeeping that is not part of the UI model. */
@@ -191,6 +192,15 @@ function applyRecord(b: Builder, r: Rec) {
     return
   }
   if (r.type === "assistant") {
+    // the prompt cache after this call: how much it holds, when, and for how long it stays warm
+    const u = r.message?.usage
+    if (u && !r.isSidechain && r.message?.model && r.message.model !== "<synthetic>") {
+      const tokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+      const w1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
+      const w5 = u.cache_creation?.ephemeral_5m_input_tokens ?? 0
+      const ttl = w1 > 0 ? 3600 : w5 > 0 ? 300 : (b.t.lastCall?.ttl ?? 300)
+      if (tokens > 0 && (!b.t.lastCall || at >= b.t.lastCall.at)) b.t.lastCall = { at, tokens, ttl, model: r.message.model }
+    }
     const msgId = r.message?.id
     const content = r.message?.content
     if (!Array.isArray(content)) return
@@ -251,6 +261,9 @@ function applyRecord(b: Builder, r: Rec) {
     } else if (r.level === "error" || sub === "api_error") {
       const text = typeof r.content === "string" ? r.content : "Error"
       b.add({ type: "notice", id: uuid ?? `n_${b.t.order.length}`, turnId: b.turn().id, at, severity: "error", text: text.slice(0, 500) })
+    } else if (sub === "away_summary" && typeof r.content === "string") {
+      // Claude Code's recap for when you come back ("Goal was …; next: …")
+      b.t.recap = { text: r.content.replace(/\s*\(disable recaps in \/config\)\s*$/, "").slice(0, 600), at }
     } else if (sub === "informational" && typeof r.content === "string" && uuid?.startsWith("note-")) {
       // a note the app itself adds (an MCP server's sign-in opened in the browser, …)
       b.add({ type: "notice", id: uuid, turnId: b.turn().id, at, severity: "info", text: r.content.slice(0, 500) })

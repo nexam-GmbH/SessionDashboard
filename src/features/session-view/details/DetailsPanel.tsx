@@ -1,17 +1,20 @@
 // The session's details beside the chat (Claude Code desktop's right panel): where it runs, what
 // fills its context window, its changes and pull request, and the plan's limits.
 import { useEffect, useState, type ReactNode } from "react"
-import { CircleCheck, CircleDashed, CircleX, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
+import { CircleAlert, CircleCheck, CircleDashed, CircleX, LoaderCircle, Cloud, ExternalLink, FileDiff, Folder, GitBranch, GitPullRequest, Monitor, Server, SquareTerminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
 import { openReview, sendMessage } from "@/store/actions"
 import { capabilities } from "@/lib/status"
-import { homePath, plural } from "@/lib/format"
+import { homePath, plural, usd } from "@/lib/format"
+import { minutes, useCache, type CacheState } from "@/features/composer/cache"
 import { cn } from "@/lib/utils"
 import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
 import { useChangedFiles } from "../sessionStore"
+import { useVerification } from "../signals"
+import { RelativeTime } from "@/components/common/RelativeTime"
 import { Meter } from "@/features/usage/Meter"
 import { useUsage } from "@/features/usage/usageData"
 
@@ -28,6 +31,7 @@ export function DetailsPanel({ sessionId }: { sessionId: ID }) {
       <Environment s={s} />
       <Context s={s} />
       <Changes s={s} />
+      <Checks id={s.id} />
       <Limits cost={s.usage.costUsd} />
     </aside>
   )
@@ -85,14 +89,17 @@ function Environment({ s }: { s: Session }) {
 function Context({ s }: { s: Session }) {
   const c = s.usage.context
   const caps = capabilities(s.control)
+  const cache = useCache(s.id)
   // a session the app runs answers how full its context is; ask when the panel shows it
   useEffect(() => {
     if (REAL && s.control === "owned") void import("@/backend/real").then((r) => r.realAskContext(s.id))
   }, [s.id, s.control])
   if (!c) {
+    const pct = s.usage.contextPct || (cache ? Math.round((cache.tokens / (cache.tokens > 200_000 ? 1_000_000 : 200_000)) * 100) : 0)
     return (
       <Section title="Context">
-        {s.usage.contextPct > 0 ? <Meter label="Used" percent={s.usage.contextPct} /> : <p className="text-xs text-muted-foreground">Shown for sessions this app runs, after their first reply.</p>}
+        {pct > 0 ? <Meter label={cache ? `${k(cache.tokens)} tokens` : "Used"} percent={pct} /> : <p className="text-xs text-muted-foreground">Shown after the first reply.</p>}
+        <CacheLine cache={cache} />
       </Section>
     )
   }
@@ -143,7 +150,20 @@ function Context({ s }: { s: Session }) {
         ))}
       </ul>
       {free && buffer && <p className="text-xs text-muted-foreground">{k(Math.max(0, free.tokens))} until auto-compact</p>}
+      <CacheLine cache={cache} />
     </Section>
+  )
+}
+
+/** Prompt cache: warm for how long, or expired and what the next message costs because of it. */
+function CacheLine({ cache }: { cache: CacheState | null }) {
+  if (!cache?.cost) return null
+  return (
+    <p className="text-xs text-muted-foreground">
+      {cache.warm
+        ? `Cache warm for ${minutes(cache.ms)} more · next message ≈ ${usd(cache.cost.warm)}`
+        : `Cache expired ${minutes(cache.ms)} ago · next message ≈ ${usd(cache.cost.cold)} (${usd(cache.cost.warm)} warm)`}
+    </p>
   )
 }
 
@@ -255,6 +275,35 @@ function Changes({ s }: { s: Session }) {
             <GitPullRequest /> Create PR
           </Button>
         )
+      )}
+    </Section>
+  )
+}
+
+/** Whether a test, build or check ran after the last edit, and how it went. */
+function Checks({ id }: { id: ID }) {
+  const v = useVerification(id)
+  if (!v || v.state === "none") return null
+  const line =
+    v.state === "unchecked"
+      ? { icon: <CircleAlert />, text: `${plural(v.edits, "edit")}, no tests or checks run yet` }
+      : v.state === "stale"
+        ? { icon: <CircleAlert />, text: `${plural(v.edits, "edit")} since the last check${v.passed ? "" : ", which failed"}` }
+        : v.state === "running"
+          ? { icon: <LoaderCircle />, text: "Checking now" }
+          : v.state === "passed"
+            ? { icon: <CircleCheck className="text-st-done-fg" />, text: "Passed after the last edit" }
+            : { icon: <CircleX className="text-st-error-fg" />, text: "Failed after the last edit" }
+  return (
+    <Section title="Checks">
+      <Row icon={line.icon}>{line.text}</Row>
+      {"command" in v && (
+        <p className="flex min-w-0 items-baseline gap-2 pl-6 text-xs text-muted-foreground">
+          <code className="min-w-0 truncate font-mono" title={v.command}>
+            {v.command.split("\n")[0]}
+          </code>
+          <RelativeTime iso={v.at} className="tabular shrink-0" />
+        </p>
       )}
     </Section>
   )

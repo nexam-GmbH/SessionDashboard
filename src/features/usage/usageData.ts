@@ -67,6 +67,34 @@ export function costOf(model: string, t: Tokens) {
 
 export const totalTokens = (t: Tokens) => t.i + t.o + t.w5 + t.w1 + t.r
 
+/**
+ * The next message's cost to re-read the conversation: from the cache while it is warm, or written to
+ * the cache again (1.25× input for a 5-minute cache, 2× for a 1-hour one) after it expired.
+ */
+export function cacheCost(model: string, tokens: number, ttl: number) {
+  const p = PRICES.find(([re]) => re.test(model))
+  if (!p) return null
+  const [, inp, , read] = p
+  return { warm: (tokens * read) / 1e6, cold: (tokens * inp * (ttl >= 3600 ? 2 : 1.25)) / 1e6 }
+}
+
+export type Part = "r" | "w5" | "w1" | "o" | "i"
+export const PARTS: { id: Part; label: string; note: string }[] = [
+  { id: "r", label: "Cache reads", note: "The conversation so far, read again on every call" },
+  { id: "w1", label: "Cache writes, 1 hour", note: "Kept an hour; written again after an hour idle" },
+  { id: "w5", label: "Cache writes, 5 minutes", note: "Written again after 5 minutes idle" },
+  { id: "o", label: "Output", note: "What Claude wrote, thinking included" },
+  { id: "i", label: "Input, uncached", note: "Read once and not kept" },
+]
+
+/** Value of each kind of token at API prices. */
+export function costParts(model: string, t: Tokens): Record<Part, number> {
+  const p = PRICES.find(([re]) => re.test(model))
+  if (!p) return { r: 0, w5: 0, w1: 0, o: 0, i: 0 }
+  const [, inp, out, read] = p
+  return { i: (t.i * inp) / 1e6, o: (t.o * out) / 1e6, w5: (t.w5 * inp * 1.25) / 1e6, w1: (t.w1 * inp * 2) / 1e6, r: (t.r * read) / 1e6 }
+}
+
 /** "claude-opus-5-5" → "Opus 5.5" */
 export function modelName(id: string) {
   const m = /(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?/.exec(id)
@@ -158,11 +186,13 @@ export interface Totals {
   tools: number
   sessions: number
   byModel: { id: string; tokens: number; cost: number }[]
+  byPart: Record<Part, { tokens: number; cost: number }>
 }
 
 export function totals(l: Ledger, from: number, to = Infinity): Totals {
   const byModel = new Map<string, { tokens: number; cost: number }>()
   const sessions = new Set<number>()
+  const byPart = Object.fromEntries(PARTS.map((x) => [x.id, { tokens: 0, cost: 0 }])) as Totals["byPart"]
   let tokens = 0
   let cost = 0
   let requests = 0
@@ -180,6 +210,11 @@ export function totals(l: Ledger, from: number, to = Infinity): Totals {
       tokens += tk
       cost += c
       requests += x.n
+      const parts = costParts(m, x)
+      for (const { id } of PARTS) {
+        byPart[id].tokens += x[id]
+        byPart[id].cost += parts[id]
+      }
       const e = byModel.get(m) ?? { tokens: 0, cost: 0 }
       e.tokens += tk
       e.cost += c
@@ -194,6 +229,7 @@ export function totals(l: Ledger, from: number, to = Infinity): Totals {
     tools,
     sessions: sessions.size,
     byModel: [...byModel.entries()].map(([id, v]) => ({ id, ...v })).sort((a, b) => b.tokens - a.tokens),
+    byPart,
   }
 }
 

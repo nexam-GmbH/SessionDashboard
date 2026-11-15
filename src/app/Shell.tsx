@@ -15,6 +15,8 @@ import { TerminalDock } from "@/features/terminal/TerminalDock"
 const loadPalette = () => import("@/features/palette/CommandPalette")
 const CommandPalette = lazy(loadPalette)
 const AddReposDialog = lazy(() => import("@/features/settings/AddReposDialog").then((m) => ({ default: m.AddReposDialog })))
+const loadSettingsDialog = () => import("@/features/settings/SettingsDialog").then((m) => ({ default: m.SettingsDialog }))
+const SettingsDialog = lazy(loadSettingsDialog)
 
 // Preload the palette once the app is idle, so keys typed right after Ctrl+K aren't lost while the
 // chunk downloads (it stays out of the initial bundle).
@@ -22,6 +24,7 @@ if (typeof window !== "undefined") {
   const idle = window.requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1200))
   idle(() => {
     void loadPalette()
+    void loadSettingsDialog()
   })
 }
 
@@ -44,6 +47,7 @@ export function Shell() {
   const open = useApp((s) => !s.settings.sidebarHidden)
   const overview = useApp((s) => s.route === "/")
   const paletteOpen = useApp((s) => s.paletteOpen)
+  const settingsOpen = useApp((s) => !!s.settingsOpen)
   const [firstRun, setFirstRun] = useState(FIRST_RUN)
 
   return (
@@ -77,6 +81,7 @@ export function Shell() {
       <ErrorBoundary label="Dialog">
         <Suspense fallback={null}>
           {paletteOpen && <CommandPalette />}
+          {settingsOpen && <SettingsDialog />}
           {firstRun && <AddReposDialog firstRun onClose={() => setFirstRun(false)} />}
         </Suspense>
       </ErrorBoundary>

@@ -5,7 +5,7 @@
 // raised by subagents (with once-options). Hidden when there is nothing to show.
 import { memo } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { Bot, ChevronDown, CircleCheck, CircleDashed, CircleDot, ListChecks, ShieldAlert } from "lucide-react"
+import { Bot, ChevronDown, CircleCheck, CircleDashed, CircleDot, ListChecks, Repeat, ShieldAlert } from "lucide-react"
 import type { ID, PermissionRequest } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { usePendingRequests, useSubagentIds, subagentAsStatus } from "@/store/selectors"
@@ -15,6 +15,11 @@ import { capabilities } from "@/lib/status"
 import { plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { focusDockRequest, useDockFocus, useExpanded, useTodos } from "../sessionStore"
+import { STEP_BACK, useStuck } from "../signals"
+import { useAway } from "@/store/away"
+import { SinceCard } from "./SinceCard"
+import { sendMessage } from "@/store/actions"
+import { Button } from "@/components/ui/button"
 import { onceOptions, OnceButtons } from "@/features/requests/OnceAnswers"
 
 const CHIP =
@@ -120,6 +125,36 @@ function ChildRequest({ req, sessionId, canApprove, more }: { req: PermissionReq
   )
 }
 
+/**
+ * The same step failed 3+ times this turn: say so, and offer to have Claude step back and re-plan
+ * instead of trying a fourth time. Dismissed until the loop grows.
+ */
+function StuckCard({ sessionId, canSend }: { sessionId: ID; canSend: boolean }) {
+  const s = useStuck(sessionId)
+  const [gone, setGone] = useExpanded(`stuck:${sessionId}:${s?.what ?? ""}:${s?.count ?? 0}`, false)
+  if (!s || gone) return null
+  return (
+    <div role="status" className="mb-2 flex min-w-0 items-center gap-2 rounded-xl bg-card px-3 py-2 text-xs ring-1 ring-foreground/10">
+      <Repeat size={14} className="shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="text-foreground">Failed {s.count} times in a row: </span>
+        <code className="font-mono text-muted-foreground break-all">{s.what}</code>
+      </span>
+      {canSend && (
+        <Button size="xs" variant="outline" onClick={() => {
+            sendMessage(sessionId, STEP_BACK, "now")
+            setGone(true)
+          }} title={STEP_BACK}>
+          Step back
+        </Button>
+      )}
+      <Button size="xs" variant="ghost" onClick={() => setGone(true)}>
+        Dismiss
+      </Button>
+    </div>
+  )
+}
+
 export const ActivityBar = memo(function ActivityBar({ sessionId }: { sessionId: ID }) {
   const pending = usePendingRequests(sessionId)
   const control = useApp((s) => s.sessions[sessionId]?.control)
@@ -130,9 +165,13 @@ export const ActivityBar = memo(function ActivityBar({ sessionId }: { sessionId:
   const focusId = useDockFocus(sessionId)
   // a child request opened in the dock isn't repeated here
   const child = pending.filter((r): r is PermissionRequest => r.type === "permission" && !!r.subagentId && r.id !== focusId)
-  if (!showPlan && !hasLiveSubs && !child.length) return null
+  const isStuck = useStuck(sessionId) !== null
+  const away = useAway(sessionId) !== null
+  if (!showPlan && !hasLiveSubs && !child.length && !isStuck && !away) return <SinceCard sessionId={sessionId} />
   return (
     <div className="mx-auto w-full max-w-[var(--chat-w)] min-w-0 px-5 pb-1.5">
+      <SinceCard sessionId={sessionId} />
+      <StuckCard sessionId={sessionId} canSend={control ? capabilities(control).send : false} />
       <PlanCard sessionId={sessionId} />
       <div className="flex min-w-0 flex-wrap items-center gap-1">
       <AgentsChip sessionId={sessionId} />

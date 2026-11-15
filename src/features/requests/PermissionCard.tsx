@@ -5,14 +5,18 @@
 // reject_once …) with short labels; Enter takes the first allow_once, 1–9 pick an
 // option, Esc or "Deny" opens an inline feedback field (Cmd/Ctrl+Enter submits). Calm
 // rules: the title is the question itself ("Allow `npm test -- retry`?"); cwd and
-// description sit behind a details toggle; edits show their pending diff.
+// description sit behind a details toggle; edits show their pending diff. A request that is hard to
+// undo (risk.ts) says what it does first, offers no "always allow", takes no focus and no Enter: it
+// is answered with a deliberate click or number key.
 import { memo, useEffect, useRef, useState } from "react"
-import { ShieldAlert } from "lucide-react"
+import { ShieldAlert, TriangleAlert } from "lucide-react"
 import type { PermissionOption, PermissionRequest, ToolCall } from "@/lib/model"
 import { DiffStat } from "@/components/common/bits"
 import { homePath } from "@/lib/format"
 import { InlineDiff } from "@/features/session-view/tools/InlineDiff"
 import { resolveRequest } from "@/features/session-view/sessionStore"
+import { riskOf } from "./risk"
+import { useApp } from "@/store/app"
 import { CardFrame, canStealFocus, DetailsToggle, FeedbackField, OptionButton, optionLabel, type Pager } from "./cardChrome"
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
@@ -49,9 +53,11 @@ export const PermissionCard = memo(function PermissionCard({
   const [feedbackFor, setFeedbackFor] = useState<PermissionOption | null>(null)
   const [feedback, setFeedback] = useState("")
   const [details, setDetails] = useState(false)
+  const cwd0 = useApp((s) => s.sessions[request.sessionId]?.cwd)
+  const risk = riskOf(request, cwd0)
   useEffect(() => {
-    if (autoFocus && canStealFocus()) ref.current?.focus({ preventScroll: true })
-  }, [autoFocus, request.id])
+    if (autoFocus && !risk.high && canStealFocus()) ref.current?.focus({ preventScroll: true })
+  }, [autoFocus, request.id, risk.high])
 
   const choose = (o: PermissionOption) => {
     if (!canApprove) return
@@ -64,7 +70,9 @@ export const PermissionCard = memo(function PermissionCard({
   const submitReject = () => {
     if (feedbackFor) resolveRequest(request, feedbackFor.id, feedback.trim() || undefined)
   }
-  const firstAllow = request.options.find((o) => o.kind === "allow_once")
+  // hard to undo: no standing permission for it, and no Enter to approve
+  const options = risk.high ? request.options.filter((o) => o.kind !== "allow_always") : request.options
+  const firstAllow = risk.high ? undefined : options.find((o) => o.kind === "allow_once")
   const subject = request.subject
   const command = subject?.type === "command" ? subject.command : undefined
   const path = subject?.type === "command" ? undefined : (subject?.path ?? undefined)
@@ -79,8 +87,9 @@ export const PermissionCard = memo(function PermissionCard({
     <CardFrame
       ref={ref}
       tone="perm"
-      label={`Permission request: ${request.title}`}
-      keyHint={`Enter: ${firstAllow ? "allow once" : "first option"}. 1 to ${Math.min(9, request.options.length)}: pick an option. Escape: deny with feedback.${pager && pager.total > 1 ? " Shift+Enter: next request." : ""}`}
+      className={risk.high ? "border-foreground/50" : undefined}
+      label={`Permission request${risk.high ? ", hard to undo" : ""}: ${request.title}`}
+      keyHint={`${firstAllow ? "Enter: allow once. " : ""}1 to ${Math.min(9, options.length)}: pick an option. Escape: deny with feedback.${pager && pager.total > 1 ? " Shift+Enter: next request." : ""}`}
       icon={<ShieldAlert size={14} />}
       title={<AskTitle verb={verb} subject={command ?? path} />}
       meta={
@@ -100,13 +109,13 @@ export const PermissionCard = memo(function PermissionCard({
           e.preventDefault()
           choose(firstAllow)
         } else if (/^[1-9]$/.test(e.key)) {
-          const o = request.options[Number(e.key) - 1]
+          const o = options[Number(e.key) - 1]
           if (o) {
             e.preventDefault()
             choose(o)
           }
         } else if (e.key === "Escape") {
-          const r = request.options.find(isReject)
+          const r = options.find(isReject)
           if (r) {
             e.preventDefault()
             choose(r)
@@ -129,7 +138,7 @@ export const PermissionCard = memo(function PermissionCard({
           />
         ) : (
           <>
-            {request.options.map((o, i) => (
+            {options.map((o, i) => (
               <OptionButton
                 key={o.id}
                 n={i + 1}
@@ -147,8 +156,13 @@ export const PermissionCard = memo(function PermissionCard({
         )
       }
     >
-      {(details || (diff && !command)) && (
+      {(details || (diff && !command) || risk.high) && (
         <div className="flex flex-col gap-1">
+          {risk.high && (
+            <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              <TriangleAlert size={14} className="shrink-0" /> {risk.effect}
+            </p>
+          )}
           {details && command && command.length > 60 && (
             <code className="font-mono text-xs leading-[18px] break-all whitespace-pre-wrap text-foreground select-text">{command}</code>
           )}

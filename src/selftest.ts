@@ -105,6 +105,35 @@ export async function runSelftest() {
     return `${t.order.length} items for "${pick.title.slice(0, 40)}"`
   })
 
+  await step("signals: cache, checks and loops read from real transcripts", async () => {
+    const { verification, stuck } = await import("@/features/session-view/signals")
+    const { cacheCost } = await import("@/features/usage/usageData")
+    const { ensureRealTranscript } = await import("@/backend/real")
+    // the few most recent live sessions, so their records are this Claude Code's format
+    const live = Object.values(getApp().sessions)
+      .filter((x) => x.control !== "history" && !x.machine)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 4)
+    for (const x of live) ensureRealTranscript(x.id)
+    await until(() => live.every((x) => getApp().transcripts[x.id]), 30000)
+    const t0 = performance.now()
+    const out: string[] = []
+    let withCache = 0
+    for (const x of live) {
+      const t = getApp().transcripts[x.id]
+      const v = verification(t)
+      const st = stuck(t)
+      const c = t.lastCall
+      if (c) {
+        withCache++
+        if (!(c.tokens > 0 && (c.ttl === 300 || c.ttl === 3600) && cacheCost(c.model, c.tokens, c.ttl))) throw new Error(`bad cache record ${JSON.stringify(c)}`)
+      }
+      out.push(`${v.state}${st ? `/stuck×${st.count}` : ""}${c ? `/${Math.round(c.tokens / 1000)}k@${c.ttl}s` : ""}`)
+    }
+    if (live.length && !withCache) throw new Error("no session has a last-call cache record")
+    return `${out.join(" ")} in ${Math.round(performance.now() - t0)} ms`
+  })
+
   await step("slash: /mcp goes to Claude Code's menu", async () => {
     const { terminalCommandFor } = await import("@/features/terminal/slash")
     const c = terminalCommandFor("/mcp")

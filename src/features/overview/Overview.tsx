@@ -3,13 +3,15 @@
 // rest: a card is status glyph + title + one line saying where the session is; only what needs
 // the owner is coloured, and a permission can be answered right on its card (once options only).
 import { memo } from "react"
-import { Cloud, FolderGit2, Layers, Pencil, Plus, Server } from "lucide-react"
+import { Cloud, FolderGit2, Layers, Pencil, Plus, Server, TriangleAlert } from "lucide-react"
 import { EditableTitle, SessionMenu, startRename } from "@/features/rename/Rename"
 import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
 import { selectLiveSessionIds, selectNeedsYou, shownStatus, useHomeRepos, useSession, useVisibleRepos } from "@/store/selectors"
 import { openNewSession, openSession } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
+import { ModeMark } from "@/components/common/ModeMark"
+import { riskOf } from "@/features/requests/risk"
 import { RelativeTime } from "@/components/common/RelativeTime"
 import { onceOptions, OnceButtons } from "@/features/requests/OnceAnswers"
 import { capabilities } from "@/lib/status"
@@ -240,7 +242,8 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
   )
   const waitingChild = child.find((a) => a.status === "waiting_permission")
   const where = whereItIs(s, req, waitingChild)
-  const once = s.status === "waiting_permission" && capabilities(s.control).approve ? onceOptions(req) : undefined
+  const once = s.status === "waiting_permission" && capabilities(s.control).approve ? onceOptions(req, s.cwd) : undefined
+  const risk = s.status === "waiting_permission" && req?.type === "permission" ? riskOf(req, s.cwd) : null
   const tone = needs ? (where.tone === "error" ? "error" : where.tone === "input" ? "input" : "perm") : null
   const quiet = s.status === "idle" || s.status === "stopped"
   return (
@@ -273,6 +276,7 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
               {s.title}
             </EditableTitle>
           </h3>
+          <ModeMark mode={s.permissionMode} className="mt-[3px]" />
           {/* how long it has been waiting: only where it matters */}
           {needs ? (
             <RelativeTime iso={s.statusObservedAt} className="tabular shrink-0 pt-px text-xs leading-[17px] text-muted-foreground/70" />
@@ -304,6 +308,12 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
           <div className="relative mt-2 flex items-center gap-1 pl-[22px]">
             <OnceButtons once={once} />
           </div>
+        )}
+        {risk?.high && (
+          <p className="pointer-events-none relative mt-2 flex items-center gap-1.5 pl-[22px] text-xs text-foreground">
+            <TriangleAlert size={12} className="shrink-0" />
+            <span className="min-w-0 truncate">{risk.effect}: open to answer</span>
+          </p>
         )}
       </div>
       </SessionMenu>

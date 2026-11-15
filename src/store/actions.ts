@@ -11,6 +11,7 @@ import type {
 import { getApp, setApp, type Settings } from "./app"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
+import { AWAY_MS, setAway } from "./away"
 import { realRename, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver } from "@/backend/real"
 
 /**
@@ -43,6 +44,16 @@ const RECENT_MAX = 12
 export function syncRoute(pathname: string) {
   const route = pathname || "/"
   const [, kind, ref] = route.split("/")
+  // leaving a session: you saw it up to now
+  const left = getApp().route.startsWith("/session/") ? currentSessionId() : null
+  if (left && left !== ref) {
+    const s = getApp().sessions[left]
+    if (s) {
+      if (REAL) realMarkSeen(left)
+      patchSession(left, { lastViewedAt: nowIso(), updatedAt: s.updatedAt })
+    }
+    setAway(left, null)
+  }
   if ((kind === "session" || kind === "review") && ref && getApp().sessions[ref]) {
     setApp((s) => ({ route, screen: route, recent: [ref, ...s.recent.filter((id) => id !== ref)].slice(0, RECENT_MAX) }))
     if (kind === "session") markSeen(ref)
@@ -81,8 +92,12 @@ export function setWorkspace(id: string) {
 export function openReview(sessionId: ID) {
   navigate(`/review/${sessionId}`)
 }
-export function openSettings() {
-  navigate("/settings")
+/** Settings open over what is on screen (a dialog, like Claude Code desktop), on a section. */
+export function openSettings(section = "sessions") {
+  setApp({ settingsOpen: typeof section === "string" ? section : "sessions" })
+}
+export function closeSettings() {
+  setApp({ settingsOpen: null })
 }
 export function openArchive() {
   navigate("/archive")
@@ -123,6 +138,8 @@ export function jumpToSession(n: number) {
 export function markSeen(id: ID) {
   const s = getApp().sessions[id]
   if (!s) return
+  // back after a while: the session screen offers what happened since
+  if (s.lastViewedAt && Date.now() - Date.parse(s.lastViewedAt) >= AWAY_MS) setAway(id, s.lastViewedAt)
   if (REAL) realMarkSeen(id)
   if (s.status === "done_unseen") setStatus(id, "idle", { lastViewedAt: nowIso() })
   else patchSession(id, { lastViewedAt: nowIso(), updatedAt: s.updatedAt })
@@ -522,6 +539,7 @@ export function answerQuestion(requestId: ID, answers: Record<string, string | s
 export function sendMessage(sessionId: ID, text: string, mode: "queue" | "now" = "queue", attachments?: string[]) {
   const s = getApp().sessions[sessionId]
   if (!s || !text.trim()) return
+  setAway(sessionId, null)
   if (REAL) return realSend(sessionId, text, attachments)
   const t = getApp().transcripts[sessionId]
   if (t && (s.status === "working" || s.status === "starting") && mode === "queue") {

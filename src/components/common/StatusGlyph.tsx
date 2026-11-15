@@ -1,7 +1,7 @@
 // Adapted from stablyai/orca@3bb91aa:src/renderer/src/components/AgentStateDot.tsx (MIT).
 // Modified for session-dashboard: our SessionStatus set, glyph + color
 // per status, native title instead of a Radix tooltip (cheap in long lists).
-import { memo } from "react"
+import { memo, useEffect, useRef } from "react"
 import {
   Circle,
   CircleCheck,
@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { SessionStatus } from "@/lib/model"
 import { STATUS_COLOR, STATUS_LABEL } from "@/lib/status"
+import { getApp } from "@/store/app"
 
 /**
  * The one status glyph set, shared with the map's CompactGlyph. `inset` draws the
@@ -41,8 +42,30 @@ type Props = {
   className?: string
   /** override tooltip; null = none */
   title?: string | null
-  /** animate the working spinner (only visible, on-screen glyphs should) */
+  /**
+   * turn the working glyph: only the session in focus does. Lists and cards stay still, since motion at
+   * the edge of the eye pulls attention away from the work in front of you.
+   */
   animate?: boolean
+}
+
+const ATTENTION = new Set<SessionStatus>(["waiting_permission", "waiting_input", "error"])
+
+/** One slow pulse, twice, when a glyph on screen turns to "needs you"; never on first paint. */
+function useAttentionPulse(status: SessionStatus) {
+  const el = useRef<HTMLSpanElement>(null)
+  const prev = useRef(status)
+  useEffect(() => {
+    const was = prev.current
+    prev.current = status
+    if (was === status || !ATTENTION.has(status) || ATTENTION.has(was)) return
+    if (getApp().settings.reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    el.current?.animate(
+      [{ transform: "scale(1)", opacity: 1 }, { transform: "scale(1.3)", opacity: 0.55 }, { transform: "scale(1)", opacity: 1 }],
+      { duration: 900, iterations: 2, easing: "ease-in-out" },
+    )
+  }, [status])
+  return el
 }
 
 const BOX = { xs: "size-3", sm: "size-3.5", md: "size-4" } as const
@@ -53,13 +76,15 @@ export const StatusGlyph = memo(function StatusGlyph({
   size = "sm",
   className,
   title,
-  animate = true,
+  animate = false,
 }: Props) {
+  const el = useAttentionPulse(status)
   const g = STATUS_GLYPH[status]
   const Icon = g.icon
   const label = title === null ? undefined : (title ?? STATUS_LABEL[status])
   return (
     <span
+      ref={el}
       role="img"
       aria-label={STATUS_LABEL[status]}
       title={label}

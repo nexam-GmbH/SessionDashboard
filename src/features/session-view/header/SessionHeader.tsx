@@ -116,7 +116,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
   const removed = files.length ? files.reduce((a, f) => a + f.removed, 0) : s.diff.linesRemoved
   return (
     <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
-      <StatusGlyph status={s.status} size="md" title={s.activity ? `${STATUS_LABEL[s.status]}: ${s.activity}` : undefined} />
+      <StatusGlyph status={s.status} size="md" animate title={s.activity ? `${STATUS_LABEL[s.status]}: ${s.activity}` : undefined} />
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-baseline gap-2">
         <Title session={s} editing={editing} setEditing={setEditing} />
         {!editing && (

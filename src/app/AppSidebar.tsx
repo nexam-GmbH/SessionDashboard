@@ -50,6 +50,7 @@ import { currentSessionId, openArchive, openNewSession, openOverview, openPalett
 import { useModHeld } from "./modKey"
 import { navigate } from "./nav"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
+import { ModeMark } from "@/components/common/ModeMark"
 import { MOD, Shortcut } from "@/components/common/bits"
 import { EditableTitle, SessionMenu, startRename, useRenaming } from "@/features/rename/Rename"
 import { WorkspaceDialog } from "@/features/workspaces/WorkspaceDialog"
@@ -266,7 +267,7 @@ const SessionRow = memo(function SessionRow({ id }: { id: ID }) {
     return (
       <SidebarMenuItem>
         <div className="flex h-8 w-full items-center gap-2 rounded-md bg-sidebar-accent px-2">
-          <StatusGlyph status={status} size="sm" title={null} animate={status === "working"} />
+          <StatusGlyph status={status} size="sm" title={null} />
           <EditableTitle id={id} where="list" className="h-6 text-sm">
             {null}
           </EditableTitle>
@@ -291,8 +292,9 @@ const SessionRow = memo(function SessionRow({ id }: { id: ID }) {
             }}
             aria-current={active ? "page" : undefined}
           >
-            <StatusGlyph status={status} size="sm" title={null} animate={status === "working"} />
-            <span className={cn(quiet ? "text-muted-foreground" : "text-sidebar-foreground", (needs || s.status === "done_unseen") && "font-medium")}>{s.title}</span>
+            <StatusGlyph status={status} size="sm" title={null} />
+            <span className={cn("min-w-0 truncate", quiet ? "text-muted-foreground" : "text-sidebar-foreground", (needs || s.status === "done_unseen") && "font-medium")}>{s.title}</span>
+            <ModeMark mode={s.permissionMode} className="ml-auto" />
           </SidebarMenuButton>
       </SessionMenu>
       {held && n > 0 && n <= 9 && <NumberHint n={n} />}
@@ -313,6 +315,7 @@ function Footer() {
   const archived = useApp(selectArchivedCount)
   const route = useApp((s) => s.route)
   const session = useUsage((s) => s.limits?.limits.find((l) => l.group === "session")?.percent)
+  const settingsShown = useApp((s) => !!s.settingsOpen)
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -334,7 +337,7 @@ function Footer() {
         {archived > 0 && <SidebarMenuBadge className="font-normal text-muted-foreground">{archived}</SidebarMenuBadge>}
       </SidebarMenuItem>
       <SidebarMenuItem>
-        <SidebarMenuButton size="sm" isActive={route === "/settings"} onClick={() => openSettings()} aria-keyshortcuts="Control+Comma">
+        <SidebarMenuButton size="sm" isActive={settingsShown} onClick={() => openSettings()} aria-keyshortcuts="Control+Comma">
           <Settings />
           <span>Settings</span>
         </SidebarMenuButton>

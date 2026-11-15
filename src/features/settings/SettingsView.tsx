@@ -26,6 +26,15 @@ import { pollCloud } from "@/backend/cloud"
 import { Input } from "@/components/ui/input"
 import { NOTICES } from "./notices"
 
+/** The settings sections, in the order the dialog lists them. */
+export const SECTIONS = [
+  { id: "sessions", label: REAL ? "Sessions" : "Repos", Page: REAL ? SourcesPage : ReposPage },
+  { id: "new", label: "New sessions", Page: ClaudePage },
+  { id: "notifications", label: "Notifications", Page: NotificationsPage },
+  { id: "window", label: "Window", Page: WindowPage },
+  { id: "about", label: "About", Page: AboutPage },
+] as const
+
 export default function SettingsView() {
   return (
     <div className="h-full overflow-y-auto">
@@ -129,7 +138,7 @@ function SmallSelect<T extends string>({ value, onChange, options, width = "w-44
 }
 
 // ---------- sections ----------
-function ReposPage() {
+export function ReposPage() {
   const order = useApp((s) => s.repoOrder)
   const repos = useApp((s) => s.repos)
   const counts = useApp((s) => s.sessionIdsByRepo)
@@ -171,7 +180,7 @@ function ReposPage() {
 }
 
 /** Where sessions come from: hooks on this computer, the cloud, VPS machines over ssh. */
-function SourcesPage() {
+export function SourcesPage() {
   const recentPer = useApp((s) => s.settings.recentPerRepo ?? 5)
   const hooks = useApp((s) => s.hooks)
   const cloud = useApp((s) => s.settings.cloud)
@@ -359,7 +368,7 @@ function Machines() {
   )
 }
 
-function ClaudePage() {
+export function ClaudePage() {
   const settings = useApp((s) => s.settings)
   const d = settings.defaults
   const setD = (patch: Partial<typeof d>) => patchSettings({ defaults: { ...d, ...patch } })
@@ -387,7 +396,7 @@ function ClaudePage() {
   )
 }
 
-function NotificationsPage() {
+export function NotificationsPage() {
   const s = useApp((st) => st.settings)
   const repos = useApp((st) => st.repos)
   const order = useApp((st) => st.repoOrder)
@@ -410,13 +419,13 @@ function NotificationsPage() {
   }
   return (
     <>
-      <PageTitle title="Notifications" description="System notifications fire only when the window is in the background." actions={<Button size="sm" variant="outline" onClick={() => void test()} title="Send a test notification">Test</Button>} />
+      <PageTitle title="Notifications" description="Only while the window is in the background, after 10 quiet seconds, so prompts you answer elsewhere stay silent. At most 2 in 10 minutes and 6 an hour; more arrive as one summary." actions={<Button size="sm" variant="outline" onClick={() => void test()} title="Send a test notification">Test</Button>} />
       <SettingsSection title="Notify when">
         {rule("permission", "Needs permission", "A tool call is waiting for approval.")}
-        {rule("question", "Asks a question", "AskUserQuestion, plan approval or idle prompt.")}
-        {rule("finished", "Finishes", "Turn ended; the session is done and unseen.")}
+        {rule("question", "Asks a question", "A question for you or a plan to approve.")}
+        {rule("finished", "Finishes", "Off by default: finished sessions get a dot in the list instead.")}
         {rule("error", "Fails", "API errors, crashes, rate limits.")}
-        {rule("sound", "Sound", "Short chime when a session needs you.")}
+        {rule("sound", "Sound", "The desktop's message sound with each notification.")}
       </SettingsSection>
       <SettingsSection title="Muted repos" description="No system notifications for these repos. They still count as needing you.">
         <div className="flex flex-wrap gap-1.5 py-3">
@@ -438,7 +447,7 @@ function NotificationsPage() {
   )
 }
 
-function WindowPage() {
+export function WindowPage() {
   const s = useApp((st) => st.settings)
   return (
     <>
@@ -458,7 +467,7 @@ function WindowPage() {
   )
 }
 
-function AboutPage() {
+export function AboutPage() {
   const [open, setOpen] = useState(false)
   return (
     <section className="mt-2 text-xs text-muted-foreground/70">

@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import { Meter, until } from "./Meter"
 import {
   FAMILIES,
+  PARTS,
   RANGES,
   compactTokens,
   dailyRows,
@@ -123,8 +124,8 @@ function Dashboard({ range }: { range: Range }) {
 
       <TokensChart range={range} />
 
-      <div className="grid gap-4 @5xl/main:grid-cols-3">
-        <Card className="@5xl/main:col-span-1">
+      <div className="grid gap-4 @3xl/main:grid-cols-2">
+        <Card>
           <CardHeader>
             <CardTitle>By model</CardTitle>
             <CardDescription>Tokens and value, {label.long}</CardDescription>
@@ -133,7 +134,19 @@ function Dashboard({ range }: { range: Range }) {
             <Models rows={t.byModel} total={t.tokens} />
           </CardContent>
         </Card>
-        <Card className="@5xl/main:col-span-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Where the value goes</CardTitle>
+            <CardDescription>Share of value (bright) against share of tokens (faint), {label.long}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Parts t={t} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4">
+        <Card>
           <CardHeader>
             <CardTitle>Activity</CardTitle>
             <CardDescription>Tokens per day, last 12 months</CardDescription>
@@ -360,6 +373,41 @@ function Models({ rows, total }: { rows: { id: string; tokens: number; cost: num
     </ul>
   )
 }
+
+/**
+ * Tokens and value by kind. Cache reads are most of the tokens but cheap; cache writes are few tokens
+ * at a premium, and they grow when sessions sit idle past their cache and pick up again.
+ */
+function Parts({ t }: { t: ReturnType<typeof totals> }) {
+  if (!t.tokens) return <p className="text-sm text-muted-foreground">Nothing in this range.</p>
+  return (
+    <ul className="flex flex-col gap-3">
+      {PARTS.filter((p) => t.byPart[p.id].tokens > 0).map((p) => {
+        const x = t.byPart[p.id]
+        const tokPct = (x.tokens / t.tokens) * 100
+        const costPct = t.cost ? (x.cost / t.cost) * 100 : 0
+        return (
+          <li key={p.id} className="flex flex-col gap-1" title={p.note}>
+            <div className="flex items-baseline gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">{p.label}</span>
+              <span className="tabular text-xs text-muted-foreground">{pctFmt(tokPct)} of tokens</span>
+              <span className="tabular w-24 text-right font-medium">
+                {usdFmt(x.cost)} <span className="text-xs font-normal text-muted-foreground">{pctFmt(costPct)}</span>
+              </span>
+            </div>
+            {/* the value share; the faint track behind it marks the token share */}
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="absolute inset-y-0 left-0 rounded-full bg-foreground/25" style={{ width: `${tokPct}%` }} />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${Math.max(costPct, 0.5)}%` }} />
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+const pctFmt = (n: number) => (n >= 10 ? `${Math.round(n)}%` : n >= 1 ? `${n.toFixed(1)}%` : n > 0 ? "<1%" : "0%")
 
 // ---------- activity heatmap (53 weeks, Monday first; fills the card width) ----------
 type Day = { key: string; date: Date; tokens: number; future: boolean }

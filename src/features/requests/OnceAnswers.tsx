@@ -6,6 +6,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { resolveRequest } from "@/features/session-view/sessionStore"
 import type { ID, PendingRequest, PermissionOption, PermissionRequest } from "@/lib/model"
+import { riskOf } from "./risk"
 
 export interface OnceOptions {
   req: PermissionRequest
@@ -13,9 +14,13 @@ export interface OnceOptions {
   deny: PermissionOption
 }
 
-/** Allow once / Deny of a pending permission request; undefined for anything else. */
-export function onceOptions(req: PendingRequest | undefined): OnceOptions | undefined {
+/**
+ * Allow once / Deny of a pending permission request; undefined for anything else, and for a request
+ * that is hard to undo (that one is answered on its full card in the session).
+ */
+export function onceOptions(req: PendingRequest | undefined, cwd?: string): OnceOptions | undefined {
   if (!req || req.type !== "permission" || req.state !== "pending") return undefined
+  if (riskOf(req, cwd).high) return undefined
   const allow = req.options.find((o) => o.kind === "allow_once")
   const deny = req.options.find((o) => o.kind === "reject_once")
   return allow && deny ? { req, allow, deny } : undefined

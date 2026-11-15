@@ -308,6 +308,10 @@ export interface Transcript {
   liveItemId?: ID
   queued: { id: ID; text: string; attachments?: string[] }[]
   todos: { content: string; status: "pending" | "in_progress" | "completed" }[]
+  /** Claude Code's own recap of the session, written while you were away (system away_summary) */
+  recap?: { text: string; at: string }
+  /** the newest API call: the context it sent (≈ what the prompt cache holds), and the cache's lifetime in seconds */
+  lastCall?: { at: string; tokens: number; ttl: number; model: string }
 }
 
 // ---------- things that need the user ----------
