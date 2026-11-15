@@ -17,7 +17,7 @@ Built with Tauri 2, React 19 and shadcn/ui. Linux first; Windows and macOS build
   the effect spelled out, no "always allow", never a single keypress.
 - **Calm notifications.** Only what blocks a session notifies, after 10 quiet seconds (a prompt you answer
   in the terminal never pings), at most a few an hour; the rest arrive as one summary. Finished work is a
-  dot in the list, and nothing in the background spins.
+  dot in the list; working sessions spin.
 - **Sessions like Claude Code desktop.** A chat per session with readable work summaries
   ("Edited 2 files, ran a command +38 −17"), a live activity line, the plan as a checklist, and a details
   panel with the context window breakdown, changes, pull request status and plan limits.

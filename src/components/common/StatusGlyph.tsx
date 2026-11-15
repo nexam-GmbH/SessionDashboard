@@ -42,10 +42,7 @@ type Props = {
   className?: string
   /** override tooltip; null = none */
   title?: string | null
-  /**
-   * turn the working glyph: only the session in focus does. Lists and cards stay still, since motion at
-   * the edge of the eye pulls attention away from the work in front of you.
-   */
+  /** turn the working glyph (everywhere by default: a working session should look like it is working) */
   animate?: boolean
 }
 
@@ -76,7 +73,7 @@ export const StatusGlyph = memo(function StatusGlyph({
   size = "sm",
   className,
   title,
-  animate = false,
+  animate = true,
 }: Props) {
   const el = useAttentionPulse(status)
   const g = STATUS_GLYPH[status]

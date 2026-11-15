@@ -365,7 +365,7 @@ function Checks({ id }: { id: ID }) {
       : v.state === "stale"
         ? { icon: <CircleAlert />, text: `${plural(v.edits, "edit")} since the last check${v.passed ? "" : ", which failed"}` }
         : v.state === "running"
-          ? { icon: <LoaderCircle />, text: "Checking now" }
+          ? { icon: <LoaderCircle className="animate-spin-steps" />, text: "Checking now" }
           : v.state === "passed"
             ? { icon: <CircleCheck className="text-st-done-fg" />, text: "Passed after the last edit" }
             : { icon: <CircleX className="text-st-error-fg" />, text: "Failed after the last edit" }
