@@ -1,7 +1,9 @@
 // Rewind (Claude Code `/rewind`, Esc Esc): go back to an earlier prompt and restore the
-// conversation, the code, or both. Phase 1 works on the mock transcript; Phase 2 maps it to
-// checkpoints (`--resume-session-at` / file checkpoints). Every rewind can be undone once.
+// conversation, the code, or both. In the app it is Claude Code's own: file snapshots
+// (`--rewind-files`) and a resume up to the answer before that prompt (`--resume-session-at`),
+// see backend/real.ts realRewind. The browser preview rewinds its mock transcript (with Undo).
 import { getApp, setApp } from "@/store/app"
+import { REAL } from "@/backend/mode"
 import { setStatus } from "@/store/actions"
 import type { ID, Item, Transcript } from "@/lib/model"
 import { showUndo } from "@/features/notifications/undo"
@@ -51,6 +53,12 @@ export function rewindTo(sessionId: ID, turnId: ID, scope: RewindScope) {
   if (!t || !session) return
   const index = t.turns.findIndex((x) => x.id === turnId)
   if (index < 0) return
+  // the app: Claude Code's own file snapshots and a resume up to the answer before that prompt
+  if (REAL) {
+    const first = t.turns[index].itemIds.find((id) => t.items[id]?.type === "user_message")
+    if (first) void import("@/backend/real").then((r) => r.realRewind(sessionId, first, scope))
+    return
+  }
   const prompt = t.items[t.turns[index].itemIds[0]]
   const promptText = prompt?.type === "user_message" ? prompt.text : ""
 

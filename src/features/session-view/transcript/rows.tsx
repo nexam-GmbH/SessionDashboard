@@ -9,10 +9,11 @@
 // Each row is memoized and selects only its own item by id, so only the live agent message
 // re-renders while streaming.
 import { memo, useState } from "react"
-import { Check, ChevronRight, Copy, FileDiff, FilePen, History, Info, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FilePen, GitFork, History, Info, OctagonX, Paperclip, TriangleAlert } from "lucide-react"
+import { REAL } from "@/backend/mode"
 import type { ID, ToolCall, Turn } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { openReview, sendMessage } from "@/store/actions"
+import { forkSession, openReview, openSession, sendMessage } from "@/store/actions"
 import { DiffStat } from "@/components/common/bits"
 import { Button } from "@/components/ui/button"
 import { capabilities } from "@/lib/status"
@@ -25,6 +26,7 @@ import { useCoalescedItem, useExpanded, useItem, useItems } from "../sessionStor
 import { ToolRow } from "../tools/ToolRow"
 import { ToolLabel } from "../tools/ToolLine"
 import { Pictures, SharedFiles } from "./Media"
+import { WorkingMark } from "./Spinner"
 import { buildToolSummary, formatWorkDuration, relPath, summarizeWork } from "../tools/toolSummary"
 import type { TranscriptView } from "./rowModel"
 
@@ -37,36 +39,51 @@ const STRETCHED = "absolute inset-0 rounded-md outline-none focus-visible:ring-1
 // ---------- user ----------
 // One shared formatter: toLocaleTimeString per row is slow when many rows mount at once.
 const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" })
+/** A long message folds to this many lines (Claude Code desktop's ⌄ "show more"). */
+const FOLD_LINES = 14
+const FOLD_CHARS = 1400
+const DATE_FULL = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+
+/** "Fork from here": a copy of the session up to before this message, the message in its box. */
+function forkFromHere(sessionId: ID, itemId: ID) {
+  if (REAL) {
+    void import("@/backend/real").then((r) => {
+      const nid = r.realForkAt(sessionId, itemId)
+      if (nid) openSession(nid)
+    })
+    return
+  }
+  forkSession(sessionId)
+}
+
+const ACTION_BTN =
+  "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+
 export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   const item = useItem(sessionId, itemId)
-  const canRewind = useApp((s) => {
-    const c = s.sessions[sessionId]?.control
-    return c ? capabilities(c).changeSettings : false
-  })
+  const control = useApp((s) => s.sessions[sessionId]?.control)
+  // your own sessions and past ones (rewinding a past one continues it in the app)
+  const canRewind = control === "owned" || control === "pty" || (REAL && control === "history")
+  const canFork = control !== "cloud"
+  const [open, setOpen] = useExpanded(`fold:${itemId}`, false)
   if (item?.type !== "user_message") return null
+  const long = item.text.length > FOLD_CHARS || item.text.split("\n").length > FOLD_LINES
   return (
-    <div className="group/user flex items-start justify-end gap-2 pt-6 pb-3">
-      {/* on hover: time, Copy and "Rewind to here" (Claude Code desktop's per-message rewind) */}
-      <div className="mt-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100">
-        <time className="tabular mr-1 text-xs text-muted-foreground/70" dateTime={item.at}>
-          {TIME.format(new Date(item.at))}
-        </time>
-        <CopyButton text={item.text} />
-        {canRewind && (
-          <button
-            type="button"
-            title="Rewind to here"
-            aria-label="Rewind to here"
-            onClick={() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId: item.turnId } }))}
-            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <History size={13} />
-          </button>
-        )}
-      </div>
+    <div className="group/user flex flex-col items-end pt-6 pb-3">
       <div className="max-w-[85%] min-w-0 rounded-2xl bg-muted px-4 py-2.5">
         {item.images && item.images.length > 0 && <Pictures pictures={item.images} className={item.text ? "mb-2" : "my-0.5"} />}
-        {item.text && <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text">{item.text}</div>}
+        {item.text && (
+          <div
+            className={cn("text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text", item.command && "font-mono text-[13px]", long && !open && "max-h-[19rem] overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]")}
+          >
+            {item.text}
+          </div>
+        )}
+        {long && (
+          <button type="button" onClick={() => setOpen(!open)} className="mt-1 inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
+            <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} /> {open ? "Show less" : "Show more"}
+          </button>
+        )}
         {item.attachments && item.attachments.length > 0 && (
           <div className="mt-1.5 mb-0.5 flex flex-wrap gap-1">
             {item.attachments.map((a) => (
@@ -75,6 +92,29 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
               </span>
             ))}
           </div>
+        )}
+      </div>
+      {/* under the bubble on hover: when, Copy, Rewind to here, Fork from here */}
+      <div className="mt-1 flex h-6 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 focus-within:opacity-100">
+        <time className="tabular mr-1 text-xs text-muted-foreground/70" dateTime={item.at} title={DATE_FULL.format(new Date(item.at))}>
+          {TIME.format(new Date(item.at))}
+        </time>
+        <CopyButton text={item.text} />
+        {canRewind && (
+          <button
+            type="button"
+            title="Rewind to here: back to before this message (conversation, code or both)"
+            aria-label="Rewind to here"
+            onClick={() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId: item.turnId } }))}
+            className={ACTION_BTN}
+          >
+            <History size={13} />
+          </button>
+        )}
+        {canFork && (
+          <button type="button" title="Fork from here: a copy of the session up to before this message" aria-label="Fork from here" onClick={() => forkFromHere(sessionId, itemId)} className={ACTION_BTN}>
+            <GitFork size={13} />
+          </button>
         )}
       </div>
     </div>
@@ -223,7 +263,11 @@ export const ToolGroupRow = memo(function ToolGroupRow({
     <div className="py-0.5">
       <div className={cn(META_ROW, "hover:text-foreground")}>
         <button type="button" aria-expanded={open} aria-label={nowSummary ? `${summary}, now: ${nowSummary.verb} ${nowSummary.target?.text ?? ""}` : summary} onClick={() => setOpen(!open)} className={STRETCHED} />
-        <span className={SLOT}>{now?.display === "running" ? <Spin size={12} /> : <Chevron open={open} />}</span>
+        {now?.display === "running" && (
+          <span className={cn(SLOT, "text-spark")}>
+            <WorkingMark />
+          </span>
+        )}
         {now && nowSummary ? (
           <>
             <ToolLabel sessionId={sessionId} summary={nowSummary} />
@@ -235,7 +279,9 @@ export const ToolGroupRow = memo(function ToolGroupRow({
         )}
         {st.failed > 0 && <span className="pointer-events-none shrink-0 text-st-error-fg">· {st.failed} failed</span>}
         {st.denied > 0 && <span className="pointer-events-none shrink-0 text-muted-foreground/70">· {st.denied} denied</span>}
-        <DiffStat added={st.added} removed={st.removed} className="pointer-events-none shrink-0" />
+        <DiffStat added={st.added} removed={st.removed} pill className="pointer-events-none shrink-0" />
+        {/* "›" after the summary, turning down while open (Claude Code desktop) */}
+        <ChevronRight size={14} aria-hidden className={cn("pointer-events-none shrink-0 text-muted-foreground/60 transition-transform duration-150", open && "rotate-90")} />
       </div>
       {open && (
         <div className="ml-[6px] flex flex-col border-l border-border py-0.5 pl-3">
@@ -326,11 +372,13 @@ export const EditsCard = memo(function EditsCard({ sessionId, itemIds }: { sessi
 export const CompactionRow = memo(function CompactionRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   const item = useItem(sessionId, itemId)
   if (item?.type !== "compaction") return null
-  const how = item.trigger === "auto" ? "Compacted automatically" : "Compacted with /compact"
+  const how = item.trigger === "auto" ? "automatically" : "with /compact"
   return (
-    <div className="flex items-center gap-3 pt-4 pb-1 text-xs text-muted-foreground/70" role="separator" aria-label="Conversation compacted">
+    <div className="flex items-center gap-3 pt-4 pb-1 text-xs text-muted-foreground/70" role="separator" aria-label="Session compacted">
       <div className="h-px flex-1 bg-border" />
-      <span title={item.preTokens ? `${how} · ${compact(item.preTokens)} tokens summarized` : how}>Conversation compacted · earlier messages are summarized</span>
+      <span title={`Compacted ${how}: Claude keeps a summary of the earlier messages`}>
+        Compacted session{item.preTokens ? ` · ${compact(item.preTokens)} tokens summarized` : ""}
+      </span>
       <div className="h-px flex-1 bg-border" />
     </div>
   )
@@ -347,6 +395,8 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
   const error = item.severity === "error"
   const Icon = error ? OctagonX : item.severity === "warning" ? TriangleAlert : Info
   const mcp = item.severity === "info" && /\/mcp\b/.test(item.text)
+  // the turn you stopped: as Claude Code says it
+  const text = item.text === "Interrupted" ? "Interrupted · What should Claude do instead?" : item.text
   return (
     <div
       className={cn(
@@ -357,10 +407,10 @@ export const NoticeRow = memo(function NoticeRow({ sessionId, itemId }: { sessio
       <span className={cn(SLOT, item.severity === "info" ? "mt-px" : "mt-[3px]")}>
         <Icon size={item.severity === "info" ? 12 : 14} strokeWidth={1.75} aria-hidden />
       </span>
-      <span className={cn("min-w-0 flex-1 select-text", item.severity === "info" ? "leading-[18px]" : "leading-relaxed")}>{item.text}</span>
+      <span className={cn("min-w-0 flex-1 select-text", item.severity === "info" ? "leading-[18px]" : "leading-relaxed")}>{text}</span>
       {error && canSend && (
-        <Button size="xs" variant="outline" className="shrink-0" onClick={() => sendMessage(sessionId, "continue", "now")}>
-          Retry
+        <Button size="xs" variant="outline" className="shrink-0" onClick={() => sendMessage(sessionId, "continue", "now")} title="Sends “continue”: Claude picks up where it stopped">
+          Try again
         </Button>
       )}
       {mcp && (
@@ -404,3 +454,23 @@ export const ReceiptRow = memo(function ReceiptRow({ sessionId, receipt }: { ses
     </div>
   )
 })
+
+// ---------- the day changes ----------
+const DAY_FMT = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" })
+const DAY_FMT_YEAR = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" })
+
+/** "Today", "Yesterday", "Monday 3 November" between messages of different days. */
+export function DateRow({ at }: { at: string }) {
+  const d = new Date(at)
+  const today = new Date()
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const label = t === start ? "Today" : t === start - 86_400_000 ? "Yesterday" : d.getFullYear() === today.getFullYear() ? DAY_FMT.format(d) : DAY_FMT_YEAR.format(d)
+  return (
+    <div className="flex items-center gap-3 pt-6 pb-1 text-xs text-muted-foreground/60" role="separator" aria-label={label}>
+      <div className="h-px flex-1 bg-border/70" />
+      <span>{label}</span>
+      <div className="h-px flex-1 bg-border/70" />
+    </div>
+  )
+}

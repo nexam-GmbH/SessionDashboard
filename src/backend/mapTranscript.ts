@@ -17,8 +17,8 @@ export interface MapState {
   tools: Map<string, ID>
   /** message id → item id of its streaming placeholder */
   live: Map<string, ID>
-  /** user messages sent from the app, waiting for their record (text → item id) */
-  pending: Map<string, ID>
+  /** user messages sent from the app, waiting for their record (text → item ids, oldest first) */
+  pending: Map<string, ID[]>
 }
 
 export function emptyTranscript(sessionId: ID): Transcript {
@@ -39,7 +39,12 @@ const FAMILY_KIND: Record<string, ToolKind> = {
   todo: "think",
 }
 
-function userText(r: Rec): string | null {
+/** Claude Code's own wrappers around what it writes as "user" records (not something you typed). */
+const WRAPPER = /^<(local-command-std(?:out|err)|local-command-caveat|bash-std(?:out|err)|system-reminder|task-notification|user-prompt-submit-hook|command-message)\b/
+const tag = (text: string, name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
+
+/** What you typed, from a user record: plain text, a slash command ("/model opus"), or "! cmd". */
+function userText(r: Rec): { text: string; command?: boolean } | null {
   if (r.isMeta || r.isCompactSummary) return null
   const c = r.message?.content
   let text = ""
@@ -51,8 +56,39 @@ function userText(r: Rec): string | null {
     }
   } else return null
   text = text.trim()
-  if (!text || text.startsWith("<") || text.startsWith("Caveat:")) return null
-  return text
+  if (!text || text.startsWith("Caveat:")) return null
+  if (text.startsWith("<")) {
+    // a slash command you ran: "/name args"
+    const name = tag(text, "command-name")
+    if (name) {
+      const args = tag(text, "command-args")
+      return { text: `${name.startsWith("/") ? name : `/${name}`}${args ? ` ${args}` : ""}`, command: true }
+    }
+    // "! cmd" run in the session's shell
+    const bash = tag(text, "bash-input")
+    if (bash) return { text: `! ${bash}`, command: true }
+    // the rest of Claude Code's own wrappers; anything else (pasted HTML, <T> generics…) is yours
+    if (WRAPPER.test(text) || /^<command-(name|args)>/.test(text)) return null
+  }
+  return { text }
+}
+
+/** Your pending message for this text (sent from the app), if any; long ones are cut in the file ("… (cut)"). */
+function takePending(st: MapState, text: string): ID | undefined {
+  let key = text.trim()
+  let ids = st.pending.get(key)
+  if (!ids?.length && key.endsWith("… (cut)")) {
+    const head = key.slice(0, -"… (cut)".length).trim()
+    for (const [k, v] of st.pending) if (v.length && k.startsWith(head)) {
+      key = k
+      ids = v
+      break
+    }
+  }
+  if (!ids?.length) return undefined
+  const id = ids.shift()
+  if (!ids.length) st.pending.delete(key)
+  return id
 }
 
 /** Pictures in message content: base64 blocks become data: URLs. */
@@ -142,28 +178,38 @@ function applyRecord(b: Builder, r: Rec) {
     if (b.st.seen.has(uuid)) return
     b.st.seen.add(uuid)
   }
+  if (r.type === "attachment") {
+    // a message you sent while Claude worked: it joined the running turn (Claude Code folds it in)
+    const a = r.attachment as { type?: string; prompt?: unknown; origin?: { kind?: string } } | undefined
+    if (a?.type !== "queued_command" || (a.origin?.kind && a.origin.kind !== "human")) return
+    const text = typeof a.prompt === "string" ? a.prompt.trim() : Array.isArray(a.prompt) ? textOf(a.prompt).trim() : ""
+    if (!text || WRAPPER.test(text)) return
+    if (takePending(b.st, text)) return
+    b.add({ type: "user_message", id: uuid ?? `q_${b.t.order.length}`, turnId: b.turn().id, at, text, steer: true })
+    return
+  }
   if (r.type === "user") {
-    let text = userText(r)
+    let u = userText(r)
     // a message that is only pictures (photos you sent) still is your message
     const pics = !r.isMeta ? picturesOf(r.message?.content) : []
     const hasResult = Array.isArray(r.message?.content) && (r.message!.content as Block[]).some((p) => p.type === "tool_result")
-    if (text == null && pics.length && !hasResult) text = ""
-    if (text != null && text.startsWith("[Request interrupted")) {
+    if (u == null && pics.length && !hasResult) u = { text: "" }
+    if (u != null && u.text.startsWith("[Request interrupted")) {
       b.add({ type: "notice", id: uuid ?? `n_${b.t.order.length}`, turnId: b.turn().id, at, severity: "info", text: "Interrupted" })
+      closeRunning(b, at)
       return
     }
-    if (text != null) {
+    if (u != null) {
       // a message sent from the app: its local placeholder becomes this record
-      const pend = b.st.pending.get(text)
-      if (pend) {
-        b.st.pending.delete(text)
-        return
-      }
+      if (takePending(b.st, u.text)) return
       b.newTurn(uuid ?? `turn_${b.t.order.length}`, at)
-      b.add({ type: "user_message", id: uuid ?? `u_${b.t.order.length}`, turnId: b.turn().id, at, text, ...(pics.length ? { images: pics } : {}) })
+      b.add({ type: "user_message", id: uuid ?? `u_${b.t.order.length}`, turnId: b.turn().id, at, text: u.text, ...(u.command ? { command: true } : {}), ...(pics.length ? { images: pics } : {}) })
       return
     }
     if (r.isCompactSummary) {
+      // the summary that follows a compact boundary: one divider, not two
+      const lastId = b.t.order.at(-1)
+      if (lastId && b.t.items[lastId]?.type === "compaction") return
       b.add({ type: "compaction", id: uuid ?? `c_${b.t.order.length}`, turnId: b.turn().id, at, trigger: "auto", preTokens: 0 })
       return
     }
@@ -176,9 +222,12 @@ function applyRecord(b: Builder, r: Rec) {
         const denied = failed && /denied|rejected|doesn't want/i.test(output)
         const images = picturesOf(p.content)
         // SendUserFile: the files as delivered (size, type, claude.ai's id)
-        const att = (r as unknown as { toolUseResult?: { attachments?: { path?: string; size?: number; media_type?: string; file_uuid?: string }[] } }).toolUseResult?.attachments
+        const tur = (r as unknown as { toolUseResult?: { type?: string; attachments?: { path?: string; size?: number; media_type?: string; file_uuid?: string }[] } }).toolUseResult
+        const att = tur?.attachments
         b.patchTool(p.tool_use_id, (c) => ({
           ...c,
+          // Write over a file that existed: a change, not a new file
+          ...(c.name === "Write" && tur?.type === "update" && c.diff ? { diff: c.diff.map((d) => ({ ...d, op: "modify" as const })) } : {}),
           status: failed ? "failed" : "completed",
           display: denied ? "rejected" : failed ? "failed" : "done",
           output,
@@ -205,6 +254,12 @@ function applyRecord(b: Builder, r: Rec) {
     const msgId = r.message?.id
     const content = r.message?.content
     if (!Array.isArray(content)) return
+    // Claude Code's own error reply ("You've hit your limit", "API Error: 529 …"): a notice, not Claude talking
+    if (r.isApiErrorMessage === true || (r.message?.model === "<synthetic>" && typeof r.error === "string")) {
+      const text = textOf(content).trim()
+      if (text && !/^No response requested\.?$/i.test(text)) b.add({ type: "notice", id: uuid ?? `n_${b.t.order.length}`, turnId: b.turn().id, at, severity: "error", text: text.slice(0, 500) })
+      return
+    }
     // the final record replaces the streaming placeholder of the same message
     if (msgId && b.st.live.has(msgId)) {
       const liveId = b.st.live.get(msgId)!
@@ -253,13 +308,22 @@ function applyRecord(b: Builder, r: Rec) {
   if (r.type === "system") {
     const sub = r.subtype as string | undefined
     if (sub === "compact_boundary") {
-      b.add({ type: "compaction", id: uuid ?? `c_${b.t.order.length}`, turnId: b.turn().id, at, trigger: "auto", preTokens: 0 })
+      const meta = (r.compactMetadata ?? r.compact_metadata) as { trigger?: string; preTokens?: number; pre_tokens?: number } | undefined
+      closeRunning(b, at)
+      b.add({ type: "compaction", id: uuid ?? `c_${b.t.order.length}`, turnId: b.turn().id, at, trigger: meta?.trigger === "manual" ? "manual" : "auto", preTokens: meta?.preTokens ?? meta?.pre_tokens ?? 0 })
     } else if (sub === "turn_duration") {
       // the turn ended: Claude Code's own measure of how long it took ("Cooked for 26s")
       const ms = (r as unknown as { durationMs?: number }).durationMs
       const last = b.t.turns[b.t.turns.length - 1]
       if (last) b.t.turns[b.t.turns.length - 1] = { ...last, status: last.status === "in_progress" ? "completed" : last.status, completedAt: at, ...(typeof ms === "number" ? { durationMs: ms } : {}) }
-    } else if (r.level === "error" || sub === "api_error") {
+    } else if (sub === "api_error") {
+      // an API error Claude Code retried: a quiet line, not a red error (the retry usually works)
+      const e = r.error as { formatted?: string; message?: string } | undefined
+      const why = e?.formatted || e?.message || (typeof r.content === "string" ? r.content : "") || "API error"
+      const attempt = typeof r.retryAttempt === "number" ? r.retryAttempt : undefined
+      const max = typeof r.maxRetries === "number" ? r.maxRetries : undefined
+      b.add({ type: "notice", id: uuid ?? `n_${b.t.order.length}`, turnId: b.turn().id, at, severity: "warning", text: `${why}${attempt ? ` · retried (attempt ${attempt}${max ? ` of ${max}` : ""})` : ""}`.slice(0, 500) })
+    } else if (r.level === "error") {
       const text = typeof r.content === "string" ? r.content : "Error"
       b.add({ type: "notice", id: uuid ?? `n_${b.t.order.length}`, turnId: b.turn().id, at, severity: "error", text: text.slice(0, 500) })
     } else if (sub === "away_summary" && typeof r.content === "string") {
@@ -284,7 +348,24 @@ export function applyRecords(base: Transcript, st: MapState, records: Rec[], opt
   // the last turn is in progress only while the session runs
   const last = b.t.turns.at(-1)
   if (last && !opts.running && last.status === "in_progress") b.t.turns[b.t.turns.length - 1] = { ...last, status: "completed" }
+  // the session is not running: a call without a result never got one (stopped, app closed, crash)
+  if (!opts.running) closeRunning(b, undefined, true)
   return b.t
+}
+
+/**
+ * Tool calls that will never get a result: stopped. Before a new boundary (interrupt, compaction)
+ * the open ones of the turns before it; when the session isn't running, all of them.
+ */
+function closeRunning(b: Builder, at?: string, all = false) {
+  for (const t of all ? b.t.turns : b.t.turns.slice(-1)) {
+    if (!all && t.status !== "in_progress") continue
+    for (const id of t.itemIds) {
+      const it = b.t.items[id]
+      if (it?.type === "tool_call" && (it.call.display === "running" || it.call.display === "awaiting_permission") && it.call.status === "in_progress")
+        b.t.items[id] = { ...it, call: { ...it.call, status: "cancelled", display: "cancelled", ...(at ? { completedAt: at } : {}) } }
+    }
+  }
 }
 
 /** A text delta from `stream_event` (owned sessions): grows the streaming placeholder. */
@@ -309,11 +390,13 @@ export function applyTextDelta(base: Transcript, st: MapState, msgId: string, de
 }
 
 /** A user message sent from the app, shown at once (its record later dedupes against it). */
-export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[], images?: string[]): Transcript {
+export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[], images?: string[], uuid?: string): Transcript {
   const b = new Builder(base, st)
   const at = new Date().toISOString()
-  const id = `pending:${crypto.randomUUID()}`
-  st.pending.set(text.trim(), id)
+  // the uuid the message is sent with (its record carries it): rewind finds it by that
+  const id = `pending:${uuid ?? crypto.randomUUID()}`
+  const key = text.trim()
+  st.pending.set(key, [...(st.pending.get(key) ?? []), id])
   b.newTurn(`turn:${id}`, at)
   b.add({ type: "user_message", id, turnId: b.turn().id, at, text, ...(attachments?.length ? { attachments } : {}), ...(images?.length ? { images: images.map((src) => ({ src })) } : {}) })
   return b.t
@@ -337,5 +420,8 @@ export function endTurn(base: Transcript, st: MapState, failed: boolean): Transc
   }
   st.live.clear()
   b.t.liveItemId = undefined
+  b.t.thinkingNow = false
+  // the turn is over: a call still "running" was stopped with it
+  closeRunning(b, new Date().toISOString(), true)
   return b.t
 }

@@ -330,9 +330,11 @@ export function SourcesPage() {
       <PageTitle title="Sessions" description="Sessions on this computer are found by themselves. Hooks make their states exact; the cloud and VPS machines add sessions that run elsewhere." />
       <Workspace />
       <SettingsSection>
-        <SettingRow title="Recent sessions per project" description="How many sessions each project shows on the overview and in the list: every running one, then the ones you used last. Older ones are a search away (Ctrl+K).">
+        <SettingRow title="Past sessions per project" description="How many finished sessions each project lists under its running ones (Show more adds the rest). History (Ctrl+Shift+H) has all of them; Ctrl+K searches what was said in them.">
           <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
         </SettingRow>
+        <SendKeyRow />
+        <ChatWidthRow />
         <TerminalSync />
         <KeepChats />
         <Accounts />
@@ -616,5 +618,41 @@ export function AboutPage() {
         </div>
       )}
     </section>
+  )
+}
+
+/** Enter sends (Claude Code), or Ctrl/⌘+Enter sends and Enter adds a line (safer with input methods). */
+function SendKeyRow() {
+  const key = useApp((st) => st.settings.sendKey ?? "enter")
+  return (
+    <SettingRow title="Send with" description="Enter sends and Shift+Enter adds a line, as in Claude Code; or Enter adds a line and Ctrl+Enter sends.">
+      <SmallSelect
+        value={key}
+        onChange={(v) => patchSettings({ sendKey: v as "enter" | "mod-enter" })}
+        options={[
+          { value: "enter", label: "Enter" },
+          { value: "mod-enter", label: "Ctrl+Enter" },
+        ]}
+        width="w-32"
+      />
+    </SettingRow>
+  )
+}
+
+/** The chat column: readable (Claude Code desktop's ~770 px) or wide. */
+function ChatWidthRow() {
+  const w = useApp((st) => st.settings.chatWidth ?? "readable")
+  return (
+    <SettingRow title="Chat width" description="A readable column, like Claude Code desktop, or one that uses the window's width.">
+      <SmallSelect
+        value={w}
+        onChange={(v) => patchSettings({ chatWidth: v as "readable" | "wide" })}
+        options={[
+          { value: "readable", label: "Readable" },
+          { value: "wide", label: "Wide" },
+        ]}
+        width="w-32"
+      />
+    </SettingRow>
   )
 }

@@ -9,6 +9,7 @@ pub mod inject;
 pub mod perms;
 pub mod ports;
 pub mod remote;
+pub mod search;
 pub mod transcript;
 
 use serde_json::Value;
@@ -45,6 +46,28 @@ pub async fn claude_transcript(path: String, max: Option<usize>) -> Result<Trans
     blocking(move || transcript::read_window(&path, max.unwrap_or(3000))).await
 }
 
+/// The transcript from the message `uuid` on (or the last `max` records, if that is more): a
+/// search hit or a link opens an old chat at that message, further back than the usual window.
+#[tauri::command]
+pub async fn claude_transcript_to(path: String, uuid: String, max: Option<usize>) -> Result<TranscriptChunk, String> {
+    blocking(move || transcript::read_window_to(&path, &uuid, max.unwrap_or(1500))).await
+}
+
+/// Sessions whose conversation contains every word of `query` (newest match first).
+#[tauri::command]
+pub async fn search_sessions(search: State<'_, search::Search>, query: String, limit: Option<usize>) -> Result<Vec<search::Hit>, String> {
+    let s = search.inner().clone();
+    blocking(move || Ok(s.query(&query, limit.unwrap_or(40)))).await
+}
+
+/// The ids of a session's messages that contain every word of `query` (the chat's Find, also in
+/// the part of a long chat not loaded).
+#[tauri::command]
+pub async fn search_in_session(search: State<'_, search::Search>, session_id: String, query: String) -> Result<Vec<String>, String> {
+    let s = search.inner().clone();
+    blocking(move || Ok(s.in_session(&session_id, &query))).await
+}
+
 #[tauri::command]
 pub async fn claude_transcript_since(path: String, offset: u64, tip: Option<String>) -> Result<TranscriptChunk, String> {
     blocking(move || transcript::read_since(&path, offset, tip)).await
@@ -56,11 +79,20 @@ pub async fn claude_start(app: AppHandle, procs: State<'_, Procs>, opts: StartOp
 }
 
 #[tauri::command]
-pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String, images: Option<Vec<String>>) -> Result<(), String> {
-    match images.filter(|i| !i.is_empty()) {
-        Some(imgs) => control::send_with_images(&procs, &key, &text, &imgs),
-        None => control::send(&procs, &key, &text),
-    }
+pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String, images: Option<Vec<String>>, uuid: Option<String>) -> Result<(), String> {
+    control::send_full(&procs, &key, &text, &images.unwrap_or_default(), uuid.as_deref())
+}
+
+/// A file attached in the prompt box, kept where the session can read it (its path).
+#[tauri::command]
+pub async fn save_attachment(name: String, data: String) -> Result<String, String> {
+    blocking(move || control::save_attachment(&name, &data)).await
+}
+
+/// Files back to how they were before a prompt (Claude Code's file snapshots).
+#[tauri::command]
+pub async fn claude_rewind_files(cwd: String, session_id: String, uuid: String, config_dir: Option<String>) -> Result<String, String> {
+    blocking(move || control::rewind_files(&cwd, &session_id, &uuid, config_dir.as_deref())).await
 }
 
 #[tauri::command]

@@ -65,13 +65,14 @@ async function send(title: string, body: string, sessionId?: string) {
 }
 
 /** Still worth an alert: waiting the same way, not muted, the window in the background. */
-function stillDue(id: string): Kind | null {
+function stillDue(id: string, focusMatters = true): Kind | null {
   const st = getApp()
   const s = st.sessions[id]
   const kind = s && KIND[s.status]
   if (!s || !kind || !st.settings.notify[kind] || s.archived) return null
   if (s.repoId && st.settings.mutedRepos.includes(s.repoId)) return null
-  if (document.hasFocus()) return null
+  // checked when the alert would go out: you may switch away during the quiet seconds
+  if (focusMatters && document.hasFocus()) return null
   return kind
 }
 
@@ -150,7 +151,7 @@ export function startNotify() {
           pending.delete(s.id)
         }
         held.delete(s.id)
-        if (KIND[s.status] && stillDue(s.id)) pending.set(s.id, setTimeout(() => fire(s.id), QUIET_MS))
+        if (KIND[s.status] && stillDue(s.id, false)) pending.set(s.id, setTimeout(() => fire(s.id), QUIET_MS))
       }
       prev = now
     },

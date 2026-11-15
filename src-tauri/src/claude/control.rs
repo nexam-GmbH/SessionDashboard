@@ -16,10 +16,18 @@ use tauri::{AppHandle, Emitter};
 use super::discover::claude_bin;
 use super::remote::shell_quote;
 
+/// One session's process. Its stdin has a lock of its own, so a slow write (a big picture over a
+/// slow ssh link) never holds up the other sessions; `None` once it is stopping (writes fail
+/// instead of going to a process that will never read them).
 pub struct Proc {
-    stdin: ChildStdin,
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
     child: Child,
+    /// which start this is: the reader of an older process never removes a newer one
+    generation: u64,
+    remote: bool,
 }
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Default, Clone)]
 pub struct Procs(Arc<Mutex<HashMap<String, Proc>>>);
@@ -43,6 +51,10 @@ pub struct StartOpts {
     pub fork: bool,
     /// a fixed id for a new session
     pub session_id: Option<String>,
+    /// resume only up to this message (rewind the conversation, fork from a message)
+    pub resume_session_at: Option<String>,
+    /// the uuid of the first prompt (its record carries it: rewind and delivery checks find it)
+    pub prompt_uuid: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<String>,
@@ -70,6 +82,8 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     if procs.0.lock().unwrap().contains_key(&o.key) {
         return Err("already running".into());
     }
+    // pictures the API takes (anything else would fail this turn and every one after it)
+    let images: Vec<String> = o.images.iter().filter(|u| image_ok(u)).cloned().collect();
     let mut args: Vec<String> = [
         "-p",
         "--input-format",
@@ -97,6 +111,9 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     push("--append-system-prompt", &o.append_system_prompt);
     push("--name", &o.name);
     push("--resume", &o.resume);
+    if o.resume.is_some() {
+        push("--resume-session-at", &o.resume_session_at);
+    }
     push("--worktree", &o.worktree);
     push("--settings", &o.settings);
     // a new session, or a fork (which gets a new id): the id the app already shows it under
@@ -110,13 +127,20 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
         args.push("--add-dir".into());
         args.push(d.clone());
     }
+    // files you attach in the app are read from its attachments folder without a permission prompt
+    if o.host.is_none() {
+        let att = crate::sys::attachments_dir();
+        let _ = std::fs::create_dir_all(&att);
+        args.push("--add-dir".into());
+        args.push(att.to_string_lossy().to_string());
+    }
 
     let mut cmd = match &o.host {
         Some(host) => {
             // VPS: the same protocol over ssh; claude runs in the remote folder ("~/x" is relative
             // to the remote home)
             let dir = o.cwd.strip_prefix("~/").map(|rest| format!("\"$HOME\"/{}", shell_quote(rest))).unwrap_or_else(|| shell_quote(&o.cwd));
-            let script = format!("cd {dir} && exec env CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 claude {}", args.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "));
+            let script = format!("cd {dir} && exec env CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true claude {}", args.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "));
             super::remote::ssh_cmd(host, &script)
         }
         None => {
@@ -132,23 +156,27 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     // exact state from claude itself: idle / running / requires_action, also while background
     // subagents or shells keep working after a turn's result
     cmd.env("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1");
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot start claude: {e}"))?;
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
-    let mut stdin = child.stdin.take().ok_or("no stdin")?;
-
-    // the host introduces itself first; then the first prompt
-    writeln!(stdin, "{}", json!({"type": "control_request", "request_id": format!("init-{}", o.key), "request": {"subtype": "initialize", "hooks": null}})).map_err(|e| e.to_string())?;
-    if let Some(p) = o.prompt.as_ref().filter(|p| !p.trim().is_empty()) {
-        writeln!(stdin, "{}", user_message_with(p, &o.images)).map_err(|e| e.to_string())?;
-    }
-    stdin.flush().ok();
-    procs.0.lock().unwrap().insert(o.key.clone(), Proc { stdin, child });
+    // file snapshots per prompt (what the CLI keeps for /rewind): "Rewind code to here" can restore them
+    cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true");
+    // check and insert in one step: two starts of the same key can't both get through
+    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (stdout, stderr, stdin) = {
+        let mut map = procs.0.lock().unwrap();
+        if map.contains_key(&o.key) {
+            return Err("already running".into());
+        }
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot start claude: {e}"))?;
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        let stderr = child.stderr.take().ok_or("no stderr")?;
+        let stdin = Arc::new(Mutex::new(child.stdin.take()));
+        map.insert(o.key.clone(), Proc { stdin: stdin.clone(), child, generation, remote: o.host.is_some() });
+        (stdout, stderr, stdin)
+    };
 
     let err_tail = Arc::new(Mutex::new(Vec::<String>::new()));
     {
@@ -164,6 +192,7 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
         });
     }
     let key = o.key.clone();
+    let reader_procs = procs.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim().is_empty() {
@@ -172,44 +201,94 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
             let ev: Value = serde_json::from_str(&line).unwrap_or_else(|_| json!({"type": "raw", "text": line}));
             let _ = app.emit("claude-event", json!({"key": key, "event": ev}));
         }
-        let code = procs.0.lock().unwrap().remove(&key).and_then(|mut p| p.child.wait().ok()).and_then(|s| s.code());
+        // take this start's entry out under a short lock, then wait for the process outside it
+        let mine = {
+            let mut map = reader_procs.0.lock().unwrap();
+            match map.get(&key) {
+                Some(p) if p.generation == generation => map.remove(&key),
+                _ => None,
+            }
+        };
+        let code = mine.and_then(|mut p| p.child.wait().ok()).and_then(|s| s.code());
         let stderr_tail = err_tail.lock().unwrap().join("\n");
         let _ = app.emit("claude-event", json!({"key": key, "exit": {"code": code, "stderr": stderr_tail}}));
     });
+
+    // the readers run before anything is written: claude answering `initialize` with more than a
+    // pipe's worth never blocks the first prompt's write (and so the start)
+    let init = json!({"type": "control_request", "request_id": format!("init-{}", o.key), "request": {"subtype": "initialize", "hooks": null}});
+    let first = o.prompt.as_ref().filter(|p| !p.trim().is_empty()).map(|p| user_message_full(p, &images, o.prompt_uuid.as_deref()));
+    let mut guard = stdin.lock().unwrap();
+    if let Some(w) = guard.as_mut() {
+        writeln!(w, "{init}").map_err(|e| e.to_string())?;
+        if let Some(m) = first {
+            writeln!(w, "{m}").map_err(|e| e.to_string())?;
+        }
+        w.flush().ok();
+    }
     Ok(())
 }
 
-fn user_message(text: &str) -> Value {
-    user_message_with(text, &[])
+/// A picture the API accepts: png, jpeg, gif or webp, at most 5 MB.
+fn image_ok(url: &str) -> bool {
+    let Some((head, data)) = url.strip_prefix("data:").and_then(|u| u.split_once(";base64,")) else { return false };
+    matches!(head, "image/png" | "image/jpeg" | "image/gif" | "image/webp") && data.len() <= 5 * 1024 * 1024 * 4 / 3 + 8
 }
 
-/// A user message with pictures (data: URLs) as image blocks, the way Claude Code sends a pasted
-/// screenshot, then the text.
-fn user_message_with(text: &str, images: &[String]) -> Value {
+/// A user message as an SDK host sends it (pictures as image blocks, the way Claude Code sends a
+/// pasted screenshot, then the text): typed by a person (`origin: human`, which Claude Code's
+/// trust checks ask for), with its own uuid when given (its record in the transcript carries it).
+fn user_message_full(text: &str, images: &[String], uuid: Option<&str>) -> Value {
     let mut content: Vec<Value> = images
         .iter()
+        .filter(|u| image_ok(u))
         .filter_map(|u| {
             let (head, data) = u.strip_prefix("data:")?.split_once(";base64,")?;
             Some(json!({"type": "image", "source": {"type": "base64", "media_type": head, "data": data}}))
         })
         .collect();
     content.push(json!({"type": "text", "text": text}));
-    json!({"type": "user", "message": {"role": "user", "content": content}})
+    let mut m = json!({"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": null, "origin": {"kind": "human"}});
+    if let Some(u) = uuid.filter(|u| !u.is_empty()) {
+        m["uuid"] = Value::String(u.to_string());
+    }
+    m
 }
 
-pub fn send_with_images(procs: &Procs, key: &str, text: &str, images: &[String]) -> Result<(), String> {
-    write(procs, key, user_message_with(text, images))
+/// A message with its uuid (and pictures).
+pub fn send_full(procs: &Procs, key: &str, text: &str, images: &[String], uuid: Option<&str>) -> Result<(), String> {
+    write(procs, key, user_message_full(text, images, uuid))
+}
+
+/// Restore the files of a session to how they were before the prompt `uuid` (Claude Code's own
+/// file snapshots; `claude -p --resume <id> --rewind-files <uuid>`, nothing is sent to a model).
+pub fn rewind_files(cwd: &str, session_id: &str, uuid: &str, config_dir: Option<&str>) -> Result<String, String> {
+    let ok_id = |s: &str| !s.is_empty() && s.len() < 80 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !ok_id(session_id) || !ok_id(uuid) {
+        return Err("bad session or message id".into());
+    }
+    let mut c = crate::sys::command(claude_bin());
+    c.args(["-p", "--resume", session_id, "--rewind-files", uuid]).current_dir(crate::sys::expand(cwd));
+    if let Some(d) = config_dir.filter(|d| !d.is_empty()) {
+        c.env("CLAUDE_CONFIG_DIR", crate::sys::expand(d));
+    }
+    super::discover::clean_env(&mut c);
+    let o = crate::sys::output_timeout(&mut c, 60).ok_or("claude did not answer within a minute")?;
+    let out = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim().to_string();
+    if o.status.success() {
+        Ok(out)
+    } else {
+        Err(if out.is_empty() { format!("claude exited with {:?}", o.status.code()) } else { out })
+    }
 }
 
 fn write(procs: &Procs, key: &str, v: Value) -> Result<(), String> {
-    let mut map = procs.0.lock().unwrap();
-    let p = map.get_mut(key).ok_or("session is not running in the app")?;
-    writeln!(p.stdin, "{v}").map_err(|e| e.to_string())?;
-    p.stdin.flush().map_err(|e| e.to_string())
-}
-
-pub fn send(procs: &Procs, key: &str, text: &str) -> Result<(), String> {
-    write(procs, key, user_message(text))
+    // the map's lock only to find the session; the write holds this session's own lock
+    let stdin = procs.0.lock().unwrap().get(key).map(|p| p.stdin.clone()).ok_or("session is not running in the app")?;
+    let mut guard = stdin.lock().unwrap();
+    let w = guard.as_mut().ok_or("session is stopping")?;
+    writeln!(w, "{v}").map_err(|e| e.to_string())?;
+    w.flush().map_err(|e| e.to_string())
 }
 
 /// Answer a `can_use_tool` request: `response` is {behavior: "allow", updatedInput, updatedPermissions?}
@@ -238,12 +317,27 @@ fn term(pid: u32) {
 /// Stop a session the app runs: SIGTERM so claude closes its MCP servers and shells, SIGKILL only
 /// if it is still there after 3 s.
 pub fn stop(procs: &Procs, key: &str) -> Result<(), String> {
-    let pid = procs.0.lock().unwrap().get(key).map(|p| p.child.id());
-    let Some(pid) = pid else { return Ok(()) };
-    term(pid);
+    let found = procs.0.lock().unwrap().get(key).map(|p| (p.child.id(), p.stdin.clone(), p.remote));
+    let Some((pid, stdin, remote)) = found else { return Ok(()) };
+    // nothing more goes in (a message sent now fails instead of vanishing); a session on a server
+    // is told to stop its turn first and sees its input end, since a signal to the local ssh
+    // never reaches it
+    if let Ok(mut g) = stdin.lock() {
+        if remote {
+            if let Some(w) = g.as_mut() {
+                let _ = writeln!(w, "{}", json!({"type": "control_request", "request_id": format!("stop-{}", uuid::Uuid::new_v4()), "request": {"subtype": "interrupt"}}));
+                let _ = w.flush();
+            }
+        }
+        *g = None;
+    }
     let procs = procs.clone();
     let key = key.to_string();
     std::thread::spawn(move || {
+        if remote {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+        }
+        term(pid);
         std::thread::sleep(std::time::Duration::from_secs(3));
         if let Some(p) = procs.0.lock().unwrap().get_mut(&key) {
             if p.child.id() == pid && matches!(p.child.try_wait(), Ok(None)) {
@@ -309,4 +403,20 @@ pub fn takeover(pid: u32) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// Keep a file you attached (base64 from the prompt box) where Claude can read it; its full path.
+pub fn save_attachment(name: &str, data_b64: &str) -> Result<String, String> {
+    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let clean: String = base.chars().map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c }).collect();
+    let clean = if clean.trim().is_empty() || clean == "." || clean == ".." { "file".to_string() } else { clean };
+    let bytes = super::hooks::b64decode(data_b64);
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err("files over 64 MB are not attached".into());
+    }
+    let dir = crate::sys::attachments_dir().join(&uuid::Uuid::new_v4().to_string()[..8]);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(clean);
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }

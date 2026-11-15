@@ -9,7 +9,7 @@ import { getApp, setApp, useApp } from "@/store/app"
 import { selectNeedsYou } from "@/store/selectors"
 import { POPOUT, REAL } from "./mode"
 import { setHomeDir } from "@/lib/format"
-import { takeImages } from "@/features/composer/images"
+import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
 import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, type MapState } from "./mapTranscript"
@@ -30,6 +30,7 @@ interface Meta {
   startCwd?: string
   cwds?: string[]
   aiTitle?: string
+  customTitle?: string
   agentName?: string
   firstPrompt?: string
   lastPrompt?: string
@@ -85,7 +86,9 @@ const metas = new Map<ID, Meta>()
 let pidLive = new Map<ID, Live>()
 let bgLive = new Map<ID, Live>()
 /** sessions the app runs: key = session id */
-const owned = new Map<ID, { cwd: string; turnMsgId?: string; sending: boolean; host?: string; fresh?: boolean; state?: "idle" | "running" | "requires_action" }>()
+const owned = new Map<ID, { cwd: string; turnMsgId?: string; sending: boolean; host?: string; fresh?: boolean; state?: "idle" | "running" | "requires_action"; baseCost?: number; interrupting?: boolean }>()
+/** sessions the app could not start, or whose process failed: kept on screen with the reason (sync would drop a session with no transcript and no process) */
+const failed = new Map<ID, { cwd: string; message: string; seen?: boolean }>()
 /** records read when a chat opens (the newest ones) */
 const WINDOW = 1500
 const maps = new Map<ID, MapState>()
@@ -97,7 +100,7 @@ const loading = new Set<ID>()
 let home = ""
 
 const LS = "sd.real"
-type Persist = { seen: Record<ID, number>; archived: ID[]; firstRun: number; titles?: Record<ID, string> }
+type Persist = { seen: Record<ID, number>; archived: ID[]; firstRun: number; titles?: Record<ID, string>; pinned?: ID[] }
 function loadPersist(): Persist {
   try {
     const p = JSON.parse(localStorage.getItem(LS) ?? "null") as Persist | null
@@ -347,7 +350,8 @@ function mapMode(m?: string): PermissionMode {
 }
 
 function titleOf(meta?: Meta, live?: Live) {
-  const t = meta?.aiTitle || meta?.agentName || (live?.nameSource && live.nameSource !== "derived" ? live.name : undefined) || meta?.firstPrompt?.split("\n")[0]
+  // as Claude Code's /resume list: the name you gave it, then its own title, then what you asked
+  const t = meta?.customTitle || meta?.aiTitle || meta?.agentName || (live?.nameSource && live.nameSource !== "derived" ? live.name : undefined) || meta?.firstPrompt?.split("\n")[0]
   return (t || live?.name || "Session").slice(0, 120)
 }
 
@@ -382,6 +386,8 @@ function liveStatus(l: Live, meta?: Meta, prev?: Session): { status: SessionStat
   // idle: finished since you last looked?
   const seen = persist.seen[l.sessionId] ?? persist.firstRun
   const changed = (l.statusUpdatedAt ?? meta?.updatedMs ?? 0) > seen
+  // the chat on screen: you see it finish, nothing is "unseen"
+  if (getApp().route === `/session/${l.sessionId}`) return { status: "idle" }
   // finished and not looked at stays so until you look (the transcript scan may lag a poll behind)
   if (prev?.status === "done_unseen" && changed) return { status: "done_unseen" }
   if (prev?.status === "working" || (changed && meta?.endedTurn)) return { status: changed ? "done_unseen" : "idle" }
@@ -435,7 +441,7 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     createdAt: iso(e.createdMs ?? e.updatedMs),
     updatedAt: iso(e.updatedMs),
     lastViewedAt: persist.seen[e.id] ? iso(persist.seen[e.id]) : undefined,
-    pinned: false,
+    pinned: !!persist.pinned?.includes(e.id),
     archived: persist.archived.includes(e.id),
   }
 }
@@ -450,13 +456,16 @@ function buildSession(id: ID, prev?: Session): Session | null {
   const own = owned.get(id)
   // where it works now: the transcript knows (a session may cd into a repo); a live process
   // without transcript yet only knows where it started
-  const cwd = meta?.cwd ?? live?.cwd ?? own?.cwd
-  const startCwd = meta?.startCwd ?? live?.cwd ?? own?.cwd
+  const fail = own ? undefined : failed.get(id)
+  const cwd = meta?.cwd ?? live?.cwd ?? own?.cwd ?? fail?.cwd
+  const startCwd = meta?.startCwd ?? live?.cwd ?? own?.cwd ?? fail?.cwd
   if (!cwd) return null
   const repoId = repoIdFor(cwd)
   const control: Session["control"] = own ? "owned" : live ? "observed" : "history"
   let status: SessionStatus = "stopped"
   let waitingFor: Session["waitingFor"]
+  let hookActivity: string | undefined
+  let hookError: string | undefined
   if (own && prev) {
     // owned sessions: the event stream decides
     status = prev.status
@@ -467,14 +476,23 @@ function buildSession(id: ID, prev?: Session): Session | null {
     waitingFor = r.waiting
     // the hook knows more (what it waits for, what it runs) when it spoke after the pid file
     const h = hookState.get(id)
-    if (h && h.at >= (live.statusUpdatedAt ?? 0) - 1500) {
+    // the pid file saying "busy" after the hook spoke wins (a prompt approved in the terminal at once)
+    const pidNewerBusy = r.status === "working" && (live.statusUpdatedAt ?? 0) > (h?.at ?? 0)
+    if (h && h.at >= (live.statusUpdatedAt ?? 0) - 1500 && !pidNewerBusy) {
       // the terminal shows a prompt (pid file "blocked"): a hook's "working" can't be right
       const blocked = r.status === "waiting_input"
       if (h.status === "waiting_permission" || h.status === "waiting_input" || (h.status === "working" && !blocked) || h.status === "error") {
         status = h.status
         waitingFor = h.waitingFor
+        hookActivity = h.activity
+        hookError = h.errorMessage
       }
     }
+  }
+  // could not start, or its process failed: says so until you looked at it
+  if (fail && !live) {
+    status = fail.seen ? "stopped" : "error"
+    waitingFor = undefined
   }
   const updated = Math.max(meta?.updatedMs ?? 0, live?.statusUpdatedAt ?? 0)
   const working = status === "working" || status === "starting"
@@ -500,7 +518,8 @@ function buildSession(id: ID, prev?: Session): Session | null {
     statusObservedAt: prev && prev.status === status ? prev.statusObservedAt : iso(live?.statusUpdatedAt ?? updated),
     waitingFor,
     // where it is: what it does now, or the last thing it said
-    activity: own && prev?.activity && working ? prev.activity : working ? (meta?.lastActivity ?? "Working") : (meta?.lastText ?? meta?.lastPrompt),
+    activity: own && prev?.activity && working ? prev.activity : working ? (hookActivity ?? meta?.lastActivity ?? "Working") : fail ? fail.message.split("\n")[0].slice(0, 160) : (meta?.lastText ?? meta?.lastPrompt),
+    errorMessage: fail ? fail.message.slice(0, 200) : status === "error" ? (own ? prev?.errorMessage : hookError) : undefined,
     lastPrompt: meta?.lastPrompt,
     lastText: meta?.lastText,
     editedPaths: meta?.edited && prev?.editedPaths && sameList(prev.editedPaths, meta.edited) ? prev.editedPaths : meta?.edited,
@@ -517,10 +536,11 @@ function buildSession(id: ID, prev?: Session): Session | null {
     diff: { filesChanged: prev?.diff.filesChanged ?? 0, linesAdded: meta?.linesAdded ?? 0, linesRemoved: meta?.linesRemoved ?? 0, unpushed: 0 },
     backgroundTasks: 0,
     handle: live?.name ?? id.slice(0, 8),
-    createdAt: meta?.createdAt ?? iso(live?.startedAt),
-    updatedAt: iso(updated),
+    // a new session without a transcript yet keeps the dates it got (not 1970, not "now" on every sync)
+    createdAt: meta?.createdAt ?? prev?.createdAt ?? iso(live?.startedAt),
+    updatedAt: updated ? iso(updated) : (prev?.updatedAt ?? iso()),
     lastViewedAt: persist.seen[id] ? iso(persist.seen[id]) : undefined,
-    pinned: false,
+    pinned: !!persist.pinned?.includes(id),
     archived: persist.archived.includes(id),
   }
 }
@@ -590,7 +610,7 @@ function continuedSessions(): Set<ID> {
 /** Rebuild sessions and projects from what was discovered; one store update, none when nothing changed. */
 function sync() {
   const st = getApp()
-  const ids = new Set<ID>([...metas.keys(), ...pidLive.keys(), ...bgLive.keys(), ...owned.keys()])
+  const ids = new Set<ID>([...metas.keys(), ...pidLive.keys(), ...bgLive.keys(), ...owned.keys(), ...failed.keys()])
   for (const m of extByMachine.values()) for (const id of m.keys()) ids.add(id)
   const sessions: Record<ID, Session> = {}
   const superseded = continuedSessions()
@@ -618,7 +638,9 @@ function sync() {
     const repoId = placeSession(s, prev)
     const hw = repoId.startsWith("home:")
     // not a repo (a plain folder like ~): not shown, unless the app runs it
-    if (!hw && !s.machine && !owned.has(id) && !inScope(s.cwd, meta)) continue
+    // a plain folder (like ~): not on the overview or in the list; a finished one still is in
+    // History and in search, so an old chat there can be found and continued
+    if (!hw && !s.machine && !owned.has(id) && !failed.has(id) && !inScope(s.cwd, meta) && s.control !== "history") continue
     // one column per repository, whatever checkout, worktree or machine it runs in
 
     if (s.repoId !== repoId) s = { ...s, repoId, worktreeId: `${repoId}::${s.cwd}` }
@@ -769,6 +791,9 @@ async function pollAgents() {
 async function pollScan() {
   try {
     const list = await invoke<Meta[]>("claude_scan")
+    // a transcript deleted (Claude Code's cleanup, an account removed) leaves the list
+    const now = new Set(list.map((m) => m.sessionId))
+    for (const id of [...metas.keys()]) if (!now.has(id)) metas.delete(id)
     for (const m of list) metas.set(m.sessionId, m)
   } catch (e) {
     console.warn("claude_scan", e)
@@ -836,6 +861,9 @@ function isRunning(id: ID) {
 }
 
 function patchTranscript(id: ID, f: (t: Transcript, m: MapState) => Transcript) {
+  // a chat not read yet whose file exists: read its history too (what is patched in now is merged
+  // on top when it arrives), so it never opens with only the newest line
+  if (!getApp().transcripts[id] && metas.has(id) && !loading.has(id) && placeOf(id).kind === "local") ensureRealTranscript(id)
   const m = maps.get(id) ?? newMapState()
   maps.set(id, m)
   const had = getApp().transcripts[id]
@@ -1007,8 +1035,13 @@ export function ensureRealTranscript(id: ID) {
         for (const iid of cur.order) {
           const it = cur.items[iid]
           if (it?.type === "user_message" && iid.startsWith("pending:") && !recent.has(it.text.trim())) next = addPendingUser(next, m, it.text, it.attachments)
+          // the app's own notes (an error, "could not type into its terminal") are not in the file
+          else if (it?.type === "notice" && (iid.startsWith("notice:") || iid.startsWith("note-")) && !next.items[iid])
+            next = { ...next, items: { ...next.items, [iid]: { ...it, turnId: next.turns.at(-1)?.id ?? it.turnId } }, order: [...next.order, iid], turns: next.turns.length ? [...next.turns.slice(0, -1), { ...next.turns.at(-1)!, itemIds: [...next.turns.at(-1)!.itemIds, iid] }] : next.turns }
         }
       }
+      // prompts still waiting for an answer show on their tool call again
+      for (const [, t] of toolOf) if (t.key === id && t.toolUseId) next = markAwaiting(next, m, t.toolUseId, true)
       maps.set(id, m)
       setApp((s) => ({ transcripts: { ...s.transcripts, [id]: next } }))
     })
@@ -1016,9 +1049,59 @@ export function ensureRealTranscript(id: ID) {
     .finally(() => loading.delete(id))
 }
 
+/** A search hit: a session whose conversation has every word, with its newest matching message. */
+export interface SearchHit {
+  sessionId: ID
+  uuid: string
+  role: "user" | "assistant"
+  at: string
+  before: string
+  matched: string
+  after: string
+  count: number
+}
+
+/** Every session's conversation, searched by the backend's index (what you typed and what Claude answered). */
+export function realSearch(query: string, limit = 40): Promise<SearchHit[]> {
+  return invoke<SearchHit[]>("search_sessions", { query, limit }).catch(() => [])
+}
+
+/** The ids of a session's messages that contain every word (also in the part of a long chat not loaded). */
+export function realSearchIn(id: ID, query: string): Promise<string[]> {
+  return invoke<string[]>("search_in_session", { sessionId: id, query }).catch(() => [])
+}
+
+/**
+ * Read a chat back far enough to show message `itemId` (a search hit in an old part of a long
+ * session). Resolves true when the message is on screen afterwards.
+ */
+export async function realLoadTo(id: ID, itemId: string): Promise<boolean> {
+  const has = () => !!getApp().transcripts[id]?.items[itemId]
+  if (has()) return true
+  const meta = metas.get(id)
+  if (!meta) return false
+  try {
+    const chunk = await invoke<Chunk>("claude_transcript_to", { path: meta.path, uuid: itemId, max: WINDOW })
+    offsets.set(id, chunk.offset)
+    tips.set(id, chunk.tip)
+    const m = newMapState()
+    const next = applyRecords(emptyTranscript(id), m, chunk.records, { running: isRunning(id) })
+    maps.set(id, m)
+    setApp((s) => ({ transcripts: { ...s.transcripts, [id]: next } }))
+  } catch (e) {
+    console.warn("claude_transcript_to", e)
+  }
+  return has()
+}
+
 export function realMarkSeen(id: ID) {
   persist.seen[id] = Date.now()
   save()
+  const f = failed.get(id)
+  if (f && !f.seen) {
+    f.seen = true
+    requestSync()
+  }
 }
 
 /**
@@ -1032,6 +1115,16 @@ export function realRename(id: ID, title: string) {
   else delete persist.titles[id]
   save()
   if (t && owned.has(id)) invoke("claude_control", { key: id, request: { subtype: "rename_session", title: t, source: "host" } }).catch(() => undefined)
+  sync()
+}
+
+/** Pinned sessions stay on top of the list (kept across restarts). */
+export function realPin(id: ID, on: boolean) {
+  const set = new Set(persist.pinned ?? [])
+  if (on) set.add(id)
+  else set.delete(id)
+  persist.pinned = [...set]
+  save()
   sync()
 }
 
@@ -1070,6 +1163,8 @@ interface StartOpts {
   fastMode?: boolean
   ultracode?: boolean
   outputStyle?: string
+  /** resume only up to this message (a rewound conversation, a fork from a message) */
+  resumeSessionAt?: string
 }
 
 export function homeDir() {
@@ -1080,9 +1175,17 @@ export function homeDir() {
 export function realStart(opts: StartOpts): ID {
   // a session of another account is found (and continued) only in that account's folder
   if (opts.resume && opts.configDir === undefined) opts = { ...opts, configDir: getApp().sessions[opts.resume]?.configDir }
+  // already running here (a second Resume, restore after a resume): the prompt goes to it, no second process
+  if (opts.resume && !opts.fork && owned.has(opts.resume)) {
+    if (opts.prompt) realSend(opts.resume, opts.prompt)
+    return opts.resume
+  }
   const id = opts.resume && !opts.fork ? opts.resume : crypto.randomUUID()
   const host = opts.machine && opts.machine !== CLOUD ? opts.machine : undefined
-  owned.set(id, { cwd: opts.cwd, sending: false, host, fresh: !opts.resume })
+  failed.delete(id)
+  // total_cost_usd counts this process only: a resumed session adds it to what it cost before
+  const baseCost = opts.resume && !opts.fork ? (getApp().sessions[id]?.usage.costUsd ?? 0) : 0
+  owned.set(id, { cwd: opts.cwd, sending: false, host, fresh: !opts.resume || !!opts.fork, baseCost })
   if (host) {
     // shows up under the machine's project at once (the poll there confirms it)
     const map = extByMachine.get(host) ?? new Map<ID, ExtSession>()
@@ -1112,9 +1215,10 @@ export function realStart(opts: StartOpts): ID {
     statusVersion: s.statusVersion + 1,
   }))
   sync()
+  const promptUuid = opts.prompt ? crypto.randomUUID() : undefined
   if (opts.prompt && !opts.promptShown) {
     if (!getApp().transcripts[id] && metas.has(id)) ensureRealTranscript(id)
-    patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!, undefined, opts.images))
+    patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!, undefined, opts.images, promptUuid))
   }
   const flags = settingsOf(opts)
   const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, ...rest } = opts
@@ -1123,9 +1227,14 @@ export function realStart(opts: StartOpts): ID {
   void _u
   void _o
   void _m
-  invoke("claude_start", { opts: { key: id, sessionId: opts.resume ? undefined : id, ...rest, host, settings: flags ? JSON.stringify(flags) : undefined } }).catch((e) => {
+  // a new session and a fork run under the id the app shows them by (a fork gets a new one)
+  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, promptUuid, host, settings: flags ? JSON.stringify(flags) : undefined } }).catch((e) => {
+    // "already running": it is, keep listening to it
+    if (/already running/i.test(String(e))) return
     owned.delete(id)
+    failed.set(id, { cwd: opts.cwd, message: `Could not start claude: ${String(e)}` })
     noticeError(id, `Could not start claude: ${String(e)}`)
+    sync()
   })
   return id
 }
@@ -1155,7 +1264,7 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
   if (!s) return
   // pasted pictures go as images; other files by name
   const { images, rest } = takeImages(attachments)
-  const body = rest.length ? `${text}\n\n${rest.map((a) => `[attached: ${a}]`).join("\n")}` : text
+  const body = `${text}${attachmentsText(rest)}`
   if (s.machine === CLOUD) {
     patchTranscript(id, (t, m) => addPendingUser(t, m, body, attachments))
     setStatusLocal(id, "working", { activity: "Sending to claude.ai", waitingFor: undefined })
@@ -1169,12 +1278,13 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
     realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt: body, images, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
     return
   }
-  patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images))
+  const uuid = crypto.randomUUID()
+  patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images, uuid))
   // mid-turn it goes in at once too: claude reads it after its current step (steering), so what it
   // is doing right now stays on screen
   const busy = s.status === "working" || s.status === "starting"
   setStatusLocal(id, "working", busy ? { waitingFor: undefined } : { activity: "Thinking", waitingFor: undefined })
-  invoke("claude_send", { key: id, text: body, images }).catch((e) => noticeError(id, String(e)))
+  invoke("claude_send", { key: id, text: body, images, uuid }).catch((e) => noticeError(id, String(e)))
 }
 
 /**
@@ -1207,8 +1317,89 @@ export async function realTakeOver(id: ID, prompt?: string, images?: string[]) {
   realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt, images, promptShown: true, model: s.model, effort: s.effort, permissionMode: s.permissionMode, fastMode: s.fastMode, ultracode: s.ultracode, outputStyle: s.outputStyle, machine: s.machine })
 }
 
-export function realInterrupt(id: ID) {
+/** The record uuid behind a chat item ("pending:<uuid>", "<uuid>:<block>"). */
+const recordOf = (itemId: string) => itemId.replace(/^pending:/, "").split(":")[0]
+
+/** The last record of the conversation before item `itemId` that a resume can stop at (an answer of Claude's). */
+function keptBefore(t: Transcript, itemId: string): string | undefined {
+  const at = t.order.indexOf(itemId)
+  for (let i = at - 1; i >= 0; i--) {
+    const it = t.items[t.order[i]]
+    if (it?.type === "agent_message" && !it.streaming && !it.id.startsWith("live:")) return recordOf(it.id)
+  }
+  return undefined
+}
+
+/** Wait until the app's process of a session has ended (at most `ms`). */
+async function stopAndWait(id: ID, ms = 6000) {
   if (!owned.has(id)) return
+  realStop(id)
+  const until = Date.now() + ms
+  while (owned.has(id) && Date.now() < until) await new Promise((r) => setTimeout(r, 100))
+}
+
+/**
+ * Rewind to before one of your prompts (Claude Code's /rewind): the files back to how they were
+ * then (its own snapshots), and/or the conversation (the session goes on from the answer before
+ * that prompt; the prompt comes back into the box). Returns what happened, for the notice.
+ */
+export async function realRewind(id: ID, promptItemId: ID, scope: "both" | "conversation" | "code"): Promise<void> {
+  const s = getApp().sessions[id]
+  const t = getApp().transcripts[id]
+  if (!s || !t) return
+  const uuid = recordOf(promptItemId)
+  const prompt = t.items[promptItemId]
+  const promptText = prompt?.type === "user_message" ? prompt.text : ""
+  if (scope !== "conversation") {
+    try {
+      // the session's own process is stopped first (two writers on one session's files never)
+      if (owned.has(id) && isRunning(id)) realInterrupt(id)
+      const out = await invoke<string>("claude_rewind_files", { cwd: s.startCwd ?? s.cwd, sessionId: id, uuid, configDir: s.configDir })
+      noticeInfo(id, `Files restored to before “${promptText.slice(0, 60)}”${out ? ` · ${out.split("\n").filter(Boolean).slice(-1)[0].slice(0, 160)}` : ""}`)
+    } catch (e) {
+      noticeError(id, `Could not restore the files: ${String(e)}`, false)
+      if (scope === "code") return
+    }
+  }
+  if (scope === "code") return
+  const at = keptBefore(t, promptItemId)
+  await stopAndWait(id)
+  if (!at) {
+    // the very first prompt: nothing to keep, a new session in the same folder with the prompt in its box
+    const nid = realStart({ cwd: s.startCwd ?? s.cwd, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine, configDir: s.configDir })
+    void import("@/features/session-view/sessionStore").then((m) => m.setDraft(nid, { text: promptText, attachments: [] }))
+    void import("@/store/actions").then((a) => a.openSession(nid))
+    return
+  }
+  // the chat shows the conversation up to there at once; the file follows when you send the next message
+  const index = t.order.indexOf(promptItemId)
+  const gone = new Set(t.order.slice(index))
+  const turns = t.turns.filter((x) => !x.itemIds.some((i) => gone.has(i)) || x.itemIds.some((i) => !gone.has(i))).map((x) => ({ ...x, itemIds: x.itemIds.filter((i) => !gone.has(i)) })).filter((x) => x.itemIds.length)
+  const items = { ...t.items }
+  for (const g of gone) delete items[g]
+  setApp((st) => ({ transcripts: { ...st.transcripts, [id]: { ...t, items, order: t.order.slice(0, index), turns, liveItemId: undefined } } }))
+  realStart({ cwd: s.startCwd ?? s.cwd, resume: id, resumeSessionAt: at, model: s.model, effort: s.effort, permissionMode: s.permissionMode, fastMode: s.fastMode, ultracode: s.ultracode, outputStyle: s.outputStyle, machine: s.machine })
+  void import("@/features/session-view/sessionStore").then((m) => m.setUiValue(`prefill:${id}`, { n: Date.now(), text: promptText }))
+}
+
+/** "Fork from here": a new session with the conversation up to before this prompt, the prompt in its box. */
+export function realForkAt(id: ID, promptItemId: ID): ID | undefined {
+  const s = getApp().sessions[id]
+  const t = getApp().transcripts[id]
+  if (!s || !t) return
+  const prompt = t.items[promptItemId]
+  const text = prompt?.type === "user_message" ? prompt.text : ""
+  const at = keptBefore(t, promptItemId)
+  const opts = { cwd: s.startCwd ?? s.cwd, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine, configDir: s.configDir }
+  const nid = at ? realStart({ ...opts, resume: id, fork: true, resumeSessionAt: at, name: `${s.title.replace(/ \(copy\)$/, "")} (copy)` }) : realStart(opts)
+  void import("@/features/session-view/sessionStore").then((m) => m.setDraft(nid, { text, attachments: [] }))
+  return nid
+}
+
+export function realInterrupt(id: ID) {
+  const own = owned.get(id)
+  if (!own) return
+  own.interrupting = true
   invoke("claude_control", { key: id, request: { subtype: "interrupt" } }).catch(() => undefined)
 }
 
@@ -1268,6 +1459,8 @@ interface Elicitation {
  * in the chat (run the step in the terminal instead: /mcp).
  */
 function onElicitation(key: ID, requestId: string, e: Elicitation) {
+  // every window hears the event; the main one answers (else the page opens twice)
+  if (POPOUT) return
   if (e.mode === "url" && e.url) {
     void import("@tauri-apps/plugin-opener").then((o) => o.openUrl(e.url!)).catch(() => undefined)
     invoke("claude_respond", { key, requestId, response: { action: "accept" } }).catch(() => undefined)
@@ -1286,7 +1479,7 @@ export function realNotice(id: ID, text: string) {
 }
 
 function noticeInfo(id: ID, text: string) {
-  patchTranscript(id, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${Date.now()}`, timestamp: new Date().toISOString() }], { running: isRunning(id) }))
+  patchTranscript(id, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${crypto.randomUUID()}`, timestamp: new Date().toISOString() }], { running: isRunning(id) }))
 }
 
 function onContextUsage(key: ID, resp: { categories?: { name?: string; tokens?: number; kind?: string; isDeferred?: boolean }[]; totalTokens?: number; maxTokens?: number; percentage?: number }) {
@@ -1316,6 +1509,10 @@ interface CanUseTool {
   description?: string
   permission_suggestions?: unknown[]
   tool_use_id?: string
+  /** Claude Code says not to offer "always allow" (the rule would not cover this call again) */
+  suppress_always_allow_rule?: boolean
+  blocked_path?: string
+  display_name?: string
 }
 const toolOf = new Map<ID, { key: ID; input: Record<string, unknown>; suggestions?: unknown[]; toolUseId?: string }>()
 
@@ -1347,9 +1544,9 @@ function buildRequest(key: ID, requestId: string, r: CanUseTool): { req: Pending
     waiting = { kind: "plan", summary: "Plan ready for review", requestId }
   } else {
     const cmd = typeof r.input.command === "string" ? r.input.command : undefined
-    const path = typeof r.input.file_path === "string" ? r.input.file_path : undefined
+    const path = typeof r.input.file_path === "string" ? r.input.file_path : typeof r.input.notebook_path === "string" ? r.input.notebook_path : typeof r.input.url === "string" ? r.input.url : r.blocked_path
     const options: PermissionOption[] = [{ id: "allow-once", name: "Yes", kind: "allow_once" }]
-    if (r.permission_suggestions?.length) options.push({ id: "allow-always", name: "Yes, and don't ask again", kind: "allow_always" })
+    if (r.permission_suggestions?.length && !r.suppress_always_allow_rule) options.push({ id: "allow-always", name: "Yes, and don't ask again", kind: "allow_always" })
     options.push({ id: "reject", name: "No, and tell Claude what to do differently", kind: "reject_once" })
     req = {
       type: "permission",
@@ -1358,6 +1555,8 @@ function buildRequest(key: ID, requestId: string, r: CanUseTool): { req: Pending
       toolCallId: r.tool_use_id,
       toolName: r.tool_name,
       title: r.description ? `${r.tool_name}: ${r.description}` : r.tool_name,
+      // what Claude says the call does ("Print hello with Python"): the card asks with it
+      description: typeof r.input.description === "string" && r.input.description.trim() ? r.input.description.trim() : r.description,
       subject: cmd ? { type: "command", command: cmd, cwd: getApp().sessions[key]?.cwd ?? "" } : { type: "tool_call", path },
       options,
       state: "pending",
@@ -1468,7 +1667,39 @@ function settleLocal(requestId: string) {
     return req ? { requests: { ...s.requests, [requestId]: { ...req, state: req.type === "question" ? "answered" : "selected" } as PendingRequest } } : s
   })
   if (t.toolUseId) patchTranscript(t.key, (tr, m) => markAwaiting(tr, m, t.toolUseId!, false))
-  setStatusLocal(t.key, "working", { waitingFor: undefined })
+  // another prompt of this session still waits (parallel subagents): it still needs you
+  const next = nextPending(t.key)
+  if (next) setStatusLocal(t.key, next.status, { waitingFor: next.waiting })
+  else setStatusLocal(t.key, "working", { waitingFor: undefined })
+}
+
+/** The oldest prompt of this session still waiting for an answer, as status and summary. */
+function nextPending(key: ID): { status: SessionStatus; waiting: Session["waitingFor"] } | undefined {
+  for (const [rid, t] of toolOf) {
+    if (t.key !== key) continue
+    const req = getApp().requests[rid]
+    if (!req || req.state !== "pending") continue
+    const r = buildRequest(key, rid, { subtype: "can_use_tool", tool_name: req.type === "question" ? "AskUserQuestion" : req.type === "plan" ? "ExitPlanMode" : req.toolName, input: t.input, permission_suggestions: t.suggestions })
+    return { status: r.status, waiting: r.waiting }
+  }
+  return undefined
+}
+
+/** The process ended or Claude withdrew its prompts: they can't be answered any more. */
+function cancelRequests(key: ID, only?: string) {
+  const ids: string[] = []
+  for (const [rid, t] of toolOf) if (t.key === key && (!only || rid === only)) ids.push(rid)
+  if (!ids.length) return
+  for (const rid of ids) {
+    const t = toolOf.get(rid)
+    toolOf.delete(rid)
+    if (t?.toolUseId) patchTranscript(key, (tr, m) => markAwaiting(tr, m, t.toolUseId!, false))
+  }
+  setApp((s) => {
+    const requests = { ...s.requests }
+    for (const rid of ids) if (requests[rid]?.state === "pending") requests[rid] = { ...requests[rid], state: "cancelled" } as PendingRequest
+    return { requests, statusVersion: s.statusVersion + 1 }
+  })
 }
 
 const planAllow = new Map<ID, string[]>()
@@ -1482,7 +1713,8 @@ export function setPlanAllow(requestId: ID, rules: string[]) {
 export function realResolve(requestId: ID, optionId: string, feedback?: string): boolean {
   const o = offerById.get(requestId)
   if (o) {
-    if (optionId === "reject" || optionId === "keep-planning") return answerOffer(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this.") })
+    // a plain No stops Claude and waits for you (as in the terminal); with words, it goes on with them
+    if (optionId === "reject" || optionId === "keep-planning") return answerOffer(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), ...(feedback?.trim() || optionId === "keep-planning" ? {} : { interrupt: true }) })
     if (optionId === "allow-always") return answerOffer(requestId, { behavior: "allow", updatedPermissions: o.suggestions ?? [] })
     const extra = planAllow.get(requestId)
     planAllow.delete(requestId)
@@ -1492,7 +1724,12 @@ export function realResolve(requestId: ID, optionId: string, feedback?: string):
   const t = toolOf.get(requestId)
   if (!t) return false
   if (optionId === "reject" || optionId === "keep-planning") {
-    respond(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this.") })
+    const stop = !feedback?.trim() && optionId === "reject" && getApp().requests[requestId]?.type === "permission"
+    respond(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), ...(stop ? { interrupt: true } : {}) })
+    if (stop) {
+      const own = owned.get(t.key)
+      if (own) own.interrupting = true
+    }
     return true
   }
   if (optionId === "allow-always") {
@@ -1502,8 +1739,11 @@ export function realResolve(requestId: ID, optionId: string, feedback?: string):
   // a plan approved with its checks allowed: session-only rules, gone when the session ends
   const extra = planAllow.get(requestId)
   planAllow.delete(requestId)
-  const rules = (optionId === "approve-accept" || optionId === "approve-manual") && extra?.length ? [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] : undefined
-  respond(requestId, { behavior: "allow", updatedInput: t.input, ...(rules ? { updatedPermissions: rules } : {}) })
+  const approve = optionId === "approve-accept" || optionId === "approve-manual"
+  const rules: Record<string, unknown>[] = approve && extra?.length ? [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] : []
+  // the mode goes with the approval itself, so Claude's first edits already run in it
+  if (approve) rules.push({ type: "setMode", mode: optionId === "approve-accept" ? "acceptEdits" : "default", destination: "session" })
+  respond(requestId, { behavior: "allow", updatedInput: t.input, ...(rules.length ? { updatedPermissions: rules } : {}) })
   if (optionId === "approve-accept" || optionId === "approve-manual") {
     const mode: PermissionMode = optionId === "approve-accept" ? "acceptEdits" : "default"
     realSettings(t.key, { permissionMode: mode })
@@ -1548,17 +1788,26 @@ function onEvent({ key, event, exit }: EventPayload) {
   if (deltas.size && event?.type !== "stream_event") flushDeltas()
   const own = owned.get(key)
   if (exit) {
+    const cwd = own?.cwd ?? getApp().sessions[key]?.cwd ?? ""
     owned.delete(key)
-    const failed = exit.code !== 0 && exit.code !== null
-    patchTranscript(key, (t, m) => endTurn(t, m, failed))
-    if (failed) noticeError(key, exit.stderr.split("\n").slice(-4).join("\n") || `claude exited with code ${exit.code}`)
-    else setStatusLocal(key, "idle")
+    cancelRequests(key)
+    // 143 / 130: stopped on purpose (SIGTERM, Ctrl+C), not a failure
+    const bad = exit.code !== 0 && exit.code !== null && exit.code !== 143 && exit.code !== 130 && !own?.interrupting
+    patchTranscript(key, (t, m) => endTurn(t, m, bad))
+    if (bad) {
+      const message = exit.stderr.split("\n").filter(Boolean).slice(-4).join("\n") || `claude exited with code ${exit.code}`
+      // kept until you look at it or start it again (the next sync would rebuild it as "stopped")
+      failed.set(key, { cwd, message })
+      noticeError(key, message)
+    } else setStatusLocal(key, "idle", { waitingFor: undefined })
     sync()
     return
   }
   if (!event || !own) return
   switch (event.type) {
     case "stream_event": {
+      // a subagent's streamed text belongs to its Task call, not to the main chat's live message
+      if (event.parent_tool_use_id) break
       const ev = event.event as { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string }; content_block?: { type?: string } } | undefined
       // the live line says "thinking" while Claude thinks
       if (ev?.type === "content_block_start") {
@@ -1571,10 +1820,29 @@ function onEvent({ key, event, exit }: EventPayload) {
     }
     case "assistant":
     case "user": {
-      patchTranscript(key, (t, m) => applyRecords(t, m, [event], { running: true }))
       const content = (event.message as { content?: { type?: string; name?: string; input?: Record<string, unknown> }[] } | undefined)?.content
       const tool = Array.isArray(content) ? content.find((c) => c.type === "tool_use") : undefined
-      if (tool) setStatusLocal(key, "working", { activity: activityOf(tool.name ?? "tool", tool.input ?? {}) })
+      // a subagent's own messages (its prompt, its steps): they live in its own transcript; here
+      // they only say what it is doing now
+      if (event.parent_tool_use_id) {
+        if (tool && !nextPending(key)) setStatusLocal(key, getApp().sessions[key]?.status === "starting" ? "working" : (getApp().sessions[key]?.status ?? "working"), { activity: activityOf(tool.name ?? "tool", tool.input ?? {}) })
+        break
+      }
+      patchTranscript(key, (t, m) => applyRecords(t, m, [event], { running: true }))
+      if (tool) {
+        // a prompt still waiting for you stays in front (the next block may come while it waits)
+        if (nextPending(key)) setStatusLocal(key, getApp().sessions[key]?.status ?? "waiting_permission", { activity: activityOf(tool.name ?? "tool", tool.input ?? {}) })
+        else setStatusLocal(key, "working", { activity: activityOf(tool.name ?? "tool", tool.input ?? {}) })
+      }
+      break
+    }
+    case "control_cancel_request": {
+      // Claude withdrew a prompt (interrupt, timeout)
+      cancelRequests(key, String(event.request_id ?? ""))
+      const next = nextPending(key)
+      const cur = getApp().sessions[key]?.status
+      if (next) setStatusLocal(key, next.status, { waitingFor: next.waiting })
+      else if (cur === "waiting_permission" || cur === "waiting_input") setStatusLocal(key, "working", { waitingFor: undefined })
       break
     }
     case "control_request": {
@@ -1584,9 +1852,26 @@ function onEvent({ key, event, exit }: EventPayload) {
       break
     }
     case "system": {
+      // the conversation was compacted: the divider shows at once (the file is read only on reopen)
+      if (event.subtype === "compact_boundary") patchTranscript(key, (t, m) => applyRecords(t, m, [event], { running: true }))
       // exact state (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS): a turn's result can come while
       // background subagents or shells still work; "idle" is when it is really done
       // the commands that need Claude Code's own terminal UI, as this claude reports them
+      // what a slash command printed (/cost, /usage, /context…) and Claude Code's own warnings
+      if ((event.subtype === "local_command_output" || event.subtype === "informational") && typeof event.content === "string" && event.content.trim()) {
+        // terminal colours out (ESC [ … m)
+        const text = event.content.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "").trim().slice(0, 2000)
+        patchTranscript(key, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${String(event.uuid ?? crypto.randomUUID())}`, timestamp: new Date().toISOString() }], { running: true }))
+      }
+      // Claude Code changed the permission mode itself (left plan mode): the picker follows
+      if (event.subtype === "status" && typeof event.permissionMode === "string") {
+        const mode = mapMode(event.permissionMode)
+        setApp((st) => {
+          const cur = st.sessions[key]
+          if (!cur || cur.permissionMode === mode) return st
+          return { sessions: { ...st.sessions, [key]: { ...cur, permissionMode: mode } } }
+        })
+      }
       if (event.subtype === "init") {
         void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
         // MCP servers of yours that did not connect: one line, once per session. The claude.ai
@@ -1620,11 +1905,14 @@ function onEvent({ key, event, exit }: EventPayload) {
       break
     }
     case "result": {
-      const failed = event.subtype !== "success" && event.is_error === true
+      // the turn you stopped ends with an error result: that is not a failure
+      // an API error ends as subtype "success" with is_error; error subtypes carry their text in errors[]
+      const failed = (event.is_error === true || (typeof event.subtype === "string" && event.subtype !== "success")) && !own.interrupting
+      own.interrupting = false
       patchTranscript(key, (t, m) => endTurn(t, m, failed))
       const onScreen = getApp().route === `/session/${key}`
       // total_cost_usd is already this process's running total (stream-json): take it, don't add it
-      const cost = typeof event.total_cost_usd === "number" ? event.total_cost_usd : undefined
+      const cost = typeof event.total_cost_usd === "number" ? event.total_cost_usd + (own.baseCost ?? 0) : undefined
       if (cost !== undefined)
         setApp((s) => {
           const prev = s.sessions[key]
@@ -1633,8 +1921,12 @@ function onEvent({ key, event, exit }: EventPayload) {
         })
       // background work still running (state events say "running"): it is not done yet
       // a failed turn says why (a usage limit: "You've hit your limit · resets 4pm")
-      const why = failed && typeof event.result === "string" ? { errorMessage: event.result.slice(0, 200) } : {}
-      if (failed || own.state !== "running") setStatusLocal(key, failed ? "error" : onScreen ? "idle" : "done_unseen", { waitingFor: undefined, activity: undefined, ...why })
+      const errText = typeof event.result === "string" && event.result ? event.result : Array.isArray(event.errors) ? (event.errors as unknown[]).map(String).join("\n") : ""
+      const why = failed && errText ? { errorMessage: errText.slice(0, 200) } : {}
+      // a prompt still open (a background subagent asks) keeps the session waiting for you
+      const open = nextPending(key)
+      if (open) setStatusLocal(key, open.status, { waitingFor: open.waiting })
+      else if (failed || own.state !== "running") setStatusLocal(key, failed ? "error" : onScreen ? "idle" : "done_unseen", { waitingFor: undefined, activity: undefined, ...why })
       askContext(key)
       break
     }
@@ -1718,7 +2010,15 @@ export async function startReal() {
   onMovedOn(sessionMovedOn)
   void startHooks()
   await listen<{ id: string; event: { session_id: string; agent_id?: string; tool_name: string; tool_input: Record<string, unknown>; permission_suggestions?: unknown[] }; at: number }>("hook-permission", (e) => onOffer(e.payload))
-  await listen<{ id: string; by: string }>("hook-permission-done", (e) => dropOffer(e.payload.id, false))
+  await listen<{ id: string; by: string }>("hook-permission-done", (e) => {
+    const o = offerById.get(e.payload.id)
+    dropOffer(e.payload.id, false)
+    // answered in the terminal: it works again (the hook's "needs permission" is over)
+    if (o && e.payload.by === "terminal" && !offers.has(o.sessionId)) {
+      hookState.set(o.sessionId, { status: "working", at: Date.now() })
+      requestSync()
+    }
+  })
   void refreshHooks()
   if (POPOUT) return
   void startMachines()

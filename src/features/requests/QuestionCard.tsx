@@ -5,11 +5,12 @@
 // answers go to answerQuestion. Calm chrome: the question is the title, tabs
 // sit in the title line, one line per option, key hints in tooltips.
 import { memo, useEffect, useRef, useState } from "react"
-import { Check, MessageCircleQuestion } from "lucide-react"
+import { Check, ChevronLeft, ChevronRight } from "lucide-react"
 import type { QuestionRequest } from "@/lib/model"
-import { answerRequest } from "@/features/session-view/sessionStore"
+import { answerRequest, skipQuestion } from "@/features/session-view/sessionStore"
+import { MOD } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
-import { CardFrame, canStealFocus, FOCUS, type Pager } from "./cardChrome"
+import { CardFrame, canStealFocus, FOCUS, OptionButton, type Pager } from "./cardChrome"
 
 type Answer = { picked: string[]; other: string; otherOn: boolean }
 const EMPTY: Answer = { picked: [], other: "", otherOn: false }
@@ -64,27 +65,37 @@ export const QuestionCard = memo(function QuestionCard({
     answerRequest(request, out)
   }
 
+  // Ctrl+Enter submits from anywhere in the session (Claude Code desktop), unless you are typing
+  useEffect(() => {
+    if (!canAnswer) return
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT") && !ref.current?.contains(t) && (t as HTMLTextAreaElement).value.trim()) return
+      if (!allAnswered) return
+      e.preventDefault()
+      e.stopPropagation()
+      submit()
+    }
+    window.addEventListener("keydown", onKey, true)
+    return () => window.removeEventListener("keydown", onKey, true)
+  })
+
+  // several questions: "‹ 2 of 3 ›" beside the question, as Claude Code desktop pages them
   const tabs =
     request.questions.length > 1 ? (
-      <div role="tablist" aria-label="Questions" className="flex shrink-0 items-center gap-0.5">
-        {request.questions.map((qq, i) => (
-          <button
-            key={qq.header}
-            role="tab"
-            type="button"
-            aria-selected={i === tab}
-            onClick={() => setTab(i)}
-            className={cn(
-              "inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-xs",
-              FOCUS,
-              i === tab ? "bg-accent text-foreground" : "text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground",
-            )}
-          >
-            {answered[i] && <Check size={10} className="text-muted-foreground" aria-label="answered" />}
-            {qq.header}
-          </button>
-        ))}
-      </div>
+      <span className="flex h-6 shrink-0 items-center gap-0.5 text-xs font-normal text-muted-foreground" aria-label={`Question ${tab + 1} of ${request.questions.length}`}>
+        <button type="button" aria-label="Previous question" disabled={tab === 0} onClick={() => setTab(tab - 1)} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground disabled:opacity-40", FOCUS)}>
+          <ChevronLeft size={14} />
+        </button>
+        <span className="tabular flex items-center gap-1">
+          {answered[tab] && <Check size={11} aria-label="answered" />}
+          {tab + 1} of {request.questions.length}
+        </span>
+        <button type="button" aria-label="Next question" disabled={last} onClick={() => setTab(tab + 1)} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground disabled:opacity-40", FOCUS)}>
+          <ChevronRight size={14} />
+        </button>
+      </span>
     ) : undefined
 
   return (
@@ -93,7 +104,6 @@ export const QuestionCard = memo(function QuestionCard({
       tone="input"
       label="Question from Claude"
       keyHint={`1 to ${Math.min(9, q.options.length)} or A to ${String.fromCharCode(64 + Math.min(26, q.options.length))}: pick an answer. Enter: ${request.questions.length > 1 ? "next question or submit" : "submit"}.${request.questions.length > 1 ? " Left and Right arrows: switch question." : ""}`}
-      icon={<MessageCircleQuestion size={14} />}
       title={<span className="min-w-0">{q.question}</span>}
       aside={tabs}
       pager={pager}
@@ -117,27 +127,20 @@ export const QuestionCard = memo(function QuestionCard({
           else setTab(tab + 1)
         }
       }}
+      footerNote={!canAnswer ? "Answer in your terminal" : request.questions[0]?.header && request.questions.length === 1 ? request.questions[0].header : undefined}
       footer={
         <>
-          <button
-            type="button"
-            disabled={!allAnswered || !canAnswer}
-            onClick={submit}
-            title="Enter"
-            className={cn("inline-flex h-6 items-center rounded-md bg-foreground px-2.5 text-xs font-medium text-background hover:bg-foreground/88 disabled:opacity-40", FOCUS, "focus-visible:ring-offset-1 focus-visible:ring-offset-muted")}
-          >
-            Submit
-          </button>
+          <OptionButton variant="quiet" disabled={!canAnswer} onClick={() => skipQuestion(request)} title="Skip: Claude goes on with its best judgement">
+            Skip
+          </OptionButton>
           {!last && (
-            <button
-              type="button"
-              onClick={() => setTab(tab + 1)}
-              className={cn("inline-flex h-6 items-center rounded-md border border-border bg-muted px-2 text-xs text-foreground hover:bg-accent", FOCUS)}
-            >
+            <OptionButton variant="secondary" onClick={() => setTab(tab + 1)}>
               Next
-            </button>
+            </OptionButton>
           )}
-          {!canAnswer && <span className="ml-auto text-xs text-muted-foreground/70">Answer in your terminal</span>}
+          <OptionButton variant="primary" disabled={!allAnswered || !canAnswer} onClick={submit} keys={[MOD, "↵"]} title="Submit">
+            Submit
+          </OptionButton>
         </>
       }
     >
@@ -154,15 +157,15 @@ export const QuestionCard = memo(function QuestionCard({
               onClick={() => pick(o.label)}
               title={`${o.description ? `${o.description} · ` : ""}${i + 1} or ${String.fromCharCode(65 + i)}`}
               className={cn(
-                "flex min-w-0 flex-col rounded-md px-1 py-1 text-left disabled:opacity-60",
+                "flex min-w-0 flex-col rounded-md px-1.5 py-1.5 text-left disabled:opacity-60",
                 FOCUS,
                 on ? "bg-accent" : "hover:bg-accent/60",
               )}
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Mark on={on} multi={q.multiSelect} />
-                <span className="shrink-0 text-xs leading-[18px] font-medium text-foreground">{o.label}</span>
-                {o.description && <span className="min-w-0 truncate text-xs text-muted-foreground/70">{o.description}</span>}
+                <span className="shrink-0 text-sm leading-5 font-medium text-foreground">{o.label}</span>
+                {o.description && <span className="min-w-0 truncate text-sm text-muted-foreground/80">{o.description}</span>}
               </span>
               {o.preview && on && (
                 <pre className="mt-1 ml-[22px] max-h-32 overflow-auto rounded-sm border border-border bg-background p-1.5 font-mono text-xs whitespace-pre-wrap text-muted-foreground">{o.preview}</pre>
@@ -170,7 +173,7 @@ export const QuestionCard = memo(function QuestionCard({
             </button>
           )
         })}
-        <div className={cn("flex min-w-0 items-center gap-2 rounded-md px-1 py-1", a.otherOn ? "bg-accent" : "hover:bg-accent/60")}>
+        <div className={cn("flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5", a.otherOn ? "bg-accent" : "hover:bg-accent/60")}>
           <button
             type="button"
             role={q.multiSelect ? "checkbox" : "radio"}
@@ -197,7 +200,7 @@ export const QuestionCard = memo(function QuestionCard({
                 else setTab(tab + 1)
               }
             }}
-            className="h-[18px] min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/70"
+            className="h-5 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
           />
         </div>
       </div>

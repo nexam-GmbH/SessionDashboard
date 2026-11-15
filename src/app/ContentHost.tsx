@@ -8,19 +8,19 @@ import SessionView from "@/features/session-view/SessionView"
 
 const loadReview = () => import("@/features/review/ReviewView")
 const loadSettings = () => import("@/features/settings/SettingsView")
-const loadArchive = () => import("@/features/archive/ArchiveView")
+const loadHistory = () => import("@/features/history/HistoryView")
 const loadNew = () => import("@/features/new-session/NewSessionView")
 const loadUsage = () => import("@/features/usage/UsageView")
 const ReviewView = lazy(loadReview)
 const SettingsView = lazy(loadSettings)
-const ArchiveView = lazy(loadArchive)
+const HistoryView = lazy(loadHistory)
 const NewSessionView = lazy(loadNew)
 const UsageView = lazy(loadUsage)
 
 // the other screens load while the app is idle, so they open without a blank frame too
 if (typeof window !== "undefined") {
   const idle = window.requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1500))
-  idle(() => void Promise.all([loadNew(), loadSettings(), loadArchive(), loadReview(), loadUsage()]))
+  idle(() => void Promise.all([loadNew(), loadSettings(), loadHistory(), loadReview(), loadUsage()]))
 }
 
 /** sessions kept mounted besides the current screen: switching back to one of them is instant */
@@ -67,7 +67,8 @@ const Screen = memo(function Screen({ route }: { route: string }) {
     case "settings":
       return <SettingsView />
     case "archive":
-      return <ArchiveView />
+    case "history":
+      return <HistoryView />
     case "new":
       return <NewSessionView repoId={ref} />
     case "usage":

@@ -7,12 +7,17 @@ import type { ID, Session } from "@/lib/model"
 import { getApp } from "@/store/app"
 import { continueSession } from "@/store/actions"
 
-const LIMIT = /usage limit|hit your (?:[\w-]+ )?limit|limit reached|limit will reset|rate.?limit/i
+// Claude Code's own words when a plan limit stops a turn ("Claude usage limit reached…",
+// "You've hit your limit · resets 7pm", "5-hour limit reached ∙ resets 3pm"); not "rate limit",
+// which is what half of all API work talks about
+const LIMIT = /usage limit reached|hit your (?:[\w-]+ )?limit|(?:5-hour|weekly|session|opus|sonnet) limit reached|limit will reset/i
 const STAGGER_MS = 45_000
 
 export function parkedAtLimit(s: Session) {
-  if (s.archived || s.status === "working" || s.status === "starting" || s.status.startsWith("waiting")) return false
-  return LIMIT.test(s.errorMessage ?? "") || LIMIT.test(s.lastText ?? "") || (s.status !== "idle" && LIMIT.test(s.activity ?? ""))
+  if (s.archived || s.role === "main" || s.control === "history" || s.status === "working" || s.status === "starting" || s.status.startsWith("waiting")) return false
+  // the limit notice is a short last message of its own, not a sentence inside a long answer
+  const last = (s.lastText ?? "").trim()
+  return LIMIT.test(s.errorMessage ?? "") || (last.length < 240 && LIMIT.test(last)) || (s.status !== "idle" && LIMIT.test(s.activity ?? ""))
 }
 
 interface Plan {

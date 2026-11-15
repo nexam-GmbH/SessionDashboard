@@ -428,29 +428,10 @@ pub fn cloud_send(session_id: &str, text: &str) -> Result<Value, String> {
 pub fn live_sessions() -> Result<Value, String> {
     let mut lc = crate::sys::command(claude_bin());
     clean_env(&mut lc);
-    let mut child = lc
-        .args(["agents", "--json"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("cannot run claude: {e}"))?;
-    let mut out = String::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() > deadline => {
-                let _ = child.kill();
-                return Err("claude agents --json timed out".into());
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_string(&mut out);
-    }
+    lc.args(["agents", "--json"]);
+    // both pipes are read while it runs (a list over 64 KiB would otherwise stall it until the timeout)
+    let o = crate::sys::output_timeout(&mut lc, 10).ok_or("claude agents --json timed out")?;
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
     let mut v: Value = serde_json::from_str(&out).map_err(|e| format!("bad claude agents output: {e}"))?;
     if let Some(list) = v.as_array_mut() {
         list.retain(|s| !s.get("pid").and_then(Value::as_u64).map(is_helper).unwrap_or(false));
@@ -470,6 +451,9 @@ pub struct SessionMeta {
     /// the other folders it worked in (distinct, a few)
     pub cwds: Vec<String>,
     pub ai_title: Option<String>,
+    /// the name you gave it (`/rename`, `--name`): wins over Claude's own title, as in `/resume`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_title: Option<String>,
     pub agent_name: Option<String>,
     pub first_prompt: Option<String>,
     pub last_prompt: Option<String>,
@@ -668,8 +652,35 @@ pub fn user_text(v: &Value) -> Option<String> {
         _ => return None,
     };
     let t = text.trim();
-    if t.is_empty() || t.starts_with('<') || t.starts_with("Caveat:") {
+    if t.is_empty() || t.starts_with("Caveat:") {
         return None;
+    }
+    if t.starts_with('<') {
+        // a slash command you ran ("/model opus") or a shell command ("! ls"); Claude Code's own
+        // wrappers are not something you typed; anything else (pasted HTML, a <T> generic) is
+        let inner = |name: &str| -> Option<String> {
+            let open = format!("<{name}>");
+            let close = format!("</{name}>");
+            let a = t.find(&open)? + open.len();
+            let b = t[a..].find(&close)? + a;
+            Some(t[a..b].trim().to_string())
+        };
+        if let Some(name) = inner("command-name") {
+            let args = inner("command-args").unwrap_or_default();
+            let name = if name.starts_with('/') { name } else { format!("/{name}") };
+            let line = if args.is_empty() { name } else { format!("{name} {args}") };
+            return Some(line.chars().take(400).collect());
+        }
+        if let Some(cmd) = inner("bash-input") {
+            return Some(format!("! {cmd}").chars().take(400).collect());
+        }
+        const WRAPPERS: [&str; 10] = [
+            "<local-command-stdout", "<local-command-stderr", "<local-command-caveat", "<bash-stdout", "<bash-stderr",
+            "<system-reminder", "<task-notification", "<user-prompt-submit-hook", "<command-message", "<command-args",
+        ];
+        if WRAPPERS.iter().any(|w| t.starts_with(w)) {
+            return None;
+        }
     }
     Some(t.chars().take(400).collect())
 }
@@ -715,6 +726,7 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
     }
     match ty {
         "ai-title" => m.ai_title = s("aiTitle").or(m.ai_title.take()),
+        "custom-title" => m.custom_title = s("customTitle").filter(|t| !t.trim().is_empty()).or(m.custom_title.take()),
         "agent-name" => m.agent_name = s("agentName").or(m.agent_name.take()),
         "last-prompt" => m.last_prompt = s("lastPrompt").map(|p| p.chars().take(400).collect()).or(m.last_prompt.take()),
         "permission-mode" => m.permission_mode = s("permissionMode").or(m.permission_mode.take()),

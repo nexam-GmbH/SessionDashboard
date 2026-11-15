@@ -114,11 +114,7 @@ export const AttentionDock = memo(function AttentionDock({
       ? (getApp().subagents[req.subagentId]?.agentType ?? "subagent")
       : undefined
   return (
-    <div
-      aria-live="polite"
-      aria-relevant="additions"
-      className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-2"
-    >
+    <div aria-live="polite" aria-relevant="additions" data-find-skip>
       {childNote}
       <DockSlot key={req.id} sessionId={sessionId}>
         {req.type === "permission" ? (

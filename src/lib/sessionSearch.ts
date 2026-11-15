@@ -1,5 +1,5 @@
 import type { Session } from "@/lib/model"
-import { chunkScore } from "@/lib/match"
+import { chunkScore, isWordStart } from "@/lib/match"
 
 /**
  * Session search. Whitespace-separated tokens must all match.
@@ -24,9 +24,8 @@ function hay(s: Session, extra: string) {
 function hasWordStart(text: string, tok: string) {
   let i = text.indexOf(tok)
   while (i >= 0) {
-    const c = i === 0 ? 32 : text.charCodeAt(i - 1)
-    // not [0-9a-z] (haystacks are lowercased)
-    if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 122))) return true
+    // after a non-letter, in any script (Cyrillic, CJK…), not only ASCII
+    if (isWordStart(text, i)) return true
     i = text.indexOf(tok, i + 1)
   }
   return false

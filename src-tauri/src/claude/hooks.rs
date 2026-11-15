@@ -50,7 +50,7 @@ if [ "$1" = wait ]; then
 fi
 case "$body" in
   *'"hook_event_name":"PreToolUse"'*|*'"hook_event_name":"Notification"'*|*'"hook_event_name":"PermissionRequest"'*) git= ;;
-  *) git=$(git status --porcelain=v2 --branch 2>/dev/null | head -n 300 | base64 | tr -d '\n') ;;
+  *) git=$(GIT_OPTIONAL_LOCKS=0 git status --porcelain=v2 --branch 2>/dev/null | head -n 300 | base64 | tr -d '\n') ;;
 esac
 printf '%s' "$body" | curl -s -m 3 -X POST -H 'Content-Type: application/json' \
   -H "X-SD-Host: $(hostname)" -H "X-SD-Token: $token" -H "X-SD-Git: $git" --data-binary @- "$url" >/dev/null 2>&1
@@ -115,7 +115,11 @@ pub fn local_hostname() -> String {
 pub fn serve(app: AppHandle) -> Option<u16> {
     let (listener, port) = (DEFAULT_PORT..DEFAULT_PORT + 10).find_map(|p| TcpListener::bind(("127.0.0.1", p)).ok().map(|l| (l, p)))?;
     let dir = claude_dir().join("session-dashboard");
-    if dir.exists() || port != DEFAULT_PORT {
+    // a second copy of the app (another build, a test run) must not steal the hooks from the one
+    // that serves them: the port file changes only when the port it names is not answered any more
+    let current: Option<u16> = std::fs::read_to_string(dir.join("port")).ok().and_then(|p| p.trim().parse().ok());
+    let served_elsewhere = current.is_some_and(|p| p != port && std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], p)), std::time::Duration::from_millis(300)).is_ok());
+    if (dir.exists() || port != DEFAULT_PORT) && !served_elsewhere {
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join("port"), port.to_string());
     }
@@ -261,7 +265,7 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn b64decode(s: &str) -> Vec<u8> {
+pub(crate) fn b64decode(s: &str) -> Vec<u8> {
     let val = |c: u8| -> Option<u32> {
         Some(match c {
             b'A'..=b'Z' => c - b'A',
@@ -339,7 +343,12 @@ fn settings_path() -> PathBuf {
 
 pub fn status_local() -> Value {
     let s = std::fs::read_to_string(settings_path()).unwrap_or_default();
-    json!({"installed": installed_in(&s) && claude_dir().join(MARK).exists(), "settings": settings_path().to_string_lossy()})
+    let installed = installed_in(&s) && claude_dir().join(MARK).exists();
+    // an installed hook gets this version's script (fixes reach it without switching hooks off and on)
+    if installed && std::fs::read_to_string(claude_dir().join(MARK)).map(|cur| cur != SCRIPT).unwrap_or(false) {
+        let _ = std::fs::write(claude_dir().join(MARK), SCRIPT);
+    }
+    json!({"installed": installed, "settings": settings_path().to_string_lossy()})
 }
 
 /// Install (or remove) the hook on this computer. The first change keeps a backup of settings.json.

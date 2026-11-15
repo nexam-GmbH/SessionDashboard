@@ -2,8 +2,12 @@
 // Older turns inside TanStack Virtual, the live tail (last turn) rendered after the
 // virtualizer, a bottom lock and a jump-to-latest affordance. Changes: our row model,
 // turn blocks as virtual items, memoized rows that select their own item.
-import { memo, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { usePendingRequests } from "@/store/selectors"
 import { ArrowDown } from "lucide-react"
+import { REAL } from "@/backend/mode"
+import { FindBar } from "../find/FindBar"
+import { paintMatches, useFind, useJump } from "../find/find"
 import type { ID } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
@@ -26,6 +30,7 @@ import {
   UserRow,
   FilesRow,
   EditsCard,
+  DateRow,
 } from "./rows"
 
 type ViewProps = { sessionId: ID; liveItemId?: ID; inTail?: boolean; view: TranscriptView }
@@ -58,6 +63,8 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
       return <DoneLine turnId={row.turnId} durationMs={row.durationMs} at={row.at} />
     case "receipt":
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
+    case "date":
+      return <DateRow at={row.at} />
   }
 })
 
@@ -66,7 +73,10 @@ const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail
   return (
     <div className="group/turn">
       {block.rows.map((row) => (
-        <RowView key={row.key} sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} view={view} />
+        // data-row-key: search hits and Find scroll to a message by its id
+        <div key={row.key} data-row-key={row.key}>
+          <RowView sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} view={view} />
+        </div>
       ))}
     </div>
   )
@@ -74,7 +84,7 @@ const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail
 
 const COLUMN = "mx-auto w-full max-w-[var(--chat-w)] px-5"
 
-export const Transcript = memo(function Transcript({ sessionId }: { sessionId: ID }) {
+export const Transcript = memo(function Transcript({ sessionId, requests }: { sessionId: ID; requests?: ReactNode }) {
   const { ready, order, turns, liveItemId } = useTranscriptShape(sessionId)
   // Normal: tool calls folded · Thinking: + Claude's thinking · Verbose: every step open (Ctrl+O)
   const view = useApp((s) => s.settings.transcriptView ?? "normal")
@@ -87,7 +97,7 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const { virtualItems, totalSize, measureElement, scrollToBottom, isAtBottom } = useTranscriptVirtualizer({
+  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, isAtBottom } = useTranscriptVirtualizer({
     sessionId,
     rows: head,
     totalRowCount: rows.length,
@@ -103,6 +113,68 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
     opened.current = sessionId
     scrollToBottom("auto")
   }, [ready, sessionId, scrollToBottom])
+
+  // A message asked for (a search hit, Find): scroll to it, reading further back first when an old
+  // part of a long chat is not loaded yet; then a short glow
+  const jump = useJump(sessionId)
+  const done = useRef(0)
+  const triedLoad = useRef(0)
+  const [current, setCurrent] = useState<Element | null>(null)
+  useEffect(() => {
+    if (!jump || !ready || done.current === jump.n) return
+    const has = (b: Block) => b.rows.some((r) => r.key === jump.itemId || ("itemIds" in r && r.itemIds.includes(jump.itemId)) || ("itemId" in r && r.itemId === jump.itemId))
+    const bi = blocks.findIndex(has)
+    if (bi < 0) {
+      if (REAL && triedLoad.current !== jump.n) {
+        triedLoad.current = jump.n
+        void import("@/backend/real").then((r) => r.realLoadTo(sessionId, jump.itemId))
+      }
+      return
+    }
+    done.current = jump.n
+    releaseBottomLock()
+    if (bi < split) virtualizer.scrollToIndex(bi, { align: "center" })
+    let tries = 0
+    const reveal = () => {
+      const box = scrollRef.current
+      const el = box?.querySelector(`[data-row-key="${CSS.escape(jump.itemId)}"]`) ?? box?.querySelector(`[data-index="${bi}"]`)
+      if (el && box) {
+        const r = el.getBoundingClientRect()
+        const b = box.getBoundingClientRect()
+        box.scrollTop += r.top - b.top - Math.max(16, (b.height - Math.min(r.height, b.height * 0.8)) / 2)
+        el.classList.remove("sd-flash")
+        void (el as HTMLElement).offsetWidth
+        el.classList.add("sd-flash")
+        setCurrent(el)
+      } else if (tries++ < 20) requestAnimationFrame(reveal)
+    }
+    requestAnimationFrame(() => requestAnimationFrame(reveal))
+  }, [jump, ready, blocks, split, sessionId, virtualizer, releaseBottomLock])
+
+  // Find: light the words everywhere they are on screen (again as rows mount while scrolling)
+  const find = useFind(sessionId)
+  useEffect(() => {
+    const box = contentRef.current
+    if (!find.open || !find.query.trim() || !box) {
+      paintMatches(null, "", null)
+      return
+    }
+    let raf = 0
+    const paint = () => {
+      raf = 0
+      paintMatches(box, find.query, current)
+    }
+    paint()
+    const mo = new MutationObserver(() => {
+      raf ||= requestAnimationFrame(paint)
+    })
+    mo.observe(box, { childList: true, subtree: true, characterData: true })
+    return () => {
+      mo.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+      paintMatches(null, "", null)
+    }
+  }, [find.open, find.query, current])
 
   // The scroll container always renders so the virtualizer's listeners attach on mount.
   return (
@@ -145,24 +217,37 @@ export const Transcript = memo(function Transcript({ sessionId }: { sessionId: I
             {tail.map((block) => (
               <BlockView key={block.key} sessionId={sessionId} block={block} liveItemId={liveItemId} inTail view={view} />
             ))}
+            {requests}
             <LiveSpinner sessionId={sessionId} />
           </div>
         </div>
       </div>
       <ViewNotice view={view} />
-      {!isAtBottom && (
-        <button
-          type="button"
-          onClick={() => scrollToBottom("smooth")}
-          aria-label="Jump to latest message"
-          className="absolute bottom-3 left-1/2 inline-flex h-6 -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-muted px-2 text-xs text-muted-foreground shadow-md outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          <ArrowDown size={12} aria-hidden /> Latest
-        </button>
-      )}
+      <FindBar sessionId={sessionId} />
+      {!isAtBottom && <JumpToLatest sessionId={sessionId} onClick={() => scrollToBottom("smooth")} />}
     </div>
   )
 })
+
+/** Back to the end of the chat: a round ⌄ above the prompt box; it says so when a request waits there. */
+function JumpToLatest({ sessionId, onClick }: { sessionId: ID; onClick: () => void }) {
+  const waiting = usePendingRequests(sessionId).length > 0
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={waiting ? "Claude needs you: jump to the request" : "Jump to latest message"}
+      title={waiting ? "Claude needs you" : "Jump to latest"}
+      className={cn(
+        "absolute bottom-3 left-1/2 z-10 inline-flex h-8 -translate-x-1/2 items-center justify-center gap-1.5 rounded-full border bg-popover text-sm shadow-lg outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+        waiting ? "border-st-perm/50 px-3 text-st-perm-fg" : "w-8 border-border text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {waiting && <span>Claude needs you</span>}
+      <ArrowDown size={15} aria-hidden />
+    </button>
+  )
+}
 
 /** After Ctrl+O (or the menu) the view changed: say which one, briefly (it fades out by CSS). */
 function ViewNotice({ view }: { view: TranscriptView }) {

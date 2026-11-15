@@ -5,7 +5,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Archive, Pencil, SquareArrowOutUpRight } from "lucide-react"
 import { create } from "zustand"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
-import { archiveSessions, openSession, renameSession } from "@/store/actions"
+import { openSession, renameSession } from "@/store/actions"
+import { archiveWithUndo } from "@/features/notifications/undo"
 import { useApp } from "@/store/app"
 import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
@@ -90,11 +91,23 @@ export function SessionMenu({ id, where, children }: { id: ID; where: string; ch
           <Pencil size={13} /> Rename
           <span className="ml-auto text-xs text-muted-foreground/70">F2</span>
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem className="text-sm" onSelect={() => archiveSessions([id])}>
-          <Archive size={13} /> Archive
-        </ContextMenuItem>
+        <ArchiveItem id={id} />
       </ContextMenuContent>
     </ContextMenu>
+  )
+}
+
+/** Archive (with Undo in the top bar); a working session is stopped first, so it says so. Not for the main agent. */
+function ArchiveItem({ id }: { id: ID }) {
+  const main = useApp((s) => s.sessions[id]?.role === "main")
+  const working = useApp((s) => s.sessions[id]?.status === "working" || s.sessions[id]?.status === "starting")
+  if (main) return null
+  return (
+    <>
+      <ContextMenuSeparator />
+      <ContextMenuItem className="text-sm" onSelect={() => archiveWithUndo([id])}>
+        <Archive size={13} /> {working ? "Stop and archive" : "Archive"}
+      </ContextMenuItem>
+    </>
   )
 }

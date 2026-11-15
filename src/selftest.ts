@@ -192,5 +192,45 @@ export async function runSelftest() {
     if (c?.run !== "SD_HIDE=1 claude /mcp") throw new Error(String(c?.run))
     return c.run
   })
+  await step("search: every session's conversation, by words in any language", async () => {
+    const { realSearch } = await import("@/backend/real")
+    const t0 = performance.now()
+    const hits = await realSearch("the", 40)
+    const first = Math.round(performance.now() - t0)
+    const t1 = performance.now()
+    const again = await realSearch("the", 40)
+    const second = Math.round(performance.now() - t1)
+    if (!hits.length || hits.length !== again.length) throw new Error(`hits ${hits.length} / ${again.length}`)
+    const known = hits.filter((h) => getApp().sessions[h.sessionId]).length
+    return `${hits.length} sessions (${known} in the list), first ${first} ms (index), again ${second} ms; e.g. "${hits[0].before.slice(-30)}[${hits[0].matched}]${hits[0].after.slice(0, 30)}"`
+  })
+
+  await step("search: open an old chat at the message (reads back far enough)", async () => {
+    const { realSearch, realLoadTo, ensureRealTranscript } = await import("@/backend/real")
+    // the oldest match in a big local session: most likely outside the window that opens first
+    const hits = (await realSearch("the", 40)).filter((h) => {
+      const x = getApp().sessions[h.sessionId]
+      return x && !x.machine
+    })
+    const h = hits.at(-1)
+    if (!h) throw new Error("no local hit")
+    ensureRealTranscript(h.sessionId)
+    await until(() => getApp().transcripts[h.sessionId], 30000)
+    const ok = await realLoadTo(h.sessionId, h.uuid)
+    if (!ok) throw new Error(`message ${h.uuid} not in the chat after reading back`)
+    return `${getApp().transcripts[h.sessionId].order.length} items, ${h.uuid.slice(0, 8)} on screen`
+  })
+
+  await step("attachments: a file is kept where sessions can read it", async () => {
+    const path = await invoke<string>("save_attachment", { name: "../notes?.txt", data: btoa("sd-attach-ok") })
+    if (!/attachments\/[0-9a-f]{8}\/\.\._notes_\.txt$|attachments\/[0-9a-f]{8}\/notes_\.txt$|attachments\/[0-9a-f]{8}\/[^/]+$/.test(path)) throw new Error(path)
+    return path
+  })
+
+  await step("titles: names given with /rename win", async () => {
+    const st = getApp()
+    const named = Object.values(st.sessions).filter((x) => x.title.endsWith("(copy)") || x.titleSource === "custom").length
+    return `${named} sessions with a name of their own`
+  })
   log("done")
 }

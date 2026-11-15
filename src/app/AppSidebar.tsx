@@ -3,7 +3,7 @@
 // sessions in a fixed order, Archive and Settings at the bottom. One line per session; rows never
 // move while a session lives, so muscle memory (and Ctrl+1–9) stays valid.
 import { memo, useEffect, useRef, useState } from "react"
-import { Archive, ChartColumn, Check, ChevronsUpDown, Network, Plus, Search, Settings } from "lucide-react"
+import { Archive, ChartColumn, Check, ChevronsUpDown, GitFork, History, MoreHorizontal, Network, Pencil, Pin, PinOff, Plus, Search, Settings, SquareArrowOutUpRight } from "lucide-react"
 import { useUsage } from "@/features/usage/usageData"
 import { useShallow } from "zustand/react/shallow"
 import {
@@ -15,6 +15,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -36,8 +37,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useApp } from "@/store/app"
 import {
   activeWorkspace,
-  selectArchivedCount,
   selectLiveSessionIds,
+  selectPastSessionIds,
+  selectPinnedIds,
   selectNeedsByWorkspace,
   selectNeedsYou,
   selectSessionOrder,
@@ -46,13 +48,16 @@ import {
   useShownStatus,
   useVisibleRepos,
 } from "@/store/selectors"
-import { currentSessionId, openArchive, openNewSession, openOverview, openPalette, openSession, openSettings, repoInFocus, setWorkspace } from "@/store/actions"
+import { currentSessionId, forkSession, openNewSession, openOverview, openPalette, openSession, openSettings, pinSession, repoInFocus, setWorkspace } from "@/store/actions"
+import { archiveWithUndo } from "@/features/notifications/undo"
+import { relTime } from "@/lib/format"
 import { useModHeld } from "./modKey"
 import { navigate } from "./nav"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { ModeMark } from "@/components/common/ModeMark"
 import { MOD, Shortcut } from "@/components/common/bits"
 import { EditableTitle, SessionMenu, startRename, useRenaming } from "@/features/rename/Rename"
+import { useUiValue, setUiValue } from "@/features/session-view/sessionStore"
 import { WorkspaceDialog } from "@/features/workspaces/WorkspaceDialog"
 import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
@@ -95,7 +100,8 @@ function WorkspaceSwitcher() {
   const needs = useApp(selectNeedsByWorkspace)
   const live = useApp((s) => selectSessionOrder(s).length)
   const [creating, setCreating] = useState(false)
-  const elsewhere = Object.entries(needs).filter(([id]) => id !== ws?.id).reduce((n, [, c]) => n + c, 0)
+  // only while a workspace is open: under "All workspaces" everything is on screen
+  const elsewhere = ws ? Object.entries(needs).filter(([id]) => id !== ws.id).reduce((n, [, c]) => n + c, 0) : 0
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -159,6 +165,7 @@ function Sessions() {
           {mainId && <SessionRow id={mainId} />}
         </SidebarMenu>
       </SidebarGroup>
+      <PinnedGroup />
       {homes.map((id) => (
         <RepoGroup key={id} repoId={id} mainId={mainId} />
       ))}
@@ -210,11 +217,37 @@ function OverviewRow() {
   )
 }
 
+/** Sessions you pinned (right-click or ⋯ → Pin), from any project, live or past. */
+function PinnedGroup() {
+  const ids = useApp(useShallow(selectPinnedIds))
+  if (!ids.length) return null
+  return (
+    <SidebarGroup aria-label="Pinned">
+      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+      <SidebarMenu>
+        {ids.map((id) => (
+          <SessionRow key={id} id={id} past={useApp.getState().sessions[id]?.control === "history"} />
+        ))}
+      </SidebarMenu>
+    </SidebarGroup>
+  )
+}
+
+/** How many past sessions each project shows before "Show more", and how many more it adds. */
+const MORE_STEP = 15
+
 const RepoGroup = memo(function RepoGroup({ repoId, mainId }: { repoId: ID; mainId: ID }) {
   const name = useApp((s) => s.repos[repoId]?.name)
   const isHome = useApp((s) => !!s.repos[repoId]?.isHome)
   const ids = useApp(useShallow((s) => selectLiveSessionIds(s, repoId).filter((id) => id !== mainId)))
-  if (isHome && !ids.length) return null
+  // the latest finished sessions under the running ones (Claude Code desktop lists every session
+  // of a project by recency): the place to pick an old chat back up
+  const past = useApp(useShallow((s) => selectPastSessionIds(s, repoId).filter((id) => !s.sessions[id]?.pinned)))
+  const base = useApp((s) => s.settings.recentPerRepo ?? 3)
+  const shown = useUiValue<number>(`sb-more:${repoId}`, 0)
+  if (isHome && !ids.length && !past.length) return null
+  const visiblePast = past.slice(0, base + shown)
+  const rest = past.length - visiblePast.length
   return (
     <SidebarGroup aria-label={isHome ? `${name}: all repos` : name} className="group/repo">
       <SidebarGroupLabel>
@@ -235,13 +268,44 @@ const RepoGroup = memo(function RepoGroup({ repoId, mainId }: { repoId: ID; main
         {ids.map((id) => (
           <SessionRow key={id} id={id} />
         ))}
-        {!ids.length && <li className="px-2 py-1 text-xs text-muted-foreground/70">No live sessions</li>}
+        {visiblePast.map((id) => (
+          <SessionRow key={id} id={id} past />
+        ))}
+        {(rest > 0 || shown > 0) && (
+          <li className="flex h-7 items-center gap-1 px-2 text-xs text-muted-foreground/70">
+            {rest > 0 && (
+              <button type="button" className="rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={() => setUiValue(`sb-more:${repoId}`, shown + MORE_STEP)}>
+                Show {Math.min(rest, MORE_STEP)} more
+              </button>
+            )}
+            {rest > 0 && shown > 0 && <span aria-hidden>·</span>}
+            {shown > 0 && (
+              <button type="button" className="rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={() => setUiValue(`sb-more:${repoId}`, 0)}>
+                Show less
+              </button>
+            )}
+            {rest > 0 && (
+              <button
+                type="button"
+                className="ml-auto rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => {
+                  setUiValue("history:repo", repoId)
+                  navigate("/history")
+                }}
+                title={`All ${past.length} past sessions of ${name}`}
+              >
+                All {past.length}
+              </button>
+            )}
+          </li>
+        )}
+        {!ids.length && !past.length && <li className="px-2 py-1 text-xs text-muted-foreground/70">No sessions yet</li>}
       </SidebarMenu>
     </SidebarGroup>
   )
 })
 
-const SessionRow = memo(function SessionRow({ id }: { id: ID }) {
+const SessionRow = memo(function SessionRow({ id, past }: { id: ID; past?: boolean }) {
   const s = useSession(id)
   const active = useApp(() => currentSessionId() === id)
   const needs = useApp((st) => selectNeedsYou(st).includes(id))
@@ -275,32 +339,80 @@ const SessionRow = memo(function SessionRow({ id }: { id: ID }) {
       </SidebarMenuItem>
     )
   }
+  const number = held && !past && n > 0 && n <= 9
   return (
     <SidebarMenuItem ref={item}>
       <SessionMenu id={id} where="list">
-          <SidebarMenuButton
-            isActive={active}
-            onClick={() => openSession(id)}
-            // start reading its chat while the pointer rests here: usually ready by the click
-            onPointerEnter={() => ensureTranscript(id)}
-            onDoubleClick={() => startRename(id, "list")}
-            onKeyDown={(e) => {
-              if (e.key === "F2") {
-                e.preventDefault()
-                startRename(id, "list")
-              }
-            }}
-            aria-current={active ? "page" : undefined}
-          >
-            <StatusGlyph status={status} size="sm" title={null} />
-            <span className={cn("min-w-0 truncate", quiet ? "text-muted-foreground" : "text-sidebar-foreground", (needs || s.status === "done_unseen") && "font-medium")}>{s.title}</span>
-            <ModeMark mode={s.permissionMode} className="ml-auto" />
-          </SidebarMenuButton>
+        <SidebarMenuButton
+          isActive={active}
+          onClick={() => openSession(id)}
+          // start reading its chat while the pointer rests here: usually ready by the click
+          onPointerEnter={() => ensureTranscript(id)}
+          onDoubleClick={() => startRename(id, "list")}
+          onKeyDown={(e) => {
+            if (e.key === "F2") {
+              e.preventDefault()
+              startRename(id, "list")
+            }
+          }}
+          aria-current={active ? "page" : undefined}
+          title={s.title}
+          className="pr-7"
+        >
+          <StatusGlyph status={status} size="sm" title={null} />
+          <span className={cn("min-w-0 truncate", quiet || past ? "text-muted-foreground" : "text-sidebar-foreground", (needs || s.status === "done_unseen") && "font-medium")}>{s.title}</span>
+          {!number &&
+            (past ? (
+              <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/60 group-hover/menu-item:invisible">{relTime(s.updatedAt)}</span>
+            ) : (
+              <ModeMark mode={s.permissionMode} className="ml-auto group-hover/menu-item:invisible" />
+            ))}
+        </SidebarMenuButton>
       </SessionMenu>
-      {held && n > 0 && n <= 9 && <NumberHint n={n} />}
+      {!number && <RowActions id={id} />}
+      {number && <NumberHint n={n} />}
     </SidebarMenuItem>
   )
 })
+
+/** The row's "⋯": what right-click offers, for the mouse that doesn't know about right-click. */
+function RowActions({ id }: { id: ID }) {
+  const pinned = useApp((s) => !!s.sessions[id]?.pinned)
+  const main = useApp((s) => s.sessions[id]?.role === "main")
+  const working = useApp((s) => s.sessions[id]?.status === "working" || s.sessions[id]?.status === "starting")
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuAction showOnHover aria-label="Session actions" className="top-1.5">
+          <MoreHorizontal />
+        </SidebarMenuAction>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="start" className="w-52">
+        <DropdownMenuItem onSelect={() => void import("@/app/popout").then((p) => p.openSessionWindow(id))}>
+          <SquareArrowOutUpRight /> Open in new window
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setTimeout(() => startRename(id, "list"), 0)}>
+          <Pencil /> Rename
+          <DropdownMenuShortcut>F2</DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => pinSession(id)}>
+          {pinned ? <PinOff /> : <Pin />} {pinned ? "Unpin" : "Pin"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => forkSession(id)}>
+          <GitFork /> Fork
+        </DropdownMenuItem>
+        {!main && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => archiveWithUndo([id])}>
+              <Archive /> {working ? "Stop and archive" : "Archive"}
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 function NumberHint({ n }: { n: number }) {
   return (
@@ -312,12 +424,17 @@ function NumberHint({ n }: { n: number }) {
 }
 
 function Footer() {
-  const archived = useApp(selectArchivedCount)
   const route = useApp((s) => s.route)
   const session = useUsage((s) => s.limits?.limits.find((l) => l.group === "session")?.percent)
   const settingsShown = useApp((s) => !!s.settingsOpen)
   return (
     <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton size="sm" isActive={route.startsWith("/history") || route === "/archive"} onClick={() => navigate("/history")} aria-keyshortcuts="Control+Shift+H">
+          <History />
+          <span>History</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton size="sm" isActive={route === "/usage"} onClick={() => navigate("/usage")}>
           <ChartColumn />
@@ -328,13 +445,6 @@ function Footer() {
             {Math.round(session)}%
           </SidebarMenuBadge>
         )}
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton size="sm" isActive={route === "/archive"} onClick={openArchive}>
-          <Archive />
-          <span>Archive</span>
-        </SidebarMenuButton>
-        {archived > 0 && <SidebarMenuBadge className="font-normal text-muted-foreground">{archived}</SidebarMenuBadge>}
       </SidebarMenuItem>
       <SidebarMenuItem>
         <SidebarMenuButton size="sm" isActive={settingsShown} onClick={() => openSettings()} aria-keyshortcuts="Control+Comma">

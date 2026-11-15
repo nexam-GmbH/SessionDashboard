@@ -15,6 +15,13 @@ import { CardFrame, canStealFocus, FeedbackField, OptionButton, optionLabel, typ
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
 
+/** Plain words for ExitPlanMode's answers (the mode each one switches to). */
+const PLAN_LABEL: Record<string, string> = {
+  "approve-accept": "Start, auto-accept edits",
+  "approve-manual": "Start, approve each edit",
+  "keep-planning": "Revise",
+}
+
 export const PlanApprovalCard = memo(function PlanApprovalCard({
   request,
   canApprove,
@@ -54,8 +61,12 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
       tone="input"
       label="Plan approval"
       keyHint={`Enter: approve. 1 to ${Math.min(9, request.options.length)}: pick an option.`}
-      icon={<ListChecks size={14} />}
-      title={<span className="truncate">Approve plan?</span>}
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          <ListChecks size={16} className="shrink-0 text-muted-foreground" />
+          <span className="truncate">Ready to start? Here is the plan</span>
+        </span>
+      }
       pager={pager}
       onKeyDown={(e) => {
         if (feedbackFor || e.target !== e.currentTarget) return
@@ -86,25 +97,26 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
           />
         ) : (
           <>
-            {request.options.map((o, i) => (
+            {!canApprove && <span className="mr-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
+            {/* Revise on the left, the main answer on the right (Claude Code desktop's order) */}
+            {[...request.options.filter(isReject), ...request.options.filter((o) => !isReject(o) && o !== primary), ...(primary ? [primary] : [])].map((o) => (
               <OptionButton
                 key={o.id}
-                n={i + 1}
+                n={request.options.indexOf(o) + 1}
                 disabled={!canApprove}
                 variant={o === primary ? "primary" : isReject(o) ? "quiet" : "secondary"}
                 onClick={() => choose(o)}
                 enter={o === primary}
                 title={o.name}
               >
-                {optionLabel(o)}
+                {PLAN_LABEL[o.id] ?? optionLabel(o)}
               </OptionButton>
             ))}
-            {!canApprove && <span className="ml-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
           </>
         )
       }
     >
-      <div className="max-h-[200px] overflow-auto">
+      <div className="max-h-[min(460px,50vh)] overflow-auto rounded-lg bg-muted/50 px-4 py-3 text-foreground">
         <Markdown content={request.planMarkdown} />
       </div>
       {checks.length > 0 && canApprove && (

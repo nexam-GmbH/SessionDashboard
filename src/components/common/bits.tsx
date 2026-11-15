@@ -4,8 +4,16 @@ import { cn } from "@/lib/utils"
 import type { GitSnapshot } from "@/lib/model"
 
 /** +added −removed, VS Code Dark Modern gutter colors. */
-export function DiffStat({ added, removed, className }: { added: number; removed: number; className?: string }) {
+export function DiffStat({ added, removed, className, pill }: { added: number; removed: number; className?: string; pill?: boolean }) {
   if (!added && !removed) return null
+  // pill: Claude Code desktop's green / red counts on a work summary line
+  if (pill)
+    return (
+      <span className={cn("tabular inline-flex gap-1 font-mono text-xs", className)}>
+        <span className="rounded-[5px] bg-diff-add-tint px-1 text-diff-add">+{added}</span>
+        <span className="rounded-[5px] bg-diff-del-tint px-1 text-diff-del">−{removed}</span>
+      </span>
+    )
   return (
     <span className={cn("tabular inline-flex gap-1 font-mono text-xs", className)}>
       <span className="text-diff-add">+{added}</span>

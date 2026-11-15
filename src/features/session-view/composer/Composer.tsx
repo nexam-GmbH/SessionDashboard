@@ -8,8 +8,8 @@ import { memo, useEffect, useRef, useState } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
-import { takeImages } from "@/features/composer/images"
-import { addSessionFolder, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
+import { attachmentsText, takeImages } from "@/features/composer/images"
+import { addSessionFolder, forkSession, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
 import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals"
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
@@ -23,6 +23,7 @@ import {
   cancelQueueEdit,
   editQueuedInBox,
   getUiValue,
+  interruptAndSend,
   interruptSession,
   markSteered,
   queueMessage,
@@ -39,7 +40,7 @@ const EMPTY_FILES: string[] = []
 /** Rewind prefills already put into a box (each remounts the composer once) */
 const usedPrefill = new Map<ID, number>()
 
-const withNames = (text: string, attachments: string[]) => (attachments.length ? `${text}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : text)
+const withNames = (text: string, attachments: string[]) => `${text}${attachmentsText(attachments)}`
 
 /** A reply to a terminal session: typed into its terminal, or (when that can't be done) a copy here. */
 function replyToTerminal(id: ID, text: string, attachments: string[], way: string | null) {
@@ -84,6 +85,29 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const edit = useQueueEdit(sessionId)
   const steering = useSteerPending(sessionId)
   const lastEsc = useRef(0)
+  // ↑ / ↓ through what you sent in this session (newest first), like Claude Code's prompt history
+  const hist = useRef<{ list: string[]; at: number; saved: string } | null>(null)
+  const onHistory = (dir: -1 | 1, current: string): string | null => {
+    if (!hist.current) {
+      const t = getApp().transcripts[sessionId]
+      const list: string[] = []
+      for (const id of t?.order ?? []) {
+        const it = t?.items[id]
+        if (it?.type === "user_message" && it.text.trim() && list.at(-1) !== it.text) list.push(it.text)
+      }
+      if (!list.length) return null
+      hist.current = { list, at: list.length, saved: current }
+    }
+    const h = hist.current
+    const at = h.at + dir
+    if (at < 0) return null
+    if (at >= h.list.length) {
+      hist.current = null
+      return dir > 0 ? h.saved : null
+    }
+    h.at = at
+    return h.list[at]
+  }
   // Rewind puts a prompt back here (the session view remounts the composer for each one)
   useEffect(() => {
     const p = getUiValue<{ n: number; text: string } | null>(`prefill:${sessionId}`, null)
@@ -109,11 +133,13 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   // terminal when it allows it (Konsole, tmux, kitty, WezTerm, the app's terminal), else it continues
   // in a copy in this app while the terminal keeps its own. Take over (the banner) moves it on purpose.
   const takeOver = REAL && control === "observed"
-  // a past session: the banner above offers Resume; nothing to type into until then
-  if (!caps.send && !takeOver) return null
+  // a past session: type and it goes on (it resumes in the app with your message, as Claude Code
+  // desktop continues an old chat); the banner above also offers Resume and Fork
+  const past = REAL && control === "history"
+  if (!caps.send && !takeOver && !past) return null
   const working = status === "working" || status === "starting"
   // a terminal session: what you pick here applies when it moves into the app (your next message)
-  const locked = !caps.changeSettings && !takeOver
+  const locked = !caps.changeSettings && !takeOver && !past
   const lockReason = "Runs in your terminal: change it there"
   const headless = takeOver && injectWay === "headless"
   // a queued message open in the box (if it went out meanwhile, saving sends the edit as a new one)
@@ -127,11 +153,13 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         : "Reply in the terminal, or turn on Settings → Sessions → Sync terminal sessions"
       : working
         ? headless
-          ? "Add a note — sent when Claude finishes this turn"
+          ? "Add a message — sent when Claude finishes this turn"
           : steering
-            ? "Add another note"
-            : "Add a note — Claude reads it after the current step"
-        : "Reply to Claude…"
+            ? "Add another message"
+            : "Add a message — Claude reads it after the current step"
+        : past
+          ? "Continue this session: type / for commands"
+          : "Type / for commands"
   const canStop = working && caps.interrupt
   const hint = editing
     ? "Enter saves · Esc cancels · empty removes it"
@@ -144,6 +172,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         .join(" · ")
 
   const submit = (text: string, attachments: string[], how: "queue" | "now") => {
+    hist.current = null
     if (editing) {
       saveQueueEdit(sessionId, text, attachments)
       return false
@@ -166,7 +195,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         placeholder={placeholder}
         hint={hint}
         keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : REAL && !headless ? "Enter adds a note Claude reads after its current step, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
-        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? (headless || !REAL ? "Queue · Enter" : "Send now · Enter") : "Send · Enter"}
+        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? (headless || !REAL ? "Queue · Enter" : "Send · Enter — read after the current step") : "Send · Enter"}
         busy={canStop}
         onStop={() => interruptSession(sessionId)}
         onSubmit={submit}
@@ -190,6 +219,23 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
           }
         }}
         onArrowUpEmpty={() => editQueuedInBox(sessionId)}
+        onHistory={onHistory}
+        onInterruptSend={
+          canStop && !takeOver
+            ? (text, attachments) => {
+                hist.current = null
+                interruptAndSend(sessionId, text, attachments)
+              }
+            : undefined
+        }
+        onForkSend={
+          caps.send && !takeOver
+            ? (text) => {
+                hist.current = null
+                forkSession(sessionId, text)
+              }
+            : undefined
+        }
         onShiftTab={locked ? undefined : () => setSessionSettings(sessionId, { permissionMode: MODE_CYCLE[(MODE_CYCLE.indexOf(mode) + 1) % MODE_CYCLE.length] })}
         folders={
           locked
@@ -213,9 +259,10 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         }
         footer={
           <>
-            <FoldersNote ids={repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))} names={repos} />
-            {/* Claude Code desktop: permission mode, model and effort under the box, then context */}
+            {/* Claude Code desktop: the permission mode on the left under the box; model, effort and context on the right */}
             <ModePicker value={mode} onChange={(permissionMode) => setSessionSettings(sessionId, { permissionMode })} disabled={locked} disabledReason={lockReason} />
+            <FoldersNote ids={repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))} names={repos} />
+            <span className="flex-1" />
             <ModelPicker
               value={model}
               onChange={(m) => setSessionSettings(sessionId, { model: m })}

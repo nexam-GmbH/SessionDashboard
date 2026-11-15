@@ -21,8 +21,19 @@ pub fn ssh_bin() -> String {
 }
 
 fn control_path() -> String {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().trim_end_matches('/').to_string());
-    format!("{dir}/sd-ssh-%C")
+    // a Unix socket path holds at most 104 bytes (macOS) and ssh adds ".<16 chars>" while it binds:
+    // macOS' long $TMPDIR would not fit, so a short folder there
+    let dir = std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| d.len() < 40).unwrap_or_else(|| if cfg!(unix) { "/tmp".into() } else { std::env::temp_dir().to_string_lossy().trim_end_matches('/').to_string() });
+    format!("{dir}/sd-%C")
+}
+
+/// A host name the app passes to ssh: an alias or user@host, never something ssh reads as an
+/// option ("-oProxyCommand=…") or that splits into more arguments.
+pub fn host_ok(host: &str) -> Result<(), String> {
+    if host.is_empty() || host.starts_with('-') || host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!("not a valid ssh host: {host:?}"));
+    }
+    Ok(())
 }
 
 pub fn shell_quote(s: &str) -> String {
@@ -35,12 +46,16 @@ pub const REMOTE_PATH: &str = r#"PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$H
 /// An ssh command for `host` running `script` in a POSIX shell there.
 pub fn ssh_cmd(host: &str, script: &str) -> Command {
     let mut c = crate::sys::command(ssh_bin());
-    c.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]);
+    // a dead link is noticed within ~45 s instead of hanging a write for many minutes
+    c.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]);
     // one shared connection per host (Windows' OpenSSH has no connection sharing)
     if !cfg!(windows) {
         c.args(["-o", "ControlMaster=auto", "-o", &format!("ControlPath={}", control_path()), "-o", "ControlPersist=120"]);
     }
+    // a bad host goes nowhere ("--" ends the options; the check refuses option-like names)
+    let host = if host_ok(host).is_ok() { host } else { "invalid.host.invalid" };
     c.args([
+        "--",
         host,
         &format!("sh -c {}", shell_quote(&format!("{REMOTE_PATH}; {script}"))),
     ]);
@@ -132,7 +147,8 @@ pub fn transcript_window(host: &str, session_id: &str, max: usize) -> Result<Tra
 
 /// Records appended to a remote transcript since `offset`.
 pub fn transcript_since(host: &str, session_id: &str, offset: u64) -> Result<TranscriptChunk, String> {
-    let script = format!(r#"{}; s=$(wc -c < "$f"); echo $s; [ "$s" -ge {offset} ] && tail -c +{} "$f" | head -c 8000000"#, transcript_glob(session_id)?, offset + 1);
+    // exits 0 also when the file got shorter (the "truncated" answer below needs the size)
+    let script = format!(r#"{}; s=$(wc -c < "$f"); echo $s; if [ "$s" -ge {offset} ]; then tail -c +{} "$f" | head -c 8000000; fi; true"#, transcript_glob(session_id)?, offset + 1);
     let out = run(host, &script, None, Duration::from_secs(20))?;
     let nl = out.iter().position(|b| *b == b'\n').ok_or("bad answer")?;
     let size: u64 = String::from_utf8_lossy(&out[..nl]).trim().parse().map_err(|_| "bad size")?;
@@ -186,6 +202,7 @@ pub fn set_tunnels(app: AppHandle, t: Tunnels, hosts: Vec<String>, local_port: u
 }
 
 fn open_tunnel(host: &str, local_port: u16) -> Result<Child, String> {
+    host_ok(host)?;
     let mut c = crate::sys::command(ssh_bin());
     c.args([
         "-N",
@@ -200,6 +217,7 @@ fn open_tunnel(host: &str, local_port: u16) -> Result<Child, String> {
         "ServerAliveInterval=30",
         "-R",
         &format!("{REMOTE_HOOK_PORT}:127.0.0.1:{local_port}"),
+        "--",
         host,
     ])
     .stdin(Stdio::null())

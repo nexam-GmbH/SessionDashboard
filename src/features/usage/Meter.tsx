@@ -24,6 +24,7 @@ export function until(iso: string | null | undefined, now: number) {
   const ms = Date.parse(iso) - now
   if (ms <= 0) return "resets now"
   const h = Math.floor(ms / 3600e3)
-  const m = Math.round((ms % 3600e3) / 60e3)
+  // floor, never "2h 60m"
+  const m = Math.floor((ms % 3600e3) / 60e3)
   return h >= 24 ? `resets in ${Math.floor(h / 24)}d ${h % 24}h` : h ? `resets in ${h}h ${m}m` : `resets in ${m}m`
 }

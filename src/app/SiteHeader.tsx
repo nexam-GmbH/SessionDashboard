@@ -39,7 +39,7 @@ export function SiteHeader() {
   )
 }
 
-const TITLES: Record<string, string> = { new: "New session", settings: "Settings", archive: "Archive", review: "Review", usage: "Usage" }
+const TITLES: Record<string, string> = { new: "New session", settings: "Settings", archive: "History", history: "History", review: "Review", usage: "Usage" }
 
 function ScreenTitle() {
   const route = useApp((s) => s.route)

@@ -388,7 +388,8 @@ check("answer AskUserQuestion", async () => {
   await card.waitFor({ timeout: 5000 })
   const total = await app((s, id) => s.requests[id].questions.length, ids.questionReq)
   for (let i = 0; i < total; i++) {
-    if (total > 1) await card.getByRole("tab").nth(i).click()
+    // several questions: "‹ 1 of N ›" pages through them (a single-choice answer moves on by itself)
+    if (i > 0 && !(await card.innerText()).includes(`${i + 1} of ${total}`)) await card.getByRole("button", { name: "Next question" }).click()
     await card.locator('[role=radio]:not([aria-label="Other"]), [role=checkbox]:not([aria-label="Other"])').first().click()
     await wait(200)
   }
@@ -420,7 +421,7 @@ check("approve a plan (permission mode changes)", async () => {
   return `${before} → acceptEdits`
 })
 
-check("archive from the session menu → Undo toast → Archive screen → restore", async () => {
+check("archive from the session menu → Undo toast → History · Archived → restore", async () => {
   await load("#/")
   const ids = await discover()
   const id = ids.order.find((x) => x !== ids.main && x !== ids.bash)
@@ -440,8 +441,10 @@ check("archive from the session menu → Undo toast → Archive screen → resto
   await toast.getByRole("button", { name: "Undo" }).click()
   expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "Undo didn't restore")
   await archive()
-  await visible('[data-slot=sidebar-footer] button').filter({ hasText: "Archive" }).first().click()
-  const li = visible("li").filter({ hasText: title }).first()
+  // History → Archived
+  await visible('[data-slot=sidebar-footer] button').filter({ hasText: "History" }).first().click()
+  await visible('[role=tab]').filter({ hasText: "Archived" }).first().click()
+  const li = visible("[role=option]").filter({ hasText: title }).first()
   await li.waitFor({ timeout: 3000 })
   await li.hover()
   await li.getByRole("button", { name: /Restore/ }).click()

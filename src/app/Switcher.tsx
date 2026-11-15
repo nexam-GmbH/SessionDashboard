@@ -2,6 +2,7 @@
 // A quick Ctrl+Tab goes straight back to the previous session; holding Ctrl shows the recent list,
 // Tab / Shift+Tab move through it and releasing Ctrl opens the highlighted one. Esc cancels.
 import { useEffect, useState } from "react"
+import { POPOUT } from "@/backend/mode"
 import { useApp, getApp } from "@/store/app"
 import { currentSessionId, openSession } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
@@ -21,7 +22,8 @@ function recentList(): ID[] {
   const cur = currentSessionId()
   const live = s.recent.filter((id) => {
     const x = s.sessions[id]
-    return x && !x.archived && x.control !== "history"
+    // past sessions you opened too (an old chat found with Ctrl+K)
+    return x && !x.archived
   })
   // the current session first (index 0), so the first Tab lands on the previous one
   return (cur && live[0] === cur ? live : live.filter((id) => id !== cur)).slice(0, MAX)
@@ -39,6 +41,8 @@ export function Switcher() {
     }
     const modDown = (e: KeyboardEvent) => (IS_MAC ? e.metaKey || e.ctrlKey : e.ctrlKey)
     const onKeyDown = (e: KeyboardEvent) => {
+      // a session's own window stays on its session
+      if (POPOUT) return
       if (e.key === "Tab" && modDown(e)) {
         e.preventDefault()
         e.stopPropagation()

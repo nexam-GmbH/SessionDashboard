@@ -37,10 +37,10 @@ const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID
       <div className="flex min-w-0 flex-1 flex-col">
         <StatusAnnouncer sessionId={sessionId} />
         <ControlBanner sessionId={sessionId} />
-        <Transcript sessionId={sessionId} />
+        {/* permission, question and plan cards sit in the conversation, at its end (Claude Code desktop) */}
+        <Transcript sessionId={sessionId} requests={<AttentionDock sessionId={sessionId} />} />
         <div className="shrink-0 pt-1.5">
           <ActivityBar sessionId={sessionId} />
-          <AttentionDock sessionId={sessionId} />
           <PromptQueue sessionId={sessionId} />
           <ComposerSlot sessionId={sessionId} />
         </div>

@@ -283,9 +283,13 @@ body {
   }
 }
 
-/* the chat column: one width for the transcript, the prompt box and the bars above it */
+/* the chat column: one width for the transcript, the prompt box and the bars above it (Claude Code
+   desktop narrowed its column to ~770 px "for a more readable column"; Settings → Chat width) */
 :root {
-  --chat-w: min(1080px, 100%);
+  --chat-w: min(820px, 100%);
+}
+:root[data-chat-width="wide"] {
+  --chat-w: min(1120px, 100%);
 }
 
 /* the working glyph turns in 12 steps a second, not 60 frames: the same look at a fraction of the
@@ -297,4 +301,28 @@ body {
 }
 @utility animate-spin-steps {
   animation: sd-spin 1s steps(12) infinite;
+}
+
+/* Find in chat (Ctrl+F): every match, and the current one stronger (CSS Custom Highlight API) */
+::highlight(sd-find) {
+  background-color: color-mix(in oklab, var(--st-input) 28%, transparent);
+  color: var(--foreground);
+}
+::highlight(sd-find-current) {
+  background-color: color-mix(in oklab, var(--st-perm) 70%, transparent);
+  color: var(--foreground);
+}
+
+/* a message opened from search or Find: a short glow that fades */
+@keyframes sd-flash {
+  from {
+    background-color: color-mix(in oklab, var(--st-input) 16%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.sd-flash {
+  animation: sd-flash 1.6s ease-out;
+  border-radius: var(--radius-lg);
 }

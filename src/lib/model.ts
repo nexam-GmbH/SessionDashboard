@@ -295,7 +295,7 @@ export interface ToolCall {
 }
 
 export type Item =
-  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[]; images?: Picture[] }
+  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[]; images?: Picture[]; steer?: boolean; command?: boolean }
   | { type: "agent_message"; id: ID; turnId: ID; at: string; text: string; streaming: boolean }
   | { type: "thought"; id: ID; turnId: ID; at: string; text: string; durationMs?: number }
   | { type: "tool_call"; id: ID; turnId: ID; at: string; call: ToolCall }

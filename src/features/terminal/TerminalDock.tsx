@@ -58,7 +58,11 @@ function Dock() {
       fit()
       ro = new ResizeObserver(() => requestAnimationFrame(fit))
       ro.observe(el)
-      e.term.focus()
+      // the terminal takes the keyboard when you open it, not when it follows you to another
+      // session (you were typing in that session's prompt box)
+      const a = document.activeElement as HTMLElement | null
+      const typingElsewhere = !!a && a !== document.body && !el.contains(a) && (a.tagName === "TEXTAREA" || a.tagName === "INPUT")
+      if (!typingElsewhere) e.term.focus()
       return true
     }
     if (!attach()) {

@@ -5,25 +5,33 @@
  * "PerFormance haRness"; this keeps abbreviations without the random hits.
  * Both arguments must already be lowercased. Returns 0 for no match, else 8–25 (fewer chunks = higher).
  */
-export function chunkScore(tok: string, text: string, ti = 0, from = 0, chunks = 0): number {
+export function chunkScore(tok: string, text: string, ti = 0, from = 0, chunks = 0, failed: Set<number> = new Set()): number {
+  // a (token position, text position) pair that failed once fails again: without this, a title
+  // with many words sharing first letters made the search backtrack exponentially
+  const key = ti * 100_003 + from
+  if (failed.has(key)) return 0
   for (let p = from; p < text.length; p++) {
     if (text[p] !== tok[ti] || !isWordStart(text, p)) continue
     let k = 0
     while (ti + k < tok.length && text[p + k] === tok[ti + k]) k++
     for (let len = k; len >= 1; len--) {
       if (ti + len === tok.length) return Math.max(8, 25 - chunks * 4)
-      const r = chunkScore(tok, text, ti + len, p + len, chunks + 1)
+      const r = chunkScore(tok, text, ti + len, p + len, chunks + 1, failed)
       if (r) return r
     }
   }
+  failed.add(key)
   return 0
 }
 
-/** Position `i` starts a word (start of text, or after a non-alphanumeric character). */
+const WORD_CHAR = /[\p{L}\p{N}]/u
+
+/** Position `i` starts a word (start of text, or after a character that is not a letter or digit, in any script). */
 export function isWordStart(text: string, i: number) {
   if (i === 0) return true
   const c = text.charCodeAt(i - 1)
-  return !((c >= 48 && c <= 57) || (c >= 97 && c <= 122))
+  if (c < 128) return !((c >= 48 && c <= 57) || (c >= 97 && c <= 122) || (c >= 65 && c <= 90))
+  return !WORD_CHAR.test(text[i - 1])
 }
 
 /**

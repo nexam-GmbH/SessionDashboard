@@ -26,7 +26,7 @@ function Root() {
 const Null = () => null
 
 const rootRoute = createRootRoute({ component: Root })
-const paths = ["/", "/new", "/new/$repoId", "/session/$sessionId", "/review/$sessionId", "/settings", "/archive", "/usage"] as const
+const paths = ["/", "/new", "/new/$repoId", "/session/$sessionId", "/review/$sessionId", "/settings", "/archive", "/history", "/usage"] as const
 const children = paths.map((path) => createRoute({ getParentRoute: () => rootRoute, path, component: Null }))
 
 export const router = createRouter({

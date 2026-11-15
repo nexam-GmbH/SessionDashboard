@@ -306,7 +306,7 @@ pub fn run(args: &[String]) -> i32 {
     if let Ok(listener) = TcpListener::bind("127.0.0.1:0") {
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         let _ = std::fs::create_dir_all(registry());
-        let _ = std::fs::write(&reg, serde_json::json!({ "port": port, "token": token, "wrapper": std::process::id() }).to_string());
+        write_private(&reg, &serde_json::json!({ "port": port, "token": token, "wrapper": std::process::id() }).to_string());
         let w = writer.clone();
         let token = token.clone();
         std::thread::spawn(move || serve(listener, w, token));
@@ -396,3 +396,27 @@ fn serve(listener: TcpListener, w: Writer, token: String) {
     }
 }
 
+
+/// The registry entry holds the token that lets a reply be typed into this terminal: readable by
+/// this user only (folder 0700, file 0600), written whole (a temp file renamed into place).
+fn write_private(path: &std::path::Path, body: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        let tmp = path.with_extension("json.tmp");
+        let ok = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(body.as_bytes())
+        });
+        if ok.is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::write(path, body);
+    }
+}

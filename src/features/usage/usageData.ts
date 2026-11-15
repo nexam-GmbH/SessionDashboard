@@ -52,6 +52,8 @@ const PRICES: [RegExp, number, number, number][] = [
   [/fable-5-1|mythos-5-1/, 10, 50, 0.25],
   [/fable-5|mythos-5/, 10, 50, 1],
   [/opus-5-5/, 4, 20, 0.2],
+  // Opus 4 and 4.1 cost three times what later Opus models do
+  [/opus-4-(?:1|2025)/, 15, 75, 1.5],
   [/opus-5|opus-4/, 5, 25, 0.5],
   [/sonnet-5-5/, 2, 10, 0.1],
   [/sonnet-5/, 2, 10, 0.2],

@@ -24,7 +24,7 @@ export const CardFrame = forwardRef<
   HTMLElement,
   {
     tone: "perm" | "input"
-    icon: ReactNode
+    icon?: ReactNode
     title: ReactNode
     meta?: ReactNode
     /** right side of the title line, before the pager (e.g. a details toggle) */
@@ -32,17 +32,20 @@ export const CardFrame = forwardRef<
     pager?: Pager
     children?: ReactNode
     footer?: ReactNode
+    /** left of the buttons (a note: "Approve in your terminal") */
+    footerNote?: ReactNode
     onKeyDown?: (e: KeyboardEvent<HTMLElement>) => void
     className?: string
     label: string
     /** keyboard model for screen readers (the visible key hints only show while focused) */
     keyHint?: string
   }
->(function CardFrame({ tone, icon, title, meta, aside, pager, children, footer, onKeyDown, className, label, keyHint }, ref) {
+>(function CardFrame({ title, meta, aside, pager, children, footer, footerNote, onKeyDown, className, label, keyHint }, ref) {
   const hintId = useId()
   return (
-    // a labelled region (landmark): focus lands here when a request arrives, and screen reader
-    // users can jump to it; the dock around it is the polite live region that announces it
+    // Claude Code desktop's request card, in the conversation: a plain bordered block, the question
+    // in bold, what it is about under it, the answers bottom right. A labelled region: focus lands
+    // here when a request arrives, and screen reader users can jump to it
     <section
       ref={ref}
       role="region"
@@ -50,32 +53,27 @@ export const CardFrame = forwardRef<
       aria-describedby={keyHint ? hintId : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      className={cn(
-        "group/card overflow-hidden rounded-md border bg-muted outline-none focus-visible:ring-1 focus-visible:ring-ring/70",
-        tone === "perm" ? "border-st-perm/45" : "border-st-input/40",
-        className,
-      )}
+      className={cn("group/card my-2 rounded-xl border border-foreground/12 bg-background px-4 pt-3.5 pb-3 outline-none focus-visible:border-foreground/25", className)}
     >
-      <header className={cn("flex min-h-8 min-w-0 items-center gap-2 px-2.5 py-1", tone === "perm" ? "bg-st-perm-tint/70" : "bg-st-input-tint/70")}>
-        <span className={cn("inline-flex shrink-0", tone === "perm" ? "text-st-perm" : "text-st-input")}>{icon}</span>
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-sm leading-[18px] font-medium text-foreground">{title}</div>
-        {meta}
+      <header className="flex min-w-0 items-start gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-[15px] leading-6 font-semibold text-foreground">{title}</div>
+        {meta && <div className="flex h-6 shrink-0 items-center gap-2">{meta}</div>}
         {aside}
         {pager && pager.total > 1 && (
-          <span className="flex shrink-0 items-center text-xs text-muted-foreground/70">
-            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-5 items-center justify-center rounded-sm hover:bg-accent hover:text-foreground", FOCUS)}>
-              <ChevronLeft size={12} />
+          <span className="flex h-6 shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
+            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground", FOCUS)}>
+              <ChevronLeft size={14} />
             </button>
-            <span className="tabular" title="Pending requests">
+            <span className="tabular">
               <span aria-hidden>
-                {pager.index + 1}/{pager.total}
+                {pager.index + 1} of {pager.total}
               </span>
               <span className="sr-only">
                 Request {pager.index + 1} of {pager.total}
               </span>
             </span>
-            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-5 items-center justify-center rounded-sm hover:bg-accent hover:text-foreground", FOCUS)}>
-              <ChevronRight size={12} />
+            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground", FOCUS)}>
+              <ChevronRight size={14} />
             </button>
           </span>
         )}
@@ -85,11 +83,35 @@ export const CardFrame = forwardRef<
           </span>
         )}
       </header>
-      {children && <div className="border-t border-border/60 px-2.5 py-2">{children}</div>}
-      {footer && <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 px-2.5 py-2">{footer}</div>}
+      {children && <div className="mt-1.5 flex flex-col gap-2 text-sm text-muted-foreground">{children}</div>}
+      {footer && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          {footerNote && <span className="mr-auto text-xs text-muted-foreground/70">{footerNote}</span>}
+          {footer}
+        </div>
+      )}
     </section>
   )
 })
+
+/** Key chips inside a button ("⇧ Ctrl ↵"), the way Claude Code desktop labels its card buttons. */
+export function KeyChips({ keys, dark }: { keys: string[]; dark?: boolean }) {
+  return (
+    <span aria-hidden className="ml-1 hidden items-center gap-0.5 sm:inline-flex">
+      {keys.map((k) => (
+        <kbd
+          key={k}
+          className={cn(
+            "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border px-1 font-sans text-[11px] leading-none",
+            dark ? "border-background/25 text-background/70" : "border-foreground/15 text-muted-foreground",
+          )}
+        >
+          {k}
+        </kbd>
+      ))}
+    </span>
+  )
+}
 
 /** Small chevron that reveals a card's secondary details (cwd, description). */
 export function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
@@ -161,7 +183,7 @@ export function FeedbackField({
   )
 }
 
-/** Option button; its number key and the ⏎ hint show only while the card has focus. */
+/** A card's answer button: Deny gray, the main answer white, key chips inside (Claude Code desktop). */
 export function OptionButton({
   n,
   children,
@@ -169,15 +191,19 @@ export function OptionButton({
   onClick,
   disabled,
   enter,
+  keys,
   title,
 }: {
-  n: number
+  /** its number key (1–9) while the card has focus; none when 0 */
+  n?: number
   children: ReactNode
   variant: "primary" | "secondary" | "quiet"
   onClick: () => void
   disabled?: boolean
-  /** this option is taken by Enter */
+  /** this option is taken by Enter while the card has focus */
   enter?: boolean
+  /** a shortcut that works anywhere in the session ("Ctrl ↵") */
+  keys?: string[]
   title?: string
 }) {
   return (
@@ -187,18 +213,17 @@ export function OptionButton({
       disabled={disabled}
       title={title}
       className={cn(
-        "inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
+        "inline-flex h-8 max-w-full min-w-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
         FOCUS,
         // on the light primary the ring needs an offset to stay visible
-        variant === "primary" && "focus-visible:ring-offset-1 focus-visible:ring-offset-muted",
-        variant === "primary" && "border-transparent bg-foreground text-background hover:bg-foreground/88",
-        variant === "secondary" && "border-border bg-muted text-foreground hover:border-input hover:bg-accent",
-        variant === "quiet" && "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
+        variant === "primary" && "bg-foreground text-background hover:bg-foreground/88 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+        variant === "secondary" && "bg-secondary text-foreground hover:bg-accent",
+        variant === "quiet" && "bg-secondary text-foreground hover:bg-accent",
       )}
     >
-      <span aria-hidden className={cn("tabular hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/60" : "text-muted-foreground/70")}>{n}</span>
+      {!!n && <span aria-hidden className={cn("tabular hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/55" : "text-muted-foreground/70")}>{n}</span>}
       <span className="min-w-0 truncate">{children}</span>
-      {enter && <span aria-hidden className={cn("hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/60" : "text-muted-foreground/70")}>⏎</span>}
+      {keys ? <KeyChips keys={keys} dark={variant === "primary"} /> : enter && <span aria-hidden className={cn("hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/55" : "text-muted-foreground/70")}>⏎</span>}
     </button>
   )
 }

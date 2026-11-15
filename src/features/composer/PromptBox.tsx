@@ -5,9 +5,10 @@
 // in as `footer` and sits under the box. Shared by the chat and the New session screen; the
 // chat keeps its text per session (`value` / `onValueChange`), and its key semantics (Esc stops,
 // ↑ edits a queued message, Esc Esc rewinds, Shift+Tab cycles the mode) come in through callbacks.
-import { addImages, imageUrl } from "./images"
+import { addFiles as keepFiles, addImages, imageUrl } from "./images"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
-import { ArrowUp, AtSign, Check, FileText, FolderPlus, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
+import { AtSign, Check, CornerDownLeft, FileText, FolderPlus, GitFork, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
+import { MOD } from "@/components/common/bits"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +63,12 @@ export interface PromptBoxProps {
   /** ↑ in an empty box: return true when it did something (opened the newest queued message) */
   onArrowUpEmpty?: () => boolean
   onShiftTab?: () => void
+  /** ↑ / ↓ through what you sent before (Claude Code's prompt history): the text to show, or null */
+  onHistory?: (dir: -1 | 1, current: string) => string | null
+  /** while Claude works: Ctrl+Enter stops its current step and sends this at once */
+  onInterruptSend?: (text: string, attachments: string[]) => void
+  /** Ctrl+Alt+Enter: this message starts a copy of the session (a fork) */
+  onForkSend?: (text: string, attachments: string[]) => void
   /** "+ → Add folder": the repos you can add (`--add-dir`) and the ones already added */
   folders?: { candidates: { id: ID; name: string }[]; added: ID[]; onAdd: (id: ID) => void; onRemove?: (id: ID) => void; chips?: boolean }
   /** above the box's text, inside it (a note about the message being read) */
@@ -87,14 +94,18 @@ const Speech: SpeechCtor | undefined =
 
 const ICON_BTN =
   "inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-foreground"
-const PRIMARY_BTN =
-  "inline-flex size-8 items-center justify-center rounded-lg bg-foreground text-background outline-none transition-colors hover:bg-foreground/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:bg-accent disabled:text-muted-foreground"
+/** Send: the ↵ of Claude Code desktop's prompt box, filled once there is something to send. */
+const SEND_BTN =
+  "inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-50"
+/** Stop: a round button with a square, while Claude works. */
+const STOP_BTN =
+  "inline-flex size-8 items-center justify-center rounded-full bg-foreground text-background outline-none transition-colors hover:bg-foreground/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
 
 const EMPTY: PromptValue = { text: "", attachments: [] }
 const isImage = (f: File) => f.type.startsWith("image/")
 
 export function PromptBox(props: PromptBoxProps) {
-  const { files, placeholder, keysHint, hint, sendHint, busy, onStop, onSubmit, folders, header, footer, size = "md", autoFocus, disabled, editing } = props
+  const { files, placeholder, keysHint, sendHint, busy, onStop, onSubmit, folders, header, footer, size = "md", autoFocus, disabled, editing } = props
   const fileSet = useMemo(() => new Set(files), [files])
   const repoNames = useApp((s) => s.repos)
   const [own, setOwn] = useState<PromptValue>(() => (props.initialText ? { text: props.initialText, attachments: [] } : EMPTY))
@@ -105,6 +116,10 @@ export function PromptBox(props: PromptBoxProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [anchor, setAnchor] = useState({ left: 0, bottom: 0 })
   const [listening, setListening] = useState(false)
+  // browsing the prompt history (↑ / ↓) until the text is edited
+  const browsing = useRef(false)
+  // Settings → "Send with": Enter (Claude Code) or Ctrl+Enter (Enter adds a line)
+  const modSends = useApp((s) => s.settings.sendKey === "mod-enter")
   const [dragging, setDragging] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -213,7 +228,8 @@ export function PromptBox(props: PromptBoxProps) {
   const addNames = (names: string[]) => names.length && update((v) => ({ ...v, attachments: [...v.attachments, ...names] }))
   /** files go by name; pictures go with the message (and show in the chat) */
   const addFiles = (list: File[]) => {
-    addNames(list.filter((f) => !isImage(f)).map((f) => f.name))
+    const docs = list.filter((f) => !isImage(f))
+    if (docs.length) void keepFiles(docs).then(addNames)
     const imgs = list.filter(isImage)
     if (imgs.length) void addImages(imgs).then(addNames)
   }
@@ -284,6 +300,7 @@ export function PromptBox(props: PromptBoxProps) {
           placeholder={placeholder}
           className={cn("px-4 pt-3 pb-1 text-sm leading-[22px]", size === "lg" && "min-h-[88px]")}
           onChange={(e) => {
+            browsing.current = false
             setText(e.target.value)
             syncTrigger(e.target.value, e.target.selectionStart)
           }}
@@ -300,7 +317,8 @@ export function PromptBox(props: PromptBoxProps) {
             }
           }}
           onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing) return
+            // a CJK input method is composing: Enter confirms the word, it never sends (keyCode 229: WebKit's composing key)
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return
             if (menuOpen) {
               const idx = items.findIndex((i) => i.id === effectiveActive)
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -326,14 +344,55 @@ export function PromptBox(props: PromptBoxProps) {
                 return
               }
             }
-            if (e.key === "Enter" && !e.shiftKey) {
+            const mod = e.metaKey || e.ctrlKey
+            if (e.key === "Enter" && mod && e.altKey && props.onForkSend) {
+              // Ctrl+Alt+Enter: send in a forked session (Claude Code desktop)
               e.preventDefault()
-              submit(e.metaKey || e.ctrlKey ? "now" : "queue")
+              const value = text.trim()
+              if (value && !editing && !disabled) {
+                props.onForkSend(value, attachments)
+                update(() => EMPTY)
+              }
+            } else if (e.key === "Enter" && mod && busy && props.onInterruptSend && !editing) {
+              // Ctrl+Enter while Claude works: stop its current step, this message is read now
+              e.preventDefault()
+              const value = text.trim()
+              if (value && !disabled) {
+                props.onInterruptSend(value, attachments)
+                update(() => EMPTY)
+                setTrigger(null)
+              }
+            } else if (e.key === "Enter" && !e.shiftKey && (modSends ? mod : true)) {
+              e.preventDefault()
+              submit(mod ? "now" : "queue")
             } else if (e.key === "Escape") {
               if (props.onEscape?.(e)) e.preventDefault()
               else if (!text) props.onEscapeEmpty?.(e)
-            } else if (e.key === "ArrowUp" && !text && props.onArrowUpEmpty) {
-              if (props.onArrowUpEmpty()) e.preventDefault()
+            } else if (e.key === "ArrowUp" && !e.shiftKey && !mod && !e.altKey) {
+              // the newest queued message first, then what you sent before (only from the first line)
+              const ta = e.currentTarget
+              const onFirstLine = !text.slice(0, ta.selectionStart).includes("\n")
+              if (!text && props.onArrowUpEmpty?.()) e.preventDefault()
+              else if (props.onHistory && onFirstLine && (!text || browsing.current)) {
+                const prev = props.onHistory(-1, text)
+                if (prev !== null) {
+                  e.preventDefault()
+                  browsing.current = true
+                  update((v) => ({ ...v, text: prev }))
+                  requestAnimationFrame(() => taRef.current?.setSelectionRange(0, 0))
+                }
+              }
+            } else if (e.key === "ArrowDown" && browsing.current && props.onHistory && !mod && !e.altKey) {
+              const ta = e.currentTarget
+              if (!text.slice(ta.selectionEnd).includes("\n")) {
+                const next = props.onHistory(1, text)
+                if (next !== null) {
+                  e.preventDefault()
+                  update((v) => ({ ...v, text: next }))
+                  if (!next) browsing.current = false
+                  requestAnimationFrame(() => taRef.current?.setSelectionRange(next.length, next.length))
+                }
+              }
             } else if (e.key === "Tab" && e.shiftKey && props.onShiftTab) {
               e.preventDefault()
               props.onShiftTab()
@@ -418,8 +477,8 @@ export function PromptBox(props: PromptBoxProps) {
           {showStop ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" aria-label="Stop" onClick={onStop} className={PRIMARY_BTN}>
-                  <Square size={12} fill="currentColor" />
+                <button type="button" aria-label="Stop" onClick={onStop} className={STOP_BTN}>
+                  <Square size={10} fill="currentColor" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top">Stop · Esc</TooltipContent>
@@ -432,26 +491,36 @@ export function PromptBox(props: PromptBoxProps) {
                   aria-label={editing ? "Save queued message" : "Send"}
                   disabled={(!text.trim() && !editing) || disabled}
                   onClick={() => submit("queue")}
-                  className={PRIMARY_BTN}
+                  className={cn(SEND_BTN, text.trim() && "bg-foreground text-background hover:bg-foreground/85 hover:text-background")}
                 >
-                  {editing ? <Check size={16} strokeWidth={2.4} /> : <ArrowUp size={16} strokeWidth={2.4} />}
+                  {editing ? <Check size={16} strokeWidth={2.4} /> : <CornerDownLeft size={16} strokeWidth={2.2} />}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">{editing ? "Save · Enter" : sendHint}</TooltipContent>
+              <TooltipContent side="top" className="flex flex-col gap-0.5">
+                {editing ? (
+                  "Save · Enter"
+                ) : busy && props.onInterruptSend ? (
+                  <>
+                    <span>{sendHint}</span>
+                    <span className="text-background/70">Interrupt and send · {MOD}+Enter</span>
+                    {props.onForkSend && <span className="text-background/70">Send in a forked session · {MOD}+Alt+Enter</span>}
+                  </>
+                ) : (
+                  <>
+                    <span>{sendHint}</span>
+                    {props.onForkSend && (
+                      <span className="flex items-center gap-1 text-background/70">
+                        <GitFork size={11} /> Send in a forked session · {MOD}+Alt+Enter
+                      </span>
+                    )}
+                  </>
+                )}
+              </TooltipContent>
             </Tooltip>
           )}
         </div>
       </div>
-      {(footer || hint) && (
-        <div className={cn("flex min-h-8 min-w-0 flex-wrap items-center gap-1", hint && "justify-end")}>
-          {hint && (
-            <span aria-hidden className="invisible hidden min-w-0 flex-1 truncate px-2 @lg/composer:block text-xs text-muted-foreground/70 group-has-[textarea:focus]/composer:visible">
-              {hint}
-            </span>
-          )}
-          {footer}
-        </div>
-      )}
+      {footer && <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-1">{footer}</div>}
     </div>
   )
 }

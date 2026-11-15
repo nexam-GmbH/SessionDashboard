@@ -58,6 +58,13 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
   and tests come last; files not opened yet carry a dot; very large diffs suggest going turn by turn.
   Approving a plan can allow the checks it names (tests, builds) for the rest of the session.
 - **Git loose ends.** Worktrees and branches with uncommitted or unpushed work, per repository.
+- **Find any old session.** Every transcript's conversation is indexed once (seconds), then kept up to
+  date: `Ctrl+K` finds what was said in any session, in any language, and opens the chat at that
+  message; History lists every session by day; each project shows its latest finished sessions under
+  its running ones; old chats continue when you type into them.
+- **The chat of Claude Code desktop.** Permission prompts, questions and plans in the conversation,
+  queued messages you can edit or send now, Rewind (files and conversation, with Claude Code's own
+  snapshots) and Fork from any message, Find in chat, prompt history, attached files by path.
 - **Fast.** Sessions switch instantly, chats load from the end of their transcript, and nothing polls
   harder than it has to.
 
@@ -69,7 +76,13 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
 | `Ctrl+J` | Session waiting longest for you |
 | `Ctrl+1` … `Ctrl+9`, `Ctrl+0` | Session by position, overview |
 | `Alt+↑` / `Alt+↓` | Up / down the session list |
-| `Ctrl+K` | Search sessions, including past ones |
+| `Ctrl+K` | Search sessions and what was said in them (opens the chat at the message) |
+| `Ctrl+Shift+H` | History: every past session, by day |
+| `Ctrl+F` | Find in the chat on screen |
+| `Enter` / `Ctrl+Enter` / `Ctrl+Alt+Enter` | Send · interrupt and send · send in a forked session |
+| `↑` / `↓` in the prompt box | Earlier prompts of the session |
+| `Ctrl+Enter` / `Ctrl+Shift+Enter` on a request | Allow once · always allow |
+| `Ctrl+O` | Transcript view: Normal, Thinking, Verbose |
 | `Ctrl+N` | New session |
 | `` Ctrl+` `` | Terminal |
 | `Ctrl+B` | Show / hide the session list |

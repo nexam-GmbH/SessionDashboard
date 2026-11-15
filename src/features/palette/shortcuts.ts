@@ -1,8 +1,11 @@
 import { tinykeys } from "tinykeys"
+import { POPOUT } from "@/backend/mode"
 import { getApp } from "@/store/app"
 import {
+  currentSessionId,
   goToNextWaiting,
   jumpToSession,
+  openHistory,
   openNewSession,
   openOverview,
   openPalette,
@@ -15,6 +18,7 @@ import { stepZoom } from "@/app/zoom"
 import { openPicker } from "@/features/composer/options"
 import { toggleTerminal } from "@/features/terminal/terminals"
 import { cycleTranscriptView } from "@/features/session-view/transcript/view"
+import { openFind } from "@/features/session-view/find/find"
 
 /**
  * Global keyboard map (tinykeys, MIT), terminal-tab speed:
@@ -26,6 +30,7 @@ import { cycleTranscriptView } from "@/features/session-view/transcript/view"
  *   Ctrl+Shift+M / I / E   permission mode, model, effort menus (Claude Code desktop)
  *   Ctrl+`          the terminal of what is on screen
  *   Ctrl+O          transcript view: Normal → Thinking → Verbose (Claude Code desktop)
+ *   Ctrl+F          find in the chat on screen (its whole history)
  */
 function blocked() {
   const s = getApp()
@@ -43,6 +48,28 @@ function mod(fn: () => void, overDialogs = false) {
 }
 
 export function installShortcuts() {
+  // a session in its own window: only what concerns that session (navigating would swap the
+  // window to another session, or to an overview it never shows)
+  if (POPOUT) {
+    tinykeys(
+      window,
+      {
+        "$mod+Shift+KeyM": mod(() => openPicker("mode")),
+        "$mod+Shift+KeyI": mod(() => openPicker("model")),
+        "$mod+Shift+KeyE": mod(() => openPicker("effort")),
+        "$mod+KeyO": mod(() => cycleTranscriptView()),
+        "$mod+KeyF": mod(() => {
+          const id = currentSessionId()
+          if (id) openFind(id)
+        }),
+        "$mod+Backquote": mod(() => toggleTerminal(), true),
+        "$mod+Equal": mod(() => stepZoom(1), true),
+        "$mod+Minus": mod(() => stepZoom(-1), true),
+      },
+      { ignore: (e) => e.repeat || e.isComposing },
+    )
+    return
+  }
   const digits: Record<string, (e: KeyboardEvent) => void> = {}
   for (let n = 1; n <= 9; n++) digits[`$mod+Digit${n}`] = mod(() => jumpToSession(n))
   tinykeys(window, {
@@ -56,6 +83,11 @@ export function installShortcuts() {
     "$mod+Shift+KeyI": mod(() => openPicker("model")),
     "$mod+Shift+KeyE": mod(() => openPicker("effort")),
     "$mod+KeyO": mod(() => cycleTranscriptView()),
+    "$mod+Shift+KeyH": mod(() => openHistory()),
+    "$mod+KeyF": mod(() => {
+      const id = currentSessionId()
+      if (id) openFind(id)
+    }),
     ...Object.fromEntries(
       Array.from({ length: 9 }, (_, i) => [
         `Alt+Digit${i + 1}`,

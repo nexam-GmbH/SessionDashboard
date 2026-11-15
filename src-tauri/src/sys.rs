@@ -304,3 +304,9 @@ pub fn fix_path() {
 pub fn helper_path() -> Option<&'static str> {
     SHELL_PATH.get().map(String::as_str)
 }
+
+/// Files you attach to a message (dropped or picked in the prompt box): kept here, and every session
+/// the app runs may read this folder (`--add-dir`), so Claude opens them without asking.
+pub fn attachments_dir() -> std::path::PathBuf {
+    config_dir().join("attachments")
+}

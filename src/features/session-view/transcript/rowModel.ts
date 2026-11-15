@@ -23,6 +23,7 @@ export type Row =
   | { kind: "notice"; key: string; itemId: ID; turnId: ID }
   | { kind: "receipt"; key: string; turnId: ID; receipt: NonNullable<Turn["receipt"]> }
   | { kind: "done"; key: string; turnId: ID; durationMs: number; at?: string }
+  | { kind: "date"; key: string; turnId: ID; at: string }
 
 /**
  * Walk `order` once. Item *types* never change after creation, so the row list
@@ -41,6 +42,8 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
   // a thought lasts until the next thing Claude produced (real transcripts carry no duration)
   let openThought: Extract<Row, { kind: "thought" }> | null = null
   let openThoughtAt = 0
+  // a line with the day where the conversation crosses into another one
+  let lastDay = ""
 
   const flushGroup = () => {
     if (!group.length || !groupTurn) return
@@ -91,9 +94,15 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
     if (it.type === "thought" && view === "normal") continue
     flushGroup()
     switch (it.type) {
-      case "user_message":
+      case "user_message": {
+        const day = it.at.slice(0, 10)
+        if (day && day !== lastDay) {
+          if (lastDay) rows.push({ kind: "date", key: `day:${id}`, turnId: it.turnId, at: it.at })
+          lastDay = day
+        }
         rows.push({ kind: "user", key: id, itemId: id, turnId: it.turnId })
         break
+      }
       case "thought": {
         const row: Extract<Row, { kind: "thought" }> = { kind: "thought", key: id, itemId: id, turnId: it.turnId, durationMs: it.durationMs, live: it.turnId === liveTurn }
         rows.push(row)
@@ -152,6 +161,8 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
       return 26
     case "done":
       return 28
+    case "date":
+      return 40
     case "compaction":
       return 36
     case "notice":

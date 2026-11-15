@@ -13,7 +13,15 @@ struct Term {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
+    /// where its output goes now: a window that attaches again (a reload, a second window) takes it over
+    out: Arc<Mutex<Option<Channel<InvokeResponseBody>>>>,
+    /// the last output, replayed to a window that attaches to a running shell
+    scrollback: Arc<Mutex<Vec<u8>>>,
+    id: u64,
 }
+
+static TERM_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+const SCROLLBACK: usize = 256 * 1024;
 
 /// Open terminals by the UI's key (one per folder).
 #[derive(Default, Clone)]
@@ -64,16 +72,26 @@ fn expand(p: &str) -> String {
 /// Start a shell in `cwd` and stream what it prints to `on_data`. An empty message means it exited.
 /// A key that is already open is kept (the UI re-attaches to it).
 pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
-    if terms.0.lock().unwrap().contains_key(&key) {
-        return Ok(false);
+    {
+        let map = terms.0.lock().unwrap();
+        if let Some(t) = map.get(&key) {
+            // already running: this window takes its output over, starting with what it printed
+            let back = t.scrollback.lock().unwrap().clone();
+            if !back.is_empty() {
+                let _ = on_data.send(InvokeResponseBody::Raw(back));
+            }
+            *t.out.lock().unwrap() = Some(on_data);
+            return Ok(false);
+        }
     }
     let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
     let mut cmd = match host.as_deref().filter(|h| !h.is_empty()) {
         // a session on a VPS: a login shell there, in its folder
         Some(h) => {
+            crate::claude::remote::host_ok(h)?;
             let mut c = CommandBuilder::new(std::env::var("SD_SSH").unwrap_or_else(|_| "ssh".into()));
             let dir = if cwd.starts_with('/') || cwd.starts_with('~') { cwd.clone() } else { "~".into() };
-            c.args(["-t", h, &format!("cd {} 2>/dev/null; exec \"$SHELL\" -l", shell_quote(&dir))]);
+            c.args(["-t", "--", h, &format!("cd {} 2>/dev/null; exec \"$SHELL\" -l", shell_quote(&dir))]);
             c
         }
         None => shell(),
@@ -87,6 +105,13 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
     if let Some(p) = crate::sys::helper_path() {
         cmd.env("PATH", p);
     }
+    // the app may itself run under Claude Code (its variables would make `claude` refuse to start
+    // here as a "nested session")
+    for (k, _) in std::env::vars() {
+        if k == "CLAUDECODE" || k.starts_with("CLAUDE_CODE_") || k == "CLAUDE_PID" || k == "CLAUDE_EFFORT" {
+            cmd.env_remove(k);
+        }
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "session-dashboard");
@@ -94,7 +119,10 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    terms.0.lock().unwrap().insert(key.clone(), Term { master: pair.master, writer, child });
+    let id = TERM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out = Arc::new(Mutex::new(Some(on_data)));
+    let scrollback = Arc::new(Mutex::new(Vec::new()));
+    terms.0.lock().unwrap().insert(key.clone(), Term { master: pair.master, writer, child, out: out.clone(), scrollback: scrollback.clone(), id });
     let all = terms.clone();
     // reader: the pty's bytes as they come
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
@@ -115,24 +143,45 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
     // output (a build log, `cat`) is a few messages instead of thousands
     std::thread::spawn(move || {
         while let Ok(first) = rx.recv() {
-            let mut out = first;
+            let mut chunk = first;
             let until = std::time::Instant::now() + std::time::Duration::from_millis(5);
-            while out.len() < 64 * 1024 {
+            while chunk.len() < 64 * 1024 {
                 let left = until.saturating_duration_since(std::time::Instant::now());
                 match rx.recv_timeout(left) {
-                    Ok(more) => out.extend_from_slice(&more),
+                    Ok(more) => chunk.extend_from_slice(&more),
                     Err(_) => break,
                 }
             }
-            if on_data.send(InvokeResponseBody::Raw(out)).is_err() {
-                break;
+            {
+                let mut back = scrollback.lock().unwrap();
+                back.extend_from_slice(&chunk);
+                if back.len() > SCROLLBACK {
+                    let cut = back.len() - SCROLLBACK;
+                    back.drain(..cut);
+                }
+            }
+            // the window that shows it now (a closed window's channel failing doesn't end the shell)
+            let ch = out.lock().unwrap().clone();
+            if let Some(ch) = ch {
+                let _ = ch.send(InvokeResponseBody::Raw(chunk));
             }
         }
-        // the shell ended (exit, or closed): forget it and tell the UI
-        if let Some(mut t) = all.0.lock().unwrap().remove(&key) {
+        // the shell ended (exit, or closed): forget this one (not a newer shell under the same key),
+        // wait for it outside the lock, and tell the UI
+        let mine = {
+            let mut map = all.0.lock().unwrap();
+            match map.get(&key) {
+                Some(t) if t.id == id => map.remove(&key),
+                _ => None,
+            }
+        };
+        if let Some(mut t) = mine {
             let _ = t.child.wait();
         }
-        let _ = on_data.send(InvokeResponseBody::Raw(Vec::new()));
+        let ch = out.lock().unwrap().clone();
+        if let Some(ch) = ch {
+            let _ = ch.send(InvokeResponseBody::Raw(Vec::new()));
+        }
     });
     Ok(true)
 }
@@ -147,7 +196,7 @@ pub fn write(terms: &Terms, key: &str, data: &str) -> Result<(), String> {
 #[cfg(test)]
 impl Terms {
     pub fn insert_for_test(&self, key: &str, master: Box<dyn portable_pty::MasterPty + Send>, writer: Box<dyn Write + Send>, child: Box<dyn portable_pty::Child + Send + Sync>) {
-        self.0.lock().unwrap().insert(key.to_string(), Term { master, writer, child });
+        self.0.lock().unwrap().insert(key.to_string(), Term { master, writer, child, out: Arc::new(Mutex::new(None)), scrollback: Arc::new(Mutex::new(Vec::new())), id: 0 });
     }
 }
 
@@ -174,7 +223,8 @@ pub fn resize(terms: &Terms, key: &str, cols: u16, rows: u16) -> Result<(), Stri
 }
 
 pub fn close(terms: &Terms, key: &str) {
-    if let Some(mut t) = terms.0.lock().unwrap().remove(key) {
+    let t = terms.0.lock().unwrap().remove(key);
+    if let Some(mut t) = t {
         let _ = t.child.kill();
     }
 }

@@ -7,8 +7,8 @@ import { Cloud, FolderGit2, Layers, Pencil, Plus, Server, TriangleAlert } from "
 import { EditableTitle, SessionMenu, startRename } from "@/features/rename/Rename"
 import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
-import { selectLiveSessionIds, selectNeedsYou, shownStatus, useHomeRepos, useSession, useVisibleRepos } from "@/store/selectors"
-import { openNewSession, openSession } from "@/store/actions"
+import { selectOverviewSessionIds, selectNeedsYou, shownStatus, useHomeRepos, useSession, useVisibleRepos } from "@/store/selectors"
+import { openNewSession, openSession, setWorkspace } from "@/store/actions"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { ModeMark } from "@/components/common/ModeMark"
 import { riskOf } from "@/features/requests/risk"
@@ -99,10 +99,18 @@ function OverviewSkeleton() {
 
 /** No running sessions yet: say how they get here. */
 function NoSessions() {
+  // a workspace with nothing running while others have sessions: say so, and offer them all
+  const ws = useApp((s) => (s.settings.workspace ? s.settings.workspaces.find((w) => w.id === s.settings.workspace)?.name : undefined))
+  const elsewhere = useApp((s) => (s.settings.workspace ? Object.values(s.sessions).filter((x) => !x.archived && x.control !== "history").length : 0))
   return (
     <div className="flex h-full w-full flex-col overflow-auto">
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-        <p className="text-base text-foreground">No Claude Code sessions running</p>
+        <p className="text-base text-foreground">{ws ? `Nothing running in ${ws}` : "No Claude Code sessions running"}</p>
+        {ws && elsewhere > 0 && (
+          <button onClick={() => setWorkspace("")} className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+            {elsewhere} running in other workspaces · show all
+          </button>
+        )}
         <p className="max-w-[440px] text-sm text-muted-foreground">
           Start <code className="font-mono text-xs">claude</code> in any project and it shows up here by itself, or start one from here.
         </p>
@@ -144,7 +152,7 @@ function Origin({ s }: { s: Session }) {
 const HomeTier = memo(function HomeTier({ repoId }: { repoId: ID }) {
   const name = useApp((s) => s.repos[repoId]?.name)
   const path = useApp((s) => s.repos[repoId]?.rootPath)
-  const ids = useApp(useShallow((s) => selectLiveSessionIds(s, repoId)))
+  const ids = useApp(useShallow((s) => selectOverviewSessionIds(s, repoId)))
   return (
     <section className="flex max-w-[calc(100vw-64px)] flex-col items-center gap-2.5" aria-label={`${name}: all repos`}>
         <div className="flex h-9 items-center gap-2 rounded-xl bg-card pr-1 pl-2.5 ring-1 ring-foreground/10 transition-shadow hover:ring-foreground/20">
@@ -186,7 +194,7 @@ const RepoColumn = memo(function RepoColumn({ repoId }: { repoId: ID }) {
   const machine = useApp((s) => s.repos[repoId]?.machine)
   const git = gitLine(useApp((s) => s.repos[repoId]?.git))
   const main = useApp((s) => s.mainSessionId)
-  const ids = useApp(useShallow((s) => selectLiveSessionIds(s, repoId).filter((id) => id !== main)))
+  const ids = useApp(useShallow((s) => selectOverviewSessionIds(s, repoId).filter((id) => id !== main)))
   const Icon = machine === "cloud" ? Cloud : machine ? Server : FolderGit2
   return (
     <section className="ov-col" aria-label={name}>
@@ -284,7 +292,7 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
           <h3
             className={cn(
               "min-w-0 flex-1 text-sm leading-5 font-medium break-words",
-              main ? "text-base leading-[20px]" : "line-clamp-2",
+              main ? "text-base leading-[20px]" : "line-clamp-3",
               quiet ? "text-muted-foreground" : "text-foreground",
             )}
           >
@@ -301,7 +309,8 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
               onClick={() => startRename(s.id, "overview")}
               aria-label={`Rename ${s.title}`}
               title="Rename (or right-click the card)"
-              className="pointer-events-auto relative z-10 -mt-0.5 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity group-hover/card:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
+              // over the card's corner, not beside the title: it takes no width from it
+              className="pointer-events-auto absolute -top-1.5 -right-1.5 z-10 flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-muted-foreground/70 opacity-0 transition-opacity group-hover/card:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
             >
               <Pencil size={12} />
             </button>

@@ -9,7 +9,8 @@ import { DebugPanel } from "./components/debug-panel.tsx"
 import { TooltipProvider } from "./components/ui/tooltip"
 import { startEngine } from "./mocks/engine"
 import { installShortcuts } from "./features/palette/shortcuts"
-import { installZoom } from "./app/zoom"
+import { installChatWidth, installZoom } from "./app/zoom"
+import { installTitleTooltips } from "./components/title-tooltips"
 import { installChrome } from "./app/chrome"
 import { POPOUT, REAL } from "./backend/mode"
 import { IN_TAURI } from "./lib/platform"
@@ -30,6 +31,8 @@ if (REAL) {
 else startEngine()
 installShortcuts()
 installZoom()
+installChatWidth()
+installTitleTooltips()
 installChrome()
 if (!POPOUT) startUsage()
 

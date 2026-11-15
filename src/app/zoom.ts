@@ -32,3 +32,16 @@ export function installZoom() {
     (z) => void apply(z ?? 1),
   )
 }
+
+/** Settings → Chat width: the readable column (Claude Code desktop) or a wide one. */
+export function installChatWidth() {
+  const set = (w: string | undefined) => {
+    if (w === "wide") document.documentElement.dataset.chatWidth = "wide"
+    else delete document.documentElement.dataset.chatWidth
+  }
+  set(getApp().settings.chatWidth)
+  useApp.subscribe(
+    (s) => s.settings.chatWidth,
+    (w) => set(w),
+  )
+}

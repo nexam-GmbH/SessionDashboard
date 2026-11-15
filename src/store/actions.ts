@@ -12,7 +12,7 @@ import { getApp, setApp, type Settings } from "./app"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway } from "./away"
-import { realRename, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
+import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
 
 /**
  * Store actions — plain functions so components, palette commands, the mock
@@ -100,18 +100,18 @@ export function closeSettings() {
   setApp({ settingsOpen: null })
 }
 export function openArchive() {
-  navigate("/archive")
+  navigate("/history")
+}
+export function openHistory() {
+  navigate("/history")
 }
 
 /** Ctrl+Tab: the n-th most recent session other than the current one (1 = the previous one). */
 export function recentSession(n = 1): ID | null {
   const cur = currentSessionId()
-  const list = getApp().recent.filter((id) => id !== cur && isLive(getApp().sessions[id]))
+  // past sessions you opened count too: Ctrl+Tab goes back to the old chat you were reading
+  const list = getApp().recent.filter((id) => id !== cur && !!getApp().sessions[id] && !getApp().sessions[id].archived)
   return list[n - 1] ?? null
-}
-
-function isLive(s: Session | undefined) {
-  return !!s && !s.archived && s.control !== "history"
 }
 
 function sessionOrder(): ID[] {
@@ -150,7 +150,14 @@ export function markSeen(id: ID) {
 
 /** Archive = hide, never delete (user requirement). Restorable from the Archive view. */
 export function archiveSessions(ids: ID[]) {
-  if (REAL) realArchive(ids, true)
+  if (REAL) {
+    realArchive(ids, true)
+    // a session the app runs really stops (the list says "Interrupted (archived)")
+    for (const id of ids) {
+      const st = getApp().sessions[id]?.status
+      if (st === "working" || st === "starting") realInterrupt(id)
+    }
+  }
   const at = nowIso()
   setApp((s) => {
     const sessions = { ...s.sessions }
@@ -198,7 +205,9 @@ export const restoreSession = (id: ID) => restoreSessions([id])
 export function pinSession(id: ID, pinned?: boolean) {
   const s = getApp().sessions[id]
   if (!s) return
-  patchSession(id, { pinned: pinned ?? !s.pinned, updatedAt: s.updatedAt })
+  const on = pinned ?? !s.pinned
+  if (REAL) realPin(id, on)
+  patchSession(id, { pinned: on, updatedAt: s.updatedAt })
   setApp((st) => ({ structVersion: st.structVersion + 1 }))
 }
 
@@ -428,6 +437,12 @@ export interface NewSessionInput {
   fastMode?: boolean
   ultracode?: boolean
   outputStyle?: string
+  /** pictures pasted into the first message (data: URLs) */
+  images?: string[]
+  /** a subagent to run the session as (`--agent`) */
+  agent?: string
+  /** your own instructions added to the system prompt */
+  instructions?: string
 }
 
 export function createSession(input: NewSessionInput): ID {
@@ -448,11 +463,13 @@ export function createSession(input: NewSessionInput): ID {
       // the workspace's account, when it has its own
       configDir: st.settings.workspaces.find((w) => w.id === repo.workspace)?.configDir,
       prompt: input.prompt,
+      images: input.images,
       model: input.model,
       effort: input.effort,
       permissionMode: input.permissionMode,
       addDirs: [...input.additionalRepoIds.map((r) => st.repos[r]?.rootPath).filter(Boolean), ...outside],
-      appendSystemPrompt: note,
+      appendSystemPrompt: [note, input.instructions?.trim()].filter(Boolean).join("\n\n") || undefined,
+      agent: input.agent,
       name: input.title,
       worktree: input.where === "worktree-new" && !repo.isHome ? input.worktreeName : undefined,
       fastMode: input.fastMode,

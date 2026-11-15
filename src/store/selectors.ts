@@ -96,8 +96,9 @@ export const selectNeedsByWorkspace = memoOn(
     const out: Record<string, number> = {}
     for (const sess of Object.values(s.sessions)) {
       if (!isVisibleLive(sess) || !(NEEDS.has(sess.status) || childWaiting(s, sess.id))) continue
-      const ws = sess.repoId ? s.repos[sess.repoId]?.workspace : undefined
-      if (ws) out[ws] = (out[ws] ?? 0) + 1
+      // a repo in no workspace counts under "" (shown as "elsewhere" while a workspace is open)
+      const ws = (sess.repoId ? s.repos[sess.repoId]?.workspace : undefined) ?? ""
+      out[ws] = (out[ws] ?? 0) + 1
     }
     return out
   },
@@ -159,21 +160,40 @@ export const useStatusCounts = () => useApp(selectStatusCounts)
  * session in start order, then the most recent finished ones, up to Settings → "Recent sessions per
  * project". The mock world shows the running ones only.
  */
+/**
+ * A project's running sessions in start order: a row (and its Ctrl+number) never moves while it
+ * lives. Past sessions are listed apart (selectPastSessionIds), newest first.
+ */
 export const selectLiveSessionIds = memoKeyed(
-  (s) => `${s.structVersion}:${s.settings.recentPerRepo}`,
+  (s) => `${s.structVersion}`,
   (s, repoId) => {
-    const all = (s.sessionIdsByRepo[repoId] ?? []).map((id) => s.sessions[id]).filter((x) => x && !x.archived)
-    // running sessions in start order: a row (and its Ctrl+number) never moves while it lives
     const started = (a: Session, b: Session) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1)
-    const live = all.filter((x) => x.control !== "history").sort(started)
-    if (!REAL) return live.map((x) => x.id)
-    // then the latest finished ones, newest first, up to Settings → "Recent sessions per project"
-    const n = s.settings.recentPerRepo ?? 5
-    const recent = (a: Session, b: Session) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0)
-    const past = all.filter((x) => x.control === "history").sort(recent).slice(0, Math.max(0, n - live.length))
-    return [...live, ...past].map((x) => x.id)
+    return (s.sessionIdsByRepo[repoId] ?? [])
+      .map((id) => s.sessions[id])
+      .filter((x) => x && !x.archived && x.control !== "history")
+      .sort(started)
+      .map((x) => x.id)
   },
 )
+
+/** A project's past sessions (not archived), the newest first. */
+export const selectPastSessionIds = memoKeyed(
+  (s) => `${s.structVersion}:${s.statusVersion}`,
+  (s, repoId) =>
+    (s.sessionIdsByRepo[repoId] ?? [])
+      .map((id) => s.sessions[id])
+      .filter((x) => x && !x.archived && x.control === "history" && x.id !== s.mainSessionId)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+      .map((x) => x.id),
+)
+
+/** The overview's sessions of a project: running ones, then the latest finished ones (Settings → "Recent sessions per project"). */
+export function selectOverviewSessionIds(s: AppState, repoId: ID): ID[] {
+  const live = selectLiveSessionIds(s, repoId)
+  if (!REAL) return live
+  const n = s.settings.recentPerRepo ?? 5
+  return [...live, ...selectPastSessionIds(s, repoId).slice(0, Math.max(0, n - live.length))]
+}
 /** Running sessions only (what makes a project show up on the overview). */
 const hasLive = (s: AppState, repoId: ID) => (s.sessionIdsByRepo[repoId] ?? []).some((id) => s.sessions[id] && isVisibleLive(s.sessions[id]) && id !== s.mainSessionId)
 export const useLiveSessionIds = (repoId: ID) => useApp((s) => selectLiveSessionIds(s, repoId))
@@ -301,3 +321,14 @@ export function selectOverlaps(s: AppState): Map<ID, Overlap[]> {
 
 const NO_OVERLAP: Overlap[] = []
 export const useOverlaps = (id: ID) => useApp((s) => selectOverlaps(s).get(id) ?? NO_OVERLAP)
+
+/** Pinned sessions (any workspace, live or past), in the order they were updated last. */
+export const selectPinnedIds = memoOn(
+  (s) => `${s.structVersion}`,
+  (s) =>
+    Object.values(s.sessions)
+      // the main agent has its own row on top
+      .filter((x) => x.pinned && !x.archived && x.role !== "main")
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .map((x) => x.id),
+)

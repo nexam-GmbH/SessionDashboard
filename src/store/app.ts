@@ -68,6 +68,10 @@ export interface Settings {
   detailsOpen: boolean
   /** chat transcript detail (Claude Code desktop): tool calls folded, + thinking, or every step (Ctrl+O cycles) */
   transcriptView: "normal" | "thinking" | "verbose"
+  /** what sends a message: Enter (Claude Code's default) or Ctrl/⌘+Enter (then Enter adds a line) */
+  sendKey: "enter" | "mod-enter"
+  /** the chat column: readable (~820 px, Claude Code desktop) or wide */
+  chatWidth: "readable" | "wide"
 }
 
 export interface Workspace {
@@ -161,6 +165,8 @@ function loadSettings(): Settings {
     terminalHeight: 280,
     detailsOpen: true,
     transcriptView: "normal",
+    sendKey: "enter",
+    chatWidth: "readable",
   }
   try {
     const raw = localStorage.getItem("sd.settings")

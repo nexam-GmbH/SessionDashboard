@@ -15,7 +15,9 @@ export async function addImages(files: File[]): Promise<string[]> {
     }).catch(() => "")
     if (!url) continue
     const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg")
-    const name = f.name && f.name !== "image.png" ? f.name : `screenshot-${++seq}.${ext}`
+    let name = f.name && f.name !== "image.png" ? f.name : `screenshot-${++seq}.${ext}`
+    // two pictures with the same name keep both
+    for (let i = 2; store.has(name); i++) name = name.replace(/(\.[^.]*)?$/, ` (${i})$1`)
     store.set(name, url)
     names.push(name)
   }
@@ -38,3 +40,47 @@ export function takeImages(names: string[] | undefined): { images: string[]; res
 
 /** The picture behind a chip name (for its thumbnail), while it waits to be sent. */
 export const imageUrl = (name: string): string | undefined => store.get(name)
+
+// Other files (a PDF, a log, a CSV): in the app they are saved where the session may read them and
+// go to Claude by their full path; in the browser preview only their name goes.
+const paths = new Map<string, string>()
+
+/** Keep dropped or picked files; resolves to the chip names they were stored under. */
+export async function addFiles(files: File[]): Promise<string[]> {
+  const { REAL } = await import("@/backend/mode")
+  const names: string[] = []
+  for (const f of files) {
+    let name = f.name || "file"
+    // the same name twice: the second one gets a number
+    for (let i = 2; paths.has(name) || store.has(name); i++) name = f.name.replace(/(\.[^.]*)?$/, ` (${i})$1`)
+    if (REAL) {
+      const data = await new Promise<string>((ok) => {
+        const r = new FileReader()
+        r.onload = () => ok(String(r.result).split(",")[1] ?? "")
+        r.onerror = () => ok("")
+        r.readAsDataURL(f)
+      })
+      try {
+        const { invoke } = await import("@tauri-apps/api/core")
+        paths.set(name, await invoke<string>("save_attachment", { name, data }))
+      } catch (e) {
+        console.warn("save_attachment", e)
+      }
+    }
+    names.push(name)
+  }
+  return names
+}
+
+/**
+ * The text that tells Claude about attached files: their full paths (it reads them itself); names
+ * that have no file behind them stay as a note.
+ */
+export function attachmentsText(names: string[]): string {
+  if (!names.length) return ""
+  const lines = names.map((n) => {
+    const p = paths.get(n)
+    return p ? `- ${p}` : `- ${n} (attached by name only)`
+  })
+  return `\n\nAttached files (read them):\n${lines.join("\n")}`
+}

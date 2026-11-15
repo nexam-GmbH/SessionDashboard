@@ -132,6 +132,7 @@ pub fn run() {
         .manage(claude::control::Procs::default())
         .manage(claude::remote::Tunnels::default())
         .manage(claude::discover::HostHelper::default())
+        .manage(claude::search::Search::default())
         .manage(term::Terms::default())
         .invoke_handler(tauri::generate_handler![
             sd_selftest,
@@ -140,8 +141,13 @@ pub fn run() {
             claude::claude_scan,
             claude::claude_transcript,
             claude::claude_transcript_since,
+            claude::claude_transcript_to,
+            claude::search_sessions,
+            claude::search_in_session,
             claude::claude_start,
             claude::claude_send,
+            claude::claude_rewind_files,
+            claude::save_attachment,
             claude::claude_respond,
             claude::claude_control,
             claude::claude_stop,
@@ -188,6 +194,12 @@ pub fn run() {
             // hook posts from Claude Code (this computer, and VPS machines through their tunnels)
             let port = claude::hooks::serve(app.handle().clone()).unwrap_or(0);
             app.manage(claude::HookPort(port));
+            // the search index: read (or brought up to date) in the background once the window is up
+            let search = app.state::<claude::search::Search>().inner().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(6));
+                search.warm();
+            });
             Ok(())
         })
         .on_page_load(|webview, payload| {

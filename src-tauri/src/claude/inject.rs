@@ -69,9 +69,19 @@ fn which(bin: &str) -> bool {
 fn synced(pid: u32) -> Option<Way> {
     let mut cur = pid;
     for _ in 0..4 {
-        if let Ok(t) = std::fs::read_to_string(crate::sys::config_dir().join("sync").join(format!("{cur}.json"))) {
+        let file = crate::sys::config_dir().join("sync").join(format!("{cur}.json"));
+        if let Ok(t) = std::fs::read_to_string(&file) {
             let v: serde_json::Value = serde_json::from_str(&t).ok()?;
-            return Some(Way::Sync { port: v["port"].as_u64()? as u16, token: v["token"].as_str()?.to_string() });
+            // only an entry whose wrapper still runs this very process (a closed terminal leaves
+            // its file behind, and the pid may be reused since)
+            let wrapper = v["wrapper"].as_u64().map(|w| w as u32);
+            let current = wrapper.is_some_and(|w| crate::sys::alive(w) && crate::sys::parent_of(cur) == Some(w));
+            if current {
+                return Some(Way::Sync { port: v["port"].as_u64()? as u16, token: v["token"].as_str()?.to_string() });
+            }
+            if wrapper.is_some_and(|w| !crate::sys::alive(w)) {
+                let _ = std::fs::remove_file(&file);
+            }
         }
         cur = crate::sys::parent_of(cur)?;
     }
@@ -183,7 +193,7 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
             };
             let mut c = command("tmux");
             base(&mut c);
-            ok(c.args(["send-keys", "-t", pane, "-l", &body]).status(), "tmux")?;
+            ok(c.args(["send-keys", "-t", pane, "-l", "--", &body]).status(), "tmux")?;
             let mut c = command("tmux");
             base(&mut c);
             ok(c.args(["send-keys", "-t", pane, "Enter"]).status(), "tmux")?;
@@ -195,7 +205,7 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
             ok(command(q).args([service.as_str(), session.as_str(), "org.kde.konsole.Session.sendText", "\r"]).status(), "Konsole")?;
         }
         Way::Kitty { to, window } => {
-            ok(command("kitty").args(["@", "--to", to, "send-text", "--match", &format!("id:{window}"), &format!("{body}\r")]).status(), "kitty")?;
+            ok(command("kitty").args(["@", "--to", to, "send-text", "--match", &format!("id:{window}"), "--", &format!("{body}\r")]).status(), "kitty")?;
         }
         Way::Iterm { tty } => {
             // iTerm2 presses Enter after `write text`; a new line in the prompt is backslash + Enter
@@ -208,7 +218,7 @@ pub fn send(terms: &Terms, pid: u32, text: &str) -> Result<String, String> {
             osascript(&format!("tell application \"Terminal\" to repeat with w in windows\nrepeat with tb in tabs of w\nif tty of tb is {} then\ndo script {line} in tb\nreturn \"ok\"\nend if\nend repeat\nend repeat", as_str(tty))).filter(|r| r == "ok").ok_or("Terminal did not take it (allow the app to control Terminal in System Settings → Privacy & Security → Automation)")?;
         }
         Way::Wezterm { pane } => {
-            ok(command("wezterm").args(["cli", "send-text", "--pane-id", pane, "--no-paste", &format!("{body}\r")]).status(), "WezTerm")?;
+            ok(command("wezterm").args(["cli", "send-text", "--pane-id", pane, "--no-paste", "--", &format!("{body}\r")]).status(), "WezTerm")?;
         }
     }
     Ok(name(&w).to_string())

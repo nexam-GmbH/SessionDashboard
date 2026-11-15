@@ -41,7 +41,6 @@ export const StatusAnnouncer = memo(function StatusAnnouncer({ sessionId }: { se
     if (!next) return
     const text = next
     // the same sentence twice in a row would not be re-announced: toggle a trailing space
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- announcing a store transition
     setMessage((m) => (m === text ? `${text}\u00a0` : text))
   }, [status, mode, error])
 

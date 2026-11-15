@@ -20,8 +20,10 @@ import { cn } from "@/lib/utils"
 import { PromptBox } from "@/features/composer/PromptBox"
 import { EffortPicker, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
 import { FolderPicker } from "@/features/composer/FolderPicker"
+import { attachmentsText, takeImages } from "@/features/composer/images"
+import { REAL } from "@/backend/mode"
 
-const AGENTS = ["none", "code-reviewer", "test-runner", "migration-writer"]
+const MOCK_AGENTS = ["none", "code-reviewer", "test-runner", "migration-writer"]
 const MCP = [
   { id: "graphify", label: "graphify", note: "code graph" },
   { id: "github", label: "github", note: "PRs, issues" },
@@ -78,6 +80,9 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
   const [more, setMore] = useState(false)
   const [title, setTitle] = useState("")
   const [agent, setAgent] = useState("none")
+  // the installed claude's agents (yours and your plugins'); a sample list in the browser preview
+  const realAgents = useApp((s) => s.caps?.agents)
+  const agents = REAL ? ["none", ...(realAgents ?? []).map((a) => a.name)] : MOCK_AGENTS
   const [mcp, setMcp] = useState<Record<string, boolean>>({ graphify: true, github: true, linear: false })
   const [append, setAppend] = useState("")
   const [bg, setBg] = useState(false)
@@ -99,12 +104,17 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
   }, [bg, worktree, title, model, effort, mode, addDirs, agent, append, repos])
 
   const start = (prompt: string, attachments: string[]) => {
+    // pictures go as pictures, other files by their path
+    const { images, rest } = takeImages(attachments)
     const id = createSession({
       repoId,
       where: worktree && !repo?.isHome ? "worktree-new" : "main",
       worktreeName: slug(title || prompt) || "new-session",
       title: title.trim() || undefined,
-      prompt: attachments.length ? `${prompt}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : prompt,
+      prompt: `${prompt}${attachmentsText(rest)}`,
+      images,
+      agent: agent !== "none" ? agent : undefined,
+      instructions: append,
       model,
       effort,
       permissionMode: mode,
@@ -131,7 +141,7 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
           size="lg"
           autoFocus
           files={files ?? []}
-          placeholder="What should Claude do?"
+          placeholder="Describe a task or ask a question"
           keysHint="Enter starts the session, Shift+Enter adds a line. Slash for commands, at sign to mention a file."
           sendHint="Start · Enter"
           onSubmit={(text, attachments) => start(text, attachments)}
@@ -206,17 +216,21 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
               <span className="text-xs text-muted-foreground">Agent</span>
               <Select value={agent} onValueChange={setAgent}>
                 <SelectTrigger size="sm" className="h-8 w-48 text-sm" aria-label="Agent"><SelectValue /></SelectTrigger>
-                <SelectContent>{AGENTS.map((a) => <SelectItem key={a} value={a} className="text-sm">{a === "none" ? "None" : a}</SelectItem>)}</SelectContent>
+                <SelectContent>{agents.map((a) => <SelectItem key={a} value={a} className="text-sm">{a === "none" ? "None" : a}</SelectItem>)}</SelectContent>
               </Select>
-              <span className="text-xs text-muted-foreground">MCP servers</span>
-              <div className="flex flex-wrap gap-4">
-                {MCP.map((m) => (
-                  <label key={m.id} className="flex items-center gap-1.5 text-xs text-muted-foreground" title={m.note}>
-                    <Switch checked={!!mcp[m.id]} onCheckedChange={(v) => setMcp({ ...mcp, [m.id]: v })} />
-                    {m.label}
-                  </label>
-                ))}
-              </div>
+              {!REAL && (
+                <>
+                  <span className="text-xs text-muted-foreground">MCP servers</span>
+                  <div className="flex flex-wrap gap-4">
+                    {MCP.map((m) => (
+                      <label key={m.id} className="flex items-center gap-1.5 text-xs text-muted-foreground" title={m.note}>
+                        <Switch checked={!!mcp[m.id]} onCheckedChange={(v) => setMcp({ ...mcp, [m.id]: v })} />
+                        {m.label}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
               <label htmlFor="ns-append" className="self-start pt-1.5 text-xs text-muted-foreground">Instructions</label>
               <textarea id="ns-append" value={append} onChange={(e) => setAppend(e.target.value)} rows={2} placeholder="Added to the system prompt" className="resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-input" />
               <span className="text-xs text-muted-foreground">Background</span>

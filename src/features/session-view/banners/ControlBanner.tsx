@@ -80,6 +80,7 @@ export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessio
         <span className="min-w-0 flex-1 truncate" title={CONTROL_LABEL.history}>
           Not running{machine ? ` · on ${machine}` : ""}
           {ago && <span className="text-muted-foreground/70"> · {ago === "now" ? "just now" : /^\d/.test(ago) ? `${ago} ago` : ago}</span>}
+          {REAL && <span className="text-muted-foreground/70"> · write below to continue it</span>}
         </span>
         <Button size="xs" variant="default" onClick={() => resumeSession(sessionId)}>
           <Play /> Resume

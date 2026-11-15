@@ -123,14 +123,20 @@ fn cut(v: &mut Value, max: usize) {
 /// Keep only what the chat renders.
 fn slim(v: Value) -> Option<Value> {
     let ty = v.get("type")?.as_str()?.to_string();
-    if !matches!(ty.as_str(), "user" | "assistant" | "system") {
+    // a message you sent while Claude worked is an attachment record (queued_command) of its own
+    let queued = ty == "attachment" && v.get("attachment").and_then(|a| a.get("type")).and_then(Value::as_str) == Some("queued_command");
+    if !matches!(ty.as_str(), "user" | "assistant" | "system") && !queued {
         return None;
     }
     if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
         return None;
     }
     let mut out = Map::new();
-    for k in ["type", "uuid", "parentUuid", "timestamp", "isMeta", "isCompactSummary", "subtype", "level", "content", "gitBranch", "cwd", "toolUseResult", "durationMs"] {
+    for k in [
+        "type", "uuid", "parentUuid", "timestamp", "isMeta", "isCompactSummary", "subtype", "level", "content", "gitBranch", "cwd", "toolUseResult", "durationMs",
+        // compaction (trigger, tokens), API errors and retries, Claude Code's own error replies
+        "compactMetadata", "isApiErrorMessage", "error", "retryAttempt", "maxRetries", "retryInMs",
+    ] {
         if let Some(x) = v.get(k) {
             out.insert(k.into(), x.clone());
         }
@@ -143,6 +149,17 @@ fn slim(v: Value) -> Option<Value> {
             }
         }
         out.insert("message".into(), Value::Object(m));
+    }
+    if queued {
+        if let Some(a) = v.get("attachment") {
+            let mut m = Map::new();
+            for k in ["type", "prompt", "origin", "commandMode"] {
+                if let Some(x) = a.get(k) {
+                    m.insert(k.into(), x.clone());
+                }
+            }
+            out.insert("attachment".into(), Value::Object(m));
+        }
     }
     let mut v = Value::Object(out);
     // tool results and patches can be huge; the chat shows the start
@@ -161,7 +178,46 @@ fn slim(v: Value) -> Option<Value> {
 }
 
 fn wanted(line: &[u8]) -> bool {
-    memfind(line, br#""type":"user""#) || memfind(line, br#""type":"assistant""#) || memfind(line, br#""type":"system""#)
+    memfind(line, br#""type":"user""#) || memfind(line, br#""type":"assistant""#) || memfind(line, br#""type":"system""#) || memfind(line, br#""type":"queued_command""#)
+}
+
+/// Like `read_window`, but reaching back at least to the record `uuid` (a search hit in an old
+/// part of a long chat), plus some context before it; at most 20000 records.
+pub fn read_window_to(path: &str, uuid: &str, max: usize) -> Result<TranscriptChunk, String> {
+    // the chat's ids of an answer are "<uuid>:<block>": the record is the part before the colon
+    let rec = uuid.split(':').next().unwrap_or(uuid);
+    if rec.is_empty() || rec.len() > 80 {
+        return read_window(path, max);
+    }
+    let needle = format!("\"uuid\":\"{rec}\"");
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    const STEP: u64 = 8 << 20;
+    let mut start = len;
+    let mut count = 0usize;
+    let mut found = false;
+    let mut carry: Vec<u8> = Vec::new();
+    while start > 0 && !found && count < 20_000 {
+        let next = start.saturating_sub(STEP);
+        f.seek(SeekFrom::Start(next)).map_err(|e| e.to_string())?;
+        let mut buf = Vec::with_capacity((start - next) as usize + carry.len());
+        (&mut f).take(start - next).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        buf.extend_from_slice(&carry);
+        // lines complete in this buffer (the first one may continue in the step before)
+        let first_nl = if next == 0 { 0 } else { buf.iter().position(|b| *b == b'\n').map(|i| i + 1).unwrap_or(buf.len()) };
+        for line in buf[first_nl..].split(|b| *b == b'\n') {
+            if wanted(line) {
+                count += 1;
+                if !found && memfind(line, needle.as_bytes()) {
+                    found = true;
+                }
+            }
+        }
+        carry = buf[..first_nl].to_vec();
+        start = next;
+    }
+    // the hit, everything after it, and 60 records of what led to it
+    read_window(path, if found { (count + 60).max(max) } else { max })
 }
 
 /// The last `max` conversational records of a transcript, read from the end. A long session's file

@@ -3,7 +3,7 @@ import { REAL } from "@/backend/mode"
 import { useShallow } from "zustand/react/shallow"
 import type { FileChange, ID, Item, PendingRequest, ToolCall, Transcript } from "@/lib/model"
 import { getApp, setApp, useApp } from "@/store/app"
-import { takeImages } from "@/features/composer/images"
+import { attachmentsText, takeImages } from "@/features/composer/images"
 import { answerQuestion, interrupt, removeQueued, resolvePermission, sendMessage, setSessionSettings } from "@/store/actions"
 
 /**
@@ -181,8 +181,16 @@ function deliverOutbox() {
     // name); one the app runs takes it as a message
     if (s.control === "observed") {
       const { images, rest } = takeImages(attachments)
-      const body = rest.length ? `${text}\n\n${rest.map((a) => `[attached: ${a}]`).join("\n")}` : text
-      void import("@/backend/real").then((r) => r.realTakeOver(id, body, images))
+      const body = `${text}${attachmentsText(rest)}`
+      // a terminal session is never closed for this: typed into its terminal when it can be; only
+      // a headless one the app itself started (before a restart) is taken back
+      void import("@/backend/real").then(async (r) => {
+        const way = await r.realInjectWay(id)
+        if (way === "headless") return r.realTakeOver(id, body, images)
+        if (way) return r.realInject(id, body).catch((e) => r.realNotice(id, `Could not type into its terminal: ${String(e)}`))
+        r.realNotice(id, "Your queued message could not reach its terminal; it is back in the prompt box.")
+        setDraft(id, { text, attachments: rest })
+      })
     } else sendMessage(id, text, "now", attachments)
   }
 }
@@ -408,6 +416,8 @@ export function resolveRequest(req: PendingRequest, optionId: string, feedback?:
   const rejected = option?.kind === "reject_once" || option?.kind === "reject_always"
   const prevMode = getApp().sessions[req.sessionId]?.permissionMode
   resolvePermission(req.id, optionId, feedback)
+  // the app's sessions: the backend marked the exact tool call; the rest is the mock world's
+  if (REAL) return
   // Workaround: store/actions resolvePermission spreads `permissionMode: undefined` into the
   // session for non-plan requests, wiping the mode. Restore it (reported upstream).
   if (prevMode && !getApp().sessions[req.sessionId]?.permissionMode) setSessionSettings(req.sessionId, { permissionMode: prevMode })
@@ -416,12 +426,52 @@ export function resolveRequest(req: PendingRequest, optionId: string, feedback?:
   syncAwaitingTool(req.sessionId, tool, rejected ? "rejected" : "allowed", rejected && feedback ? `Rejected: ${feedback}` : undefined)
 }
 
+/** Skip Claude's question: it goes on with its own best judgement. */
+export function skipQuestion(req: PendingRequest) {
+  if (req.type !== "question") return
+  if (REAL) return resolvePermission(req.id, "reject", "The user skipped this question. Continue with your best judgement.")
+  answerQuestion(req.id, {})
+}
+
 /** answerQuestion + transcript sync. */
 export function answerRequest(req: PendingRequest, answers: Record<string, string | string[]>) {
   if (req.type !== "question") return
   answerQuestion(req.id, answers)
+  if (REAL) return
   const text = Object.entries(answers)
     .map(([q, a]) => `${q} → ${Array.isArray(a) ? a.join(", ") : a}`)
     .join("\n")
   syncAwaitingTool(req.sessionId, "AskUserQuestion", "answered", text)
+}
+
+/** Every queued message of a session goes (Claude Code desktop's "Clear all"). */
+export function clearQueue(sessionId: ID) {
+  for (const q of [...queuedOf(sessionId)]) removeQueuedMessage(sessionId, q.id)
+  cancelQueueEdit(sessionId)
+}
+
+/**
+ * Send a message now while Claude works: its current step is stopped and this message is read at
+ * once (Ctrl+Enter, a queued message's "Send now"). An idle session simply gets it.
+ */
+export function interruptAndSend(sessionId: ID, text: string, attachments?: string[]) {
+  const s = getApp().sessions[sessionId]
+  if (!s) return
+  const working = s.status === "working" || s.status === "starting"
+  if (working && REAL && s.control === "owned") {
+    interruptSession(sessionId)
+    // claude reads its input in order: the interrupt ends the step, then this message starts a turn
+    sendMessage(sessionId, text, "now", attachments)
+    return
+  }
+  if (working && !REAL) interrupt(sessionId)
+  sendMessage(sessionId, text, "now", attachments)
+}
+
+/** A queued message's "Send now". */
+export function sendQueuedNow(sessionId: ID, queuedId: string) {
+  const q = queuedOf(sessionId).find((x) => x.id === queuedId)
+  if (!q) return
+  removeQueuedMessage(sessionId, queuedId)
+  interruptAndSend(sessionId, q.text, q.attachments)
 }
