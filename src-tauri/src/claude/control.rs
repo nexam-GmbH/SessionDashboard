@@ -55,6 +55,8 @@ pub struct StartOpts {
     pub settings: Option<String>,
     /// run on this ssh host (VPS) instead of locally
     pub host: Option<String>,
+    /// pictures for the first message (data: URLs)
+    pub images: Vec<String>,
     /// another Claude Code config folder (account): CLAUDE_CONFIG_DIR for this session
     pub config_dir: Option<String>,
 }
@@ -143,7 +145,7 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     // the host introduces itself first; then the first prompt
     writeln!(stdin, "{}", json!({"type": "control_request", "request_id": format!("init-{}", o.key), "request": {"subtype": "initialize", "hooks": null}})).map_err(|e| e.to_string())?;
     if let Some(p) = o.prompt.as_ref().filter(|p| !p.trim().is_empty()) {
-        writeln!(stdin, "{}", user_message(p)).map_err(|e| e.to_string())?;
+        writeln!(stdin, "{}", user_message_with(p, &o.images)).map_err(|e| e.to_string())?;
     }
     stdin.flush().ok();
     procs.0.lock().unwrap().insert(o.key.clone(), Proc { stdin, child });
@@ -178,7 +180,25 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
 }
 
 fn user_message(text: &str) -> Value {
-    json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}})
+    user_message_with(text, &[])
+}
+
+/// A user message with pictures (data: URLs) as image blocks, the way Claude Code sends a pasted
+/// screenshot, then the text.
+fn user_message_with(text: &str, images: &[String]) -> Value {
+    let mut content: Vec<Value> = images
+        .iter()
+        .filter_map(|u| {
+            let (head, data) = u.strip_prefix("data:")?.split_once(";base64,")?;
+            Some(json!({"type": "image", "source": {"type": "base64", "media_type": head, "data": data}}))
+        })
+        .collect();
+    content.push(json!({"type": "text", "text": text}));
+    json!({"type": "user", "message": {"role": "user", "content": content}})
+}
+
+pub fn send_with_images(procs: &Procs, key: &str, text: &str, images: &[String]) -> Result<(), String> {
+    write(procs, key, user_message_with(text, images))
 }
 
 fn write(procs: &Procs, key: &str, v: Value) -> Result<(), String> {

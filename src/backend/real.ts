@@ -9,6 +9,7 @@ import { getApp, setApp, useApp } from "@/store/app"
 import { selectNeedsYou } from "@/store/selectors"
 import { POPOUT, REAL } from "./mode"
 import { setHomeDir } from "@/lib/format"
+import { takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
 import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, type MapState } from "./mapTranscript"
@@ -50,6 +51,8 @@ interface Meta {
   lastActivity?: string
   edited?: string[]
   configDir?: string
+  /** the session this one continues (a conversation carried on after its context ran out) */
+  continues?: string
 }
 interface Live {
   pid?: number
@@ -564,12 +567,33 @@ function same<T extends object>(a: T, b: T) {
 }
 const sameList = (a: readonly string[] | undefined, b: readonly string[]) => !!a && a.length === b.length && a.every((x, i) => x === b[i])
 
+/**
+ * Sessions whose conversation goes on in a newer one: the one that was continued, and an older
+ * continuation of it that no longer runs (Claude Code starts a new session each time a conversation
+ * outgrows its context, so one conversation can leave several).
+ */
+function continuedSessions(): Set<ID> {
+  const out = new Set<ID>()
+  const byParent = new Map<ID, Meta[]>()
+  for (const m of metas.values()) {
+    if (!m.continues) continue
+    out.add(m.continues)
+    byParent.set(m.continues, [...(byParent.get(m.continues) ?? []), m])
+  }
+  for (const kids of byParent.values()) {
+    const newest = Math.max(...kids.map((k) => k.updatedMs))
+    for (const k of kids) if (k.updatedMs < newest && !liveFor(k.sessionId) && !owned.has(k.sessionId)) out.add(k.sessionId)
+  }
+  return out
+}
+
 /** Rebuild sessions and projects from what was discovered; one store update, none when nothing changed. */
 function sync() {
   const st = getApp()
   const ids = new Set<ID>([...metas.keys(), ...pidLive.keys(), ...bgLive.keys(), ...owned.keys()])
   for (const m of extByMachine.values()) for (const id of m.keys()) ids.add(id)
   const sessions: Record<ID, Session> = {}
+  const superseded = continuedSessions()
   let changedStruct = false
   let changedStatus = false
   let changedAny = false
@@ -581,6 +605,8 @@ function sync() {
     if (!s) continue
     const picked = owned.has(id) ? undefined : picks.get(id)
     if (picked) s = { ...s, ...picked }
+    // a conversation that goes on in a newer session: one entry, the newest (this stays searchable)
+    if (superseded.has(id) && !owned.has(id)) s = { ...s, control: "history", status: s.status === "working" ? "idle" : s.status }
     // a prompt the terminal shows that can be answered here too
     const offer = firstOffer(id)
     if (offer && !owned.has(id)) {
@@ -1029,6 +1055,8 @@ interface StartOpts {
   prompt?: string
   resume?: string
   fork?: boolean
+  /** pictures for the first message (data: URLs) */
+  images?: string[]
   /** another Claude Code config folder (account); a resumed session keeps its own */
   configDir?: string
   model?: string
@@ -1086,7 +1114,7 @@ export function realStart(opts: StartOpts): ID {
   sync()
   if (opts.prompt && !opts.promptShown) {
     if (!getApp().transcripts[id] && metas.has(id)) ensureRealTranscript(id)
-    patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!))
+    patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!, undefined, opts.images))
   }
   const flags = settingsOf(opts)
   const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, ...rest } = opts
@@ -1125,7 +1153,9 @@ function setStatusLocal(id: ID, status: SessionStatus, patch: Partial<Session> =
 export function realSend(id: ID, text: string, attachments?: string[]) {
   const s = getApp().sessions[id]
   if (!s) return
-  const body = attachments?.length ? `${text}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : text
+  // pasted pictures go as images; other files by name
+  const { images, rest } = takeImages(attachments)
+  const body = rest.length ? `${text}\n\n${rest.map((a) => `[attached: ${a}]`).join("\n")}` : text
   if (s.machine === CLOUD) {
     patchTranscript(id, (t, m) => addPendingUser(t, m, body, attachments))
     setStatusLocal(id, "working", { activity: "Sending to claude.ai", waitingFor: undefined })
@@ -1136,12 +1166,12 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
   }
   if (!owned.has(id)) {
     // a past session (or one taken over): continue it in the app, on the machine it ran on
-    realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt: body, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+    realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt: body, images, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
     return
   }
-  patchTranscript(id, (t, m) => addPendingUser(t, m, body, attachments))
+  patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images))
   setStatusLocal(id, "working", { activity: "Thinking", waitingFor: undefined })
-  invoke("claude_send", { key: id, text: body }).catch((e) => noticeError(id, String(e)))
+  invoke("claude_send", { key: id, text: body, images }).catch((e) => noticeError(id, String(e)))
 }
 
 /**
@@ -1246,6 +1276,11 @@ function onElicitation(key: ID, requestId: string, e: Elicitation) {
 }
 
 const mcpWarned = new Set<string>()
+
+/** A note in a session's chat (not sent to Claude). */
+export function realNotice(id: ID, text: string) {
+  noticeInfo(id, text)
+}
 
 function noticeInfo(id: ID, text: string) {
   patchTranscript(id, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${Date.now()}`, timestamp: new Date().toISOString() }], { running: isRunning(id) }))

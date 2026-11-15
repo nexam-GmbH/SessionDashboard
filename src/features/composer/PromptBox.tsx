@@ -5,6 +5,7 @@
 // in as `footer` and drawn under the box. Shared by the chat and the New session screen; the
 // session-only key semantics (queue vs. send now, Esc interrupt, ↑ edit queued, Esc Esc rewind,
 // Shift+Tab mode) come in through callbacks.
+import { addImages } from "./images"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowUp, AtSign, Check, FolderPlus, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
 import {
@@ -199,7 +200,12 @@ export function PromptBox(props: PromptBoxProps) {
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
-          addFiles([...e.dataTransfer.files].map((f) => f.name))
+          {
+            const files = [...e.dataTransfer.files]
+            const imgs = files.filter((f) => f.type.startsWith("image/"))
+            addFiles(files.filter((f) => !f.type.startsWith("image/")).map((f) => f.name))
+            if (imgs.length) void addImages(imgs).then(addFiles)
+          }
         }}
       >
         {menuOpen && (
@@ -253,7 +259,8 @@ export function PromptBox(props: PromptBoxProps) {
             const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"))
             if (imgs.length) {
               e.preventDefault()
-              addFiles(imgs.map((f, i) => f.name || `pasted-image-${attachments.length + i + 1}.png`))
+              // the picture itself goes with the message (and shows in the chat), not just its name
+              void addImages(imgs).then(addFiles)
             }
           }}
           onKeyDown={(e) => {

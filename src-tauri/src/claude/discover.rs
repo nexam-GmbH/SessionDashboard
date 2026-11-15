@@ -500,6 +500,10 @@ pub struct SessionMeta {
     /// the other config folder (account) it belongs to; None for the main one
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<String>,
+    /// the session this one continues (a conversation carried on after its context ran out starts
+    /// a new session whose first message names the earlier transcript)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continues: Option<String>,
 }
 
 const EDITED_MAX: usize = 40;
@@ -670,6 +674,25 @@ pub fn user_text(v: &Value) -> Option<String> {
     Some(t.chars().take(400).collect())
 }
 
+/// "This session is being continued from a previous conversation … the full transcript at:
+/// …/<id>.jsonl": the earlier session's id.
+fn continued_from(v: &Value) -> Option<String> {
+    let c = v.get("message")?.get("content")?;
+    let text = match c {
+        Value::String(s) => s.as_str(),
+        Value::Array(parts) => parts.iter().find_map(|p| p.get("text").and_then(Value::as_str))?,
+        _ => return None,
+    };
+    if !text.starts_with("This session is being continued from a previous conversation") {
+        return None;
+    }
+    // the summary may name other .jsonl files; the transcript path is a session id before ".jsonl"
+    text.rmatch_indices(".jsonl").find_map(|(at, _)| {
+        let id: String = text[..at].chars().rev().take_while(|c| c.is_ascii_hexdigit() || *c == '-').collect::<Vec<_>>().into_iter().rev().collect();
+        (id.len() == 36 && id.matches('-').count() == 4).then_some(id)
+    })
+}
+
 fn assistant_text(v: &Value) -> Option<String> {
     let parts = v.get("message")?.get("content")?.as_array()?;
     let mut out = String::new();
@@ -728,6 +751,9 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                 m.last_at = Some(t);
             }
             if ty == "user" {
+                if m.continues.is_none() && !from_tail && m.first_prompt.is_none() {
+                    m.continues = continued_from(v);
+                }
                 if let Some(t) = user_text(v) {
                     if m.first_prompt.is_none() && !from_tail {
                         m.first_prompt = Some(t.clone());
@@ -815,6 +841,36 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// What a transcript continues, found once per file: its first prompt can sit past the head that
+/// a scan reads (large attachment records come first), so read lines until the first prompt.
+fn continuation_of(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    static SEEN: Mutex<Option<HashMap<PathBuf, Option<String>>>> = Mutex::new(None);
+    if let Some(hit) = SEEN.lock().unwrap().get_or_insert_with(HashMap::new).get(path) {
+        return hit.clone();
+    }
+    let mut found = None;
+    if let Ok(f) = File::open(path) {
+        let mut r = std::io::BufReader::new(f.take(8 << 20));
+        let mut line = Vec::new();
+        for _ in 0..200 {
+            line.clear();
+            if r.read_until(b'\n', &mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            if !memfind(&line, br#""type":"user""#) {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_slice::<Value>(&line) {
+                found = continued_from(&v);
+                break;
+            }
+        }
+    }
+    SEEN.lock().unwrap().get_or_insert_with(HashMap::new).insert(path.to_path_buf(), found.clone());
+    found
+}
+
 fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {
     let session_id = path.file_stem()?.to_str()?.to_string();
     let mut f = File::open(path).ok()?;
@@ -829,6 +885,9 @@ fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {
         parse_chunk(&mut m, &head[..cut], false, false);
         let tail = read_range(&mut f, size - TAIL, TAIL);
         parse_chunk(&mut m, &tail, true, true);
+    }
+    if m.continues.is_none() {
+        m.continues = continuation_of(path);
     }
     Some(m)
 }
@@ -866,4 +925,17 @@ pub fn scan(cache: &ScanCache) -> Vec<SessionMeta> {
     }
     cache.0.lock().unwrap().retain(|k, _| seen.contains(k));
     out
+}
+
+#[cfg(test)]
+mod continuation_tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_continued_session() {
+        let v: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. The summary below …\n\nIf you need specific details from before compaction, read the full transcript at: /home/u/.claude/projects/-x/412bb752-493a-4e09-b136-ef4b343b8610.jsonl\nContinue"}}"#).unwrap();
+        assert_eq!(continued_from(&v).as_deref(), Some("412bb752-493a-4e09-b136-ef4b343b8610"));
+        let plain: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"fix the bug in a.jsonl"}}"#).unwrap();
+        assert_eq!(continued_from(&plain), None);
+    }
 }

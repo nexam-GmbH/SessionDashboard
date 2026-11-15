@@ -309,13 +309,13 @@ export function applyTextDelta(base: Transcript, st: MapState, msgId: string, de
 }
 
 /** A user message sent from the app, shown at once (its record later dedupes against it). */
-export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[]): Transcript {
+export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[], images?: string[]): Transcript {
   const b = new Builder(base, st)
   const at = new Date().toISOString()
   const id = `pending:${crypto.randomUUID()}`
   st.pending.set(text.trim(), id)
   b.newTurn(`turn:${id}`, at)
-  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, ...(attachments?.length ? { attachments } : {}) })
+  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, ...(attachments?.length ? { attachments } : {}), ...(images?.length ? { images: images.map((src) => ({ src })) } : {}) })
   return b.t
 }
 

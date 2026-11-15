@@ -65,6 +65,22 @@ pub fn cli() -> Option<i32> {
             }
         });
     }
+    // `session-dashboard hooks on|off`: exact states and answering terminal sessions' prompts from the
+    // app (the running app keeps its port in ~/.claude/session-dashboard/port)
+    if args.first().map(String::as_str) == Some("hooks") {
+        let on = args.get(1).map(String::as_str) == Some("on");
+        let port = std::fs::read_to_string(claude::discover::claude_dir().join("session-dashboard").join("port")).ok().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+        return Some(match claude::hooks::set_local(on, port) {
+            Ok(v) => {
+                println!("{v}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        });
+    }
     if args.first().map(String::as_str) != Some("wrap") {
         return None;
     }

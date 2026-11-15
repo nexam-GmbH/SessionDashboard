@@ -138,9 +138,15 @@ fn name(w: &Way) -> &'static str {
     }
 }
 
-/// How a reply would reach this terminal session ("Konsole", "tmux", …), or None.
+/// How a reply would reach this terminal session ("Konsole", "tmux", …), or None. "headless": a
+/// `claude -p` with no terminal at all (one the app started before it restarted): it can only be
+/// taken over, which loses nothing.
 pub fn check(terms: &Terms, pid: u32) -> Option<String> {
-    way(terms, pid).map(|w| name(&w).to_string())
+    if let Some(w) = way(terms, pid) {
+        return Some(name(&w).to_string());
+    }
+    let cmd = crate::sys::cmdline(pid);
+    (cmd.contains(" -p ") && cmd.contains("stream-json")).then(|| "headless".to_string())
 }
 
 fn ok(st: std::io::Result<std::process::ExitStatus>, what: &str) -> Result<(), String> {

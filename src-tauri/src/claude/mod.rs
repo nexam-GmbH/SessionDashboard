@@ -56,8 +56,11 @@ pub async fn claude_start(app: AppHandle, procs: State<'_, Procs>, opts: StartOp
 }
 
 #[tauri::command]
-pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String) -> Result<(), String> {
-    control::send(&procs, &key, &text)
+pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String, images: Option<Vec<String>>) -> Result<(), String> {
+    match images.filter(|i| !i.is_empty()) {
+        Some(imgs) => control::send_with_images(&procs, &key, &text, &imgs),
+        None => control::send(&procs, &key, &text),
+    }
 }
 
 #[tauri::command]

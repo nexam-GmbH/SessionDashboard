@@ -7,7 +7,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { addSessionFolder, forkSession, removeSessionFolder, sendMessage, setSessionSettings } from "@/store/actions"
+import { getApp } from "@/store/app"
+import { addSessionFolder, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
 import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals"
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
@@ -24,13 +25,28 @@ const EMPTY_FILES: string[] = []
 
 /** A reply to a terminal session: typed into its terminal, or (when that can't be done) a copy here. */
 function replyToTerminal(id: ID, text: string, way: string | null) {
+  // a headless session the app started before it restarted: take it back (nothing is lost), once
+  // its turn is over
+  if (way === "headless") {
+    const s = getApp().sessions[id]
+    if (s && (s.status === "working" || s.status === "starting")) {
+      void import("@/features/notifications/undo").then((u) => u.showUndo("Still working", "It started before the app restarted: send again when this turn is done", () => undefined))
+      return false
+    }
+    takeOverSession(id, text)
+    return
+  }
   if (way) {
     void import("@/backend/real").then((r) =>
-      r.realInject(id, text).catch(() => forkSession(id, text)),
+      r.realInject(id, text).catch((e) => r.realNotice(id, `Could not type into its terminal: ${String(e)}`)),
     )
     return
   }
-  forkSession(id, text)
+  // no way into that terminal: say how to get one, keep the text (Fork in the session menu makes a copy)
+  void import("@/backend/real").then((r) =>
+    r.realNotice(id, "This terminal can't be typed into from the app. Turn on Settings → Sessions → Sync terminal sessions, then start claude there again (claude --resume picks this conversation up); or answer in the terminal. Fork in the session menu continues it as a copy here."),
+  )
+  return false
 }
 
 export const Composer = memo(function Composer({ sessionId }: { sessionId: ID }) {
@@ -92,9 +108,9 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
       <PromptBox
         files={files}
         initialText={initialText}
-        placeholder={takeOver ? (injectWay ? `Reply: typed into its terminal (${injectWay}); it keeps running there` : "Reply: continues in a copy here (Settings → Sessions → Sync terminal sessions keeps it one session)") : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
+        placeholder={takeOver ? (injectWay === "headless" ? "Reply: continues here (it was started by the app before a restart)" : injectWay ? `Reply: typed into its terminal (${injectWay}); it keeps running there` : "Reply in the terminal, or turn on Settings → Sessions → Sync terminal sessions") : working ? "Add to the queue, or Esc to stop" : "Reply to Claude"}
         keysHint={`${working ? `Enter queues, ${MOD}+Enter sends now, Escape stops.` : "Enter sends, Shift+Enter adds a line."} Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
-        sendHint={takeOver ? (injectWay ? `Send to ${injectWay} · Enter` : "Continue in a copy · Enter") : working ? `Enter: after this step · ${MOD}+Enter: send now${observedNote}` : `Send · Enter${observedNote}`}
+        sendHint={takeOver ? (injectWay === "headless" ? "Continue here · Enter" : injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? `Enter: after this step · ${MOD}+Enter: send now${observedNote}` : `Send · Enter${observedNote}`}
         busy={working && caps.interrupt}
         onStop={() => interruptSession(sessionId)}
         onSubmit={(text, attachments, how) => (/^!\s*\S/.test(text) && !attachments.length ? void runInTerminal(text.replace(/^!\s*/, "").trim()) : !attachments.length && runSlashInTerminal(text, sessionId) ? undefined : takeOver ? replyToTerminal(sessionId, attachments.length ? `${text}\n\n${attachments.map((a) => `[attached: ${a}]`).join("\n")}` : text, injectWay) : sendMessage(sessionId, text, how, attachments))}
