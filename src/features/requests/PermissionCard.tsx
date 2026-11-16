@@ -18,7 +18,8 @@ import { InlineDiff } from "@/features/session-view/tools/InlineDiff"
 import { resolveRequest } from "@/features/session-view/sessionStore"
 import { riskOf } from "./risk"
 import { useApp } from "@/store/app"
-import { CardFrame, canStealFocus, FeedbackField, OptionButton, optionLabel, type Pager } from "./cardChrome"
+import { CardFrame, canStealFocus, FeedbackField, MoreAnswers, OptionButton, optionLabel, type Pager } from "./cardChrome"
+import { REAL } from "@/backend/mode"
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
 
@@ -187,6 +188,10 @@ export const PermissionCard = memo(function PermissionCard({
               <OptionButton n={options.indexOf(allowOnce) + 1} disabled={!canApprove} variant="primary" onClick={() => choose(allowOnce)} keys={risk.high ? undefined : [MOD, "↵"]} title={allowOnce.name}>
                 Allow once
               </OptionButton>
+            )}
+            {/* Claude Code desktop's menu: allow this one and stop asking (Auto mode) */}
+            {allowOnce && REAL && !risk.high && (
+              <MoreAnswers disabled={!canApprove} label="More ways to allow" items={[{ label: "Allow and switch to Auto", onSelect: () => resolveRequest(request, "allow-auto") }]} />
             )}
             {options
               .filter((o) => o !== deny && o !== always && o !== allowOnce)

@@ -299,8 +299,25 @@ body {
     transform: rotate(360deg);
   }
 }
+/* every spinner turns smoothly (the owner wants Claude Code's fluid motion, not steps). On X11
+   WebKitGTK copies one frame of the window per vsync while any of them turns, however many there
+   are: the cost is one stream of frames, not one per spinner */
 @utility animate-spin-steps {
-  animation: sd-spin 1s steps(12) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sd-spin 0.9s linear infinite;
+  will-change: transform;
+}
+[data-spin] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sd-spin 1.2s linear infinite;
+  will-change: transform;
+}
+/* Settings → Reduce motion */
+:root[data-reduce-motion] .animate-spin-steps,
+:root[data-reduce-motion] [data-spin] {
+  animation: none;
 }
 
 /* Find in chat (Ctrl+F): every match, and the current one stronger (CSS Custom Highlight API) */

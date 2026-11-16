@@ -1,9 +1,10 @@
 // The chat's prompt box (Claude Code desktop's Code tab) with the session's settings in the row
-// under it: permission mode, model, effort and the context ring. You can always write: while
-// Claude works, a session the app runs takes the message at once and reads it after its current
-// step; one it can't write to yet queues it and sends it when the turn is over (the mock world
-// queues too). ↑ in an empty box opens the newest queued message, Esc stops, Esc Esc opens Rewind,
-// Shift+Tab cycles the permission mode. The text you leave in the box stays with the session.
+// under it: permission mode, model, effort and the context ring. You can always write. While
+// Claude works, in a session the app runs Enter sends the message at once (it waits at the end of
+// the chat until Claude reads it at its next step) and Ctrl+Enter queues it for later (sent when
+// the turn is over); a terminal session queues it (the mock world too). ↑ in an empty box opens
+// the newest queued message; Esc takes your last waiting message back, then stops; Esc Esc opens
+// Rewind; Shift+Tab cycles the permission mode. The text you leave in the box stays with the session.
 import { memo, useEffect, useRef, useState } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
@@ -17,22 +18,24 @@ import { PromptBox, type PromptValue } from "@/features/composer/PromptBox"
 import { EffortPicker, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
 import { ContextRing } from "@/features/composer/ContextRing"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { FolderPlus, LoaderCircle } from "lucide-react"
+import { FolderPlus } from "lucide-react"
 import { plural } from "@/lib/format"
 import {
   cancelQueueEdit,
   editQueuedInBox,
   getUiValue,
+  setUiValue,
   interruptAndSend,
   interruptSession,
-  markSteered,
   queueMessage,
   saveQueueEdit,
   setDraft,
+  takeBackWaiting,
   useDraft,
   useQueued,
   useQueueEdit,
-  useSteerPending,
+  useStopping,
+  useWaiting,
 } from "../sessionStore"
 
 const MODE_CYCLE: PermissionMode[] = ["default", "acceptEdits", "plan", "auto"]
@@ -82,8 +85,11 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const files = useApp((s) => (repoId ? (s.repoSpecs[repoId]?.files ?? EMPTY_FILES) : EMPTY_FILES))
   const draft = useDraft(sessionId)
   const queued = useQueued(sessionId)
+  const waiting = useWaiting(sessionId).length > 0
+  // Settings → Send with Ctrl+Enter: that key sends, nothing is queued for later by keyboard
+  const modSends = useApp((s) => s.settings.sendKey === "mod-enter")
   const edit = useQueueEdit(sessionId)
-  const steering = useSteerPending(sessionId)
+  const stopping = useStopping(sessionId) > 0
   const lastEsc = useRef(0)
   // ↑ / ↓ through what you sent in this session (newest first), like Claude Code's prompt history
   const hist = useRef<{ list: string[]; at: number; saved: string } | null>(null)
@@ -142,6 +148,8 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const locked = !caps.changeSettings && !takeOver && !past
   const lockReason = "Runs in your terminal: change it there"
   const headless = takeOver && injectWay === "headless"
+  // the app runs it: a message sent while Claude works goes in at once, read at its next step
+  const steers = REAL && control === "owned"
   // a queued message open in the box (if it went out meanwhile, saving sends the edit as a new one)
   const editing = !!edit
 
@@ -152,11 +160,11 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         ? `Reply: typed into its terminal (${injectWay})`
         : "Reply in the terminal, or turn on Settings → Sessions → Sync terminal sessions"
       : working
-        ? headless
-          ? "Add a message — sent when Claude finishes this turn"
-          : steering
-            ? "Add another message"
-            : "Add a message — Claude reads it after the current step"
+        ? steers
+          ? modSends
+            ? "Add a message — Claude reads it at its next step"
+            : `Enter to send, ${MOD}+Enter to queue for later`
+          : "Add a message — sent when Claude finishes this turn"
         : past
           ? "Continue this session: type / for commands"
           : "Type / for commands"
@@ -164,15 +172,17 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const hint = editing
     ? "Enter saves · Esc cancels · empty removes it"
     : [
-        working && !REAL ? `Enter queues · ${MOD}+Enter sends now` : "Enter sends · Shift+Enter new line",
+        working && steers ? (modSends ? "Claude reads it at its next step" : `Enter: read at Claude's next step · ${MOD}+Enter queues for later`) : working && !REAL ? `Enter queues · ${MOD}+Enter sends now` : "Enter sends · Shift+Enter new line",
         queued.length && !draft.text ? "↑ edits the queue" : "",
-        canStop && !draft.text ? "Esc stops" : "",
+        canStop && !draft.text ? (waiting ? "Esc takes your last message back" : "Esc stops") : "",
       ]
         .filter(Boolean)
         .join(" · ")
 
   const submit = (text: string, attachments: string[], how: "queue" | "now") => {
     hist.current = null
+    // the chat scrolls to its end to show what you sent
+    setUiValue(`sent:${sessionId}`, Date.now())
     if (editing) {
       saveQueueEdit(sessionId, text, attachments)
       return false
@@ -181,8 +191,6 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
     if (!attachments.length && runSlashInTerminal(text, sessionId)) return
     if (takeOver) return replyToTerminal(sessionId, text, attachments, injectWay)
     sendMessage(sessionId, text, how, attachments)
-    // a session the app runs read it after its current step (steering): say so until it moves on
-    if (REAL && working && control === "owned") markSteered(sessionId)
   }
 
   return (
@@ -194,9 +202,10 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         editing={editing}
         placeholder={placeholder}
         hint={hint}
-        keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : REAL && !headless ? "Enter adds a note Claude reads after its current step, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
-        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? (headless || !REAL ? "Queue · Enter" : "Send · Enter — read after the current step") : "Send · Enter"}
+        keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : steers ? `Enter sends a message Claude reads at its next step, ${MOD}+Enter queues it for later, Escape takes your last waiting message back or stops.` : REAL ? "Enter queues, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
+        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? (steers ? "Send · Enter — Claude reads it at its next step" : "Queue · Enter") : "Send · Enter"}
         busy={canStop}
+        stopping={stopping}
         onStop={() => interruptSession(sessionId)}
         onSubmit={submit}
         onEscape={() => {
@@ -207,7 +216,9 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         onEscapeEmpty={(e) => {
           if (canStop) {
             e.preventDefault()
-            interruptSession(sessionId)
+            // a held key does not stop Claude after taking the message back
+            if (e.repeat) return
+            if (!takeBackWaiting(sessionId)) interruptSession(sessionId)
           } else if (caps.changeSettings) {
             // Esc Esc opens Rewind (Claude Code CLI)
             const now = e.timeStamp
@@ -220,14 +231,17 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
         }}
         onArrowUpEmpty={() => editQueuedInBox(sessionId)}
         onHistory={onHistory}
-        onInterruptSend={
+        onModSend={
           canStop && !takeOver
             ? (text, attachments) => {
                 hist.current = null
-                interruptAndSend(sessionId, text, attachments)
+                setUiValue(`sent:${sessionId}`, Date.now())
+                if (steers) queueMessage(sessionId, text, attachments)
+                else interruptAndSend(sessionId, text, attachments)
               }
             : undefined
         }
+        modSendHint={steers ? "Queue for later" : "Interrupt and send"}
         onForkSend={
           caps.send && !takeOver
             ? (text) => {
@@ -249,14 +263,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
                 chips: false,
               }
         }
-        header={
-          steering && (
-            <div role="status" className="flex h-8 items-center gap-2 border-b border-border px-4 text-xs text-muted-foreground">
-              <LoaderCircle size={14} className="shrink-0 animate-spin-steps text-st-working" />
-              Claude reads your message after the current step
-            </div>
-          )
-        }
+
         footer={
           <>
             {/* Claude Code desktop: the permission mode on the left under the box; model, effort and context on the right */}

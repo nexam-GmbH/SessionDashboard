@@ -309,7 +309,7 @@ export function addDiscoveredSession(path: string, task: string): ID {
 
 export function interrupt(id: ID) {
   const s = getApp().sessions[id]
-  if (!s || (s.status !== "working" && s.status !== "starting")) return
+  if (!s || (s.status !== "working" && s.status !== "starting" && s.status !== "waiting_permission" && s.status !== "waiting_input")) return
   if (REAL) return realInterrupt(id)
   setStatus(id, "idle", { activity: "Interrupted by user", lastStopReason: "cancelled" })
 }
@@ -565,6 +565,9 @@ export function resolvePermission(requestId: ID, optionId: string, feedback?: st
   // plan approval options switch the permission mode; other requests keep it
   if (plan && optionId === "approve-accept") patch.permissionMode = "acceptEdits"
   if (plan && optionId === "approve-manual") patch.permissionMode = "default"
+  if (plan && optionId === "approve-auto") patch.permissionMode = "auto"
+  if (plan && optionId === "approve-bypass") patch.permissionMode = "bypassPermissions"
+  if (!plan && optionId === "allow-auto") patch.permissionMode = "auto"
   // "Yes, allow all edits during this session" on an Edit request switches to acceptEdits
   if (!plan && req.type === "permission" && req.toolName === "Edit" && option?.kind === "allow_always") patch.permissionMode = "acceptEdits"
   setStatus(req.sessionId, "working", patch)

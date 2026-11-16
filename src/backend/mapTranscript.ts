@@ -6,7 +6,7 @@ import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Pictur
 import { normPath } from "@/lib/format"
 import { classifyTool } from "@/features/session-view/tools/toolSummary"
 
-type Usage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } }
+type Usage = { output_tokens?: number; input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } }
 type Rec = Record<string, unknown> & { type?: string; uuid?: string; timestamp?: string; message?: { id?: string; role?: string; content?: unknown; model?: string; stop_reason?: string; usage?: Usage } }
 type Block = Record<string, unknown> & { type?: string }
 
@@ -19,13 +19,15 @@ export interface MapState {
   live: Map<string, ID>
   /** user messages sent from the app, waiting for their record (text → item ids, oldest first) */
   pending: Map<string, ID[]>
+  /** output tokens counted so far per API message (its records repeat the same usage) */
+  outTokens: Map<string, number>
 }
 
 export function emptyTranscript(sessionId: ID): Transcript {
   return { sessionId, turns: [], order: [], items: {}, queued: [], todos: [] }
 }
 export function newMapState(): MapState {
-  return { seen: new Set(), tools: new Map(), live: new Map(), pending: new Map() }
+  return { seen: new Set(), tools: new Map(), live: new Map(), pending: new Map(), outTokens: new Map() }
 }
 
 const FAMILY_KIND: Record<string, ToolKind> = {
@@ -253,6 +255,16 @@ function applyRecord(b: Builder, r: Rec) {
     }
     const msgId = r.message?.id
     const content = r.message?.content
+    // what this turn wrote ("26s · 1.2k tokens" under it); each record of one message repeats its usage
+    const out = u?.output_tokens
+    if (out && msgId && !r.isSidechain) {
+      const before = b.st.outTokens.get(msgId) ?? 0
+      if (out > before) {
+        b.st.outTokens.set(msgId, out)
+        const turn = b.turn()
+        b.t.turns[b.t.turns.length - 1] = { ...turn, outputTokens: (turn.outputTokens ?? 0) + out - before }
+      }
+    }
     if (!Array.isArray(content)) return
     // Claude Code's own error reply ("You've hit your limit", "API Error: 529 …"): a notice, not Claude talking
     if (r.isApiErrorMessage === true || (r.message?.model === "<synthetic>" && typeof r.error === "string")) {
@@ -390,15 +402,16 @@ export function applyTextDelta(base: Transcript, st: MapState, msgId: string, de
 }
 
 /** A user message sent from the app, shown at once (its record later dedupes against it). */
-export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[], images?: string[], uuid?: string): Transcript {
+export function addPendingUser(base: Transcript, st: MapState, text: string, attachments?: string[], images?: string[], uuid?: string, midTurn = false): Transcript {
   const b = new Builder(base, st)
   const at = new Date().toISOString()
   // the uuid the message is sent with (its record carries it): rewind finds it by that
   const id = `pending:${uuid ?? crypto.randomUUID()}`
   const key = text.trim()
   st.pending.set(key, [...(st.pending.get(key) ?? []), id])
-  b.newTurn(`turn:${id}`, at)
-  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, ...(attachments?.length ? { attachments } : {}), ...(images?.length ? { images: images.map((src) => ({ src })) } : {}) })
+  // a message Claude read in the middle of its turn stays in that turn (it steers it)
+  if (!midTurn) b.newTurn(`turn:${id}`, at)
+  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, ...(midTurn ? { steer: true } : {}), ...(attachments?.length ? { attachments } : {}), ...(images?.length ? { images: images.map((src) => ({ src })) } : {}) })
   return b.t
 }
 
@@ -410,10 +423,11 @@ export function markAwaiting(base: Transcript, st: MapState, toolUseId: string, 
 }
 
 /** End of a turn (stream `result`): close it and stop any streaming placeholder. */
-export function endTurn(base: Transcript, st: MapState, failed: boolean): Transcript {
+export function endTurn(base: Transcript, st: MapState, failed: boolean, durationMs?: number): Transcript {
   const b = new Builder(base, st)
   const last = b.t.turns.at(-1)
-  if (last && last.status === "in_progress") b.t.turns[b.t.turns.length - 1] = { ...last, status: failed ? "failed" : "completed", completedAt: new Date().toISOString() }
+  // the turn's time from the stream's result (the file's turn_duration record says the same later)
+  if (last && last.status === "in_progress") b.t.turns[b.t.turns.length - 1] = { ...last, status: failed ? "failed" : "completed", completedAt: new Date().toISOString(), ...(durationMs !== undefined && last.durationMs === undefined ? { durationMs } : {}) }
   for (const [, id] of st.live) {
     const it = b.t.items[id]
     if (it?.type === "agent_message") b.t.items[id] = { ...it, streaming: false }

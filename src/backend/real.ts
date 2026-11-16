@@ -817,6 +817,9 @@ async function tailOnce() {
     const meta = metas.get(id)
     const off = offsets.get(id)
     if (!meta || off == null || loading.has(id)) continue
+    // the app's own session while it runs: its stream already brings every record (reading the
+    // file too was the same JSON twice every 1.5 s); what only the file has is read once it rests
+    if (owned.has(id) && isRunning(id)) continue
     if (meta.size <= off && !liveFor(id)) continue
     try {
       const chunk = await invoke<Chunk>("claude_transcript_since", { path: meta.path, offset: off, tip: tips.get(id) })
@@ -869,8 +872,11 @@ function patchTranscript(id: ID, f: (t: Transcript, m: MapState) => Transcript) 
   const had = getApp().transcripts[id]
   const cur = had ?? emptyTranscript(id)
   // applied once (it marks records as seen); nothing new = the same object = no store update
-  const next = f(cur, m)
+  let next = f(cur, m)
   if (had && next === cur) return
+  // a queued message Claude read without saying so (no command_lifecycle): its record is in the
+  // chat now, so it leaves the queue
+  if (next.queued.length && next.order !== cur.order) next = settleQueued(next)
   setApp((s) => ({ transcripts: { ...s.transcripts, [id]: next } }))
 }
 
@@ -1279,12 +1285,158 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
     return
   }
   const uuid = crypto.randomUUID()
-  patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images, uuid))
-  // mid-turn it goes in at once too: claude reads it after its current step (steering), so what it
-  // is doing right now stays on screen
-  const busy = s.status === "working" || s.status === "starting"
-  setStatusLocal(id, "working", busy ? { waitingFor: undefined } : { activity: "Thinking", waitingFor: undefined })
-  invoke("claude_send", { key: id, text: body, images, uuid }).catch((e) => noticeError(id, String(e)))
+  // mid-turn (Claude Code desktop): it goes to Claude at once with priority "next" and waits at
+  // the end of the chat ("Claude reads this message at its next step") until Claude takes it in
+  // (command_lifecycle "started"); its Send now stops the step so it is read at once
+  const busy = isRunning(id)
+  // a quick follow-up (Claude Code desktop): while the turn has not answered yet, or began less
+  // than 5 s ago, the new message replaces it ("now": that turn stops, both messages are read)
+  const now = busy && rapidFollowUp(id)
+  if (now) {
+    const own = owned.get(id)
+    if (own) own.interrupting = true
+  }
+  if (busy) {
+    patchTranscript(id, (t) => ({ ...t, queued: [...t.queued, { id: uuid, text: body, ...(attachments?.length ? { attachments } : {}), ...(images.length ? { images } : {}) }] }))
+  } else {
+    patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images, uuid))
+    setStatusLocal(id, "working", { activity: "Thinking", waitingFor: undefined })
+  }
+  invoke("claude_send", { key: id, text: body, images, uuid, priority: busy ? (now ? "now" : "next") : null }).catch((e) => {
+    // never reached Claude: back out of the queue
+    patchTranscript(id, (t) => ({ ...t, queued: t.queued.filter((q) => q.id !== uuid) }))
+    noticeError(id, String(e))
+  })
+}
+
+/** The running turn has not answered yet, or began less than 5 s ago (not while a prompt waits for you). */
+function rapidFollowUp(id: ID): boolean {
+  if (getApp().sessions[id]?.status !== "working") return false
+  const t = getApp().transcripts[id]
+  const turn = t?.turns.at(-1)
+  if (!t || turn?.status !== "in_progress") return false
+  const age = Date.now() - Date.parse(turn.startedAt)
+  const answered = !!t.liveItemId || turn.itemIds.some((x) => {
+    const it = t.items[x]
+    return it?.type === "agent_message" || it?.type === "tool_call" || it?.type === "thought"
+  })
+  return !answered || age < 5000
+}
+
+// ---------- control requests that answer (cancel a queued message) ----------
+const answers = new Map<string, (r: { ok: boolean; response?: Record<string, unknown>; error?: string }) => void>()
+function ask(key: ID, request: Record<string, unknown>, ms = 5000): Promise<{ ok: boolean; response?: Record<string, unknown>; error?: string }> {
+  const requestId = `ask-${crypto.randomUUID()}`
+  return new Promise((done) => {
+    const timer = setTimeout(() => {
+      answers.delete(requestId)
+      done({ ok: false, error: "no answer" })
+    }, ms)
+    answers.set(requestId, (r) => {
+      clearTimeout(timer)
+      answers.delete(requestId)
+      done(r)
+    })
+    invoke("claude_control", { key, request, requestId }).catch((e) => answers.get(requestId)?.({ ok: false, error: String(e) }))
+  })
+}
+
+/**
+ * Take a waiting message back from Claude (Remove, Edit, Esc). True when it was still waiting;
+ * false when Claude already read it (then it shows in the chat as sent).
+ */
+export async function realCancelQueued(id: ID, uuid: string): Promise<boolean> {
+  const r = await ask(id, { subtype: "cancel_async_message", message_uuid: uuid })
+  const cancelled = r.ok && r.response?.cancelled !== false
+  if (cancelled) patchTranscript(id, (t) => ({ ...t, queued: t.queued.filter((q) => q.id !== uuid) }))
+  return cancelled
+}
+
+/**
+ * A waiting message's Send now: Claude's current step stops and it reads this message next
+ * (interrupt with send_now, as Claude Code desktop). A claude without it simply stops the step;
+ * what waits in its queue runs next either way.
+ */
+export async function realSendNow(id: ID, uuid: string) {
+  const own = owned.get(id)
+  if (!own || !getApp().transcripts[id]?.queued.some((q) => q.id === uuid)) return
+  own.interrupting = true
+  if (deltas.size) flushDeltas(id)
+  setStatusLocal(id, getApp().sessions[id]?.status ?? "working", { activity: "Sending your message now…" })
+  const r = await ask(id, { subtype: "interrupt", send_now: true, message_uuid: uuid }, 4000)
+  if (!r.ok && owned.has(id)) invoke("claude_control", { key: id, request: { subtype: "interrupt" } }).catch(() => undefined)
+}
+
+/**
+ * What waits in the app's sessions' queues is written down as it changes: when the app quits (its
+ * sessions stop with it) those messages are not lost but come back held, sent with Send now.
+ */
+const HELD = "sd.held"
+function keepQueuesAcrossQuit() {
+  try {
+    const held = JSON.parse(localStorage.getItem(HELD) ?? "{}") as Record<ID, Transcript["queued"]>
+    localStorage.removeItem(HELD)
+    // with what was queued for later (kept by the session store)
+    void import("@/features/session-view/sessionStore").then((ss) => ss.restoreHeld(held))
+  } catch {
+    /* nothing kept */
+  }
+  let last = ""
+  useApp.subscribe(
+    (st) => st.transcripts,
+    (ts) => {
+      const now: Record<ID, Transcript["queued"]> = {}
+      for (const [id, t] of Object.entries(ts)) if (t.queued.length && owned.has(id)) now[id] = t.queued.map((q) => ({ id: q.id, text: q.text, ...(q.attachments?.length ? { attachments: q.attachments } : {}) }))
+      const json = JSON.stringify(now)
+      if (json === last) return
+      last = json
+      try {
+        if (json === "{}") localStorage.removeItem(HELD)
+        else localStorage.setItem(HELD, json)
+      } catch {
+        /* private mode */
+      }
+    },
+  )
+}
+
+/** Queued messages whose text arrived in the chat as a message of yours since they were queued. */
+function settleQueued(t: Transcript): Transcript {
+  const recent = new Set<string>()
+  for (let i = t.order.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
+    const it = t.items[t.order[i]]
+    if (it?.type === "user_message" && !it.id.startsWith("pending:")) recent.add(it.text.trim())
+  }
+  const left = t.queued.filter((q) => !recent.has(q.text.trim()))
+  return left.length === t.queued.length ? t : { ...t, queued: left }
+}
+
+/** Claude took a queued message in (or dropped it): it leaves the queue and joins the chat. */
+function onLifecycle(key: ID, uuid: string | undefined, state: string | undefined) {
+  if (!uuid) return
+  const t = getApp().transcripts[key]
+  const q = t?.queued.find((x) => x.id === uuid)
+  if (!q) return
+  if (state === "started") {
+    patchTranscript(key, (tr, m) => {
+      const without = { ...tr, queued: tr.queued.filter((x) => x.id !== uuid) }
+      // read mid-turn: part of the running turn; read as a turn of its own (after Stop): a new one
+      return addPendingUser(without, m, q.text, undefined, q.images, uuid, isRunning(key) && tr.turns.at(-1)?.status === "in_progress")
+    })
+    // a turn of its own starts (after the one before ended or was stopped)
+    if (!isRunning(key)) setStatusLocal(key, "working", { activity: "Thinking", waitingFor: undefined })
+  } else if (state === "cancelled" || state === "discarded" || state === "refused") {
+    // dropped before Claude read it: back into the prompt box, nothing is lost
+    patchTranscript(key, (tr) => ({ ...tr, queued: tr.queued.filter((x) => x.id !== uuid) }))
+    backToBox(key, [q])
+  }
+}
+
+/** Waiting messages Claude will not read after all: their text goes back into the prompt box. */
+function backToBox(key: ID, items: Transcript["queued"]) {
+  if (!items.length) return
+  const text = items.map((q) => q.text).join("\n\n")
+  void import("@/features/session-view/sessionStore").then((ss) => ss.setDraft(key, (d) => ({ text: d.text ? `${d.text}\n\n${text}` : text, attachments: d.attachments })))
 }
 
 /**
@@ -1400,7 +1552,16 @@ export function realInterrupt(id: ID) {
   const own = owned.get(id)
   if (!own) return
   own.interrupting = true
-  invoke("claude_control", { key: id, request: { subtype: "interrupt" } }).catch(() => undefined)
+  // the text being written stops where it is at once; the turn's end follows from claude
+  if (deltas.size) flushDeltas(id)
+  setStatusLocal(id, getApp().sessions[id]?.status ?? "working", { activity: "Stopping…" })
+  // claude answers an interrupt at once; one that does not is stuck: its process is ended (Claude
+  // Code desktop does the same). The conversation is kept and goes on when you write again.
+  void ask(id, { subtype: "interrupt" }, 1500).then((r) => {
+    if (r.ok || r.error !== "no answer" || owned.get(id) !== own || !isRunning(id)) return
+    realStop(id)
+    noticeInfo(id, "Claude did not answer Stop, so its process was ended. The conversation is kept: write to continue.")
+  })
 }
 
 /** Fast mode, Ultracode and output style as Claude Code settings (`--settings` / apply_flag_settings). */
@@ -1536,6 +1697,8 @@ function buildRequest(key: ID, requestId: string, r: CanUseTool): { req: Pending
       planMarkdown: String(r.input.plan ?? ""),
       options: [
         { id: "approve-accept", name: "Yes, and auto-accept edits", kind: "allow_always" },
+        { id: "approve-auto", name: "Yes, and use auto mode", kind: "allow_always" },
+        { id: "approve-bypass", name: "Yes, and bypass permissions", kind: "allow_always" },
         { id: "approve-manual", name: "Yes, and manually approve edits", kind: "allow_always" },
         { id: "keep-planning", name: "No, keep planning", kind: "reject_once" },
       ],
@@ -1713,9 +1876,13 @@ export function setPlanAllow(requestId: ID, rules: string[]) {
 export function realResolve(requestId: ID, optionId: string, feedback?: string): boolean {
   const o = offerById.get(requestId)
   if (o) {
-    // a plain No stops Claude and waits for you (as in the terminal); with words, it goes on with them
-    if (optionId === "reject" || optionId === "keep-planning") return answerOffer(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), ...(feedback?.trim() || optionId === "keep-planning" ? {} : { interrupt: true }) })
+    // Deny (Claude Code desktop): Claude is told no and goes on without it (Stop ends the turn)
+    if (optionId === "reject" || optionId === "keep-planning") return answerOffer(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), interrupt: false })
     if (optionId === "allow-always") return answerOffer(requestId, { behavior: "allow", updatedPermissions: o.suggestions ?? [] })
+    if (optionId === "allow-auto") {
+      modeLocally(o.sessionId, "auto")
+      return answerOffer(requestId, { behavior: "allow", updatedPermissions: [{ type: "setMode", mode: "auto", destination: "session" }] })
+    }
     const extra = planAllow.get(requestId)
     planAllow.delete(requestId)
     if (extra?.length) return answerOffer(requestId, { behavior: "allow", updatedPermissions: [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] })
@@ -1724,32 +1891,37 @@ export function realResolve(requestId: ID, optionId: string, feedback?: string):
   const t = toolOf.get(requestId)
   if (!t) return false
   if (optionId === "reject" || optionId === "keep-planning") {
-    const stop = !feedback?.trim() && optionId === "reject" && getApp().requests[requestId]?.type === "permission"
-    respond(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), ...(stop ? { interrupt: true } : {}) })
-    if (stop) {
-      const own = owned.get(t.key)
-      if (own) own.interrupting = true
-    }
+    respond(requestId, { behavior: "deny", message: feedback?.trim() || (optionId === "keep-planning" ? "Keep planning." : "The user denied this."), interrupt: false })
     return true
   }
   if (optionId === "allow-always") {
     respond(requestId, { behavior: "allow", updatedInput: t.input, updatedPermissions: t.suggestions ?? [] })
     return true
   }
+  // "Allow and switch to Auto" (Claude Code desktop's menu on the permission card)
+  if (optionId === "allow-auto") {
+    respond(requestId, { behavior: "allow", updatedInput: t.input, updatedPermissions: [{ type: "setMode", mode: "auto", destination: "session" }] })
+    modeLocally(t.key, "auto")
+    return true
+  }
   // a plan approved with its checks allowed: session-only rules, gone when the session ends
   const extra = planAllow.get(requestId)
   planAllow.delete(requestId)
-  const approve = optionId === "approve-accept" || optionId === "approve-manual"
-  const rules: Record<string, unknown>[] = approve && extra?.length ? [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] : []
+  const mode = PLAN_MODE[optionId]
+  const rules: Record<string, unknown>[] = mode && extra?.length ? [{ type: "addRules", rules: extra.map((r) => ({ toolName: "Bash", ruleContent: r })), behavior: "allow", destination: "session" }] : []
   // the mode goes with the approval itself, so Claude's first edits already run in it
-  if (approve) rules.push({ type: "setMode", mode: optionId === "approve-accept" ? "acceptEdits" : "default", destination: "session" })
+  if (mode) rules.push({ type: "setMode", mode, destination: "session" })
   respond(requestId, { behavior: "allow", updatedInput: t.input, ...(rules.length ? { updatedPermissions: rules } : {}) })
-  if (optionId === "approve-accept" || optionId === "approve-manual") {
-    const mode: PermissionMode = optionId === "approve-accept" ? "acceptEdits" : "default"
-    realSettings(t.key, { permissionMode: mode })
-    setApp((s) => (s.sessions[t.key] ? { sessions: { ...s.sessions, [t.key]: { ...s.sessions[t.key], permissionMode: mode } } } : s))
-  }
+  if (mode) modeLocally(t.key, mode)
   return true
+}
+
+/** The mode each plan answer switches to (Accept and allow edits; its menu: Auto, bypass; Accept). */
+const PLAN_MODE: Record<string, PermissionMode> = { "approve-accept": "acceptEdits", "approve-auto": "auto", "approve-bypass": "bypassPermissions", "approve-manual": "default" }
+
+/** The mode picker follows a mode set with an answer (Claude Code applies it from the answer itself). */
+function modeLocally(key: ID, mode: PermissionMode) {
+  setApp((s) => (s.sessions[key] ? { sessions: { ...s.sessions, [key]: { ...s.sessions[key], permissionMode: mode } } } : s))
 }
 
 export function realAnswer(requestId: ID, answers: Record<string, string | string[]>): boolean {
@@ -1774,23 +1946,42 @@ function queueDelta(key: ID, msgId: string, text: string) {
   const d = deltas.get(k)
   if (d) d.text += text
   else deltas.set(k, { key, msgId, text })
-  deltaFrame ||= requestAnimationFrame(flushDeltas)
+  deltaFrame ||= requestAnimationFrame(() => flushDeltas())
 }
-function flushDeltas() {
+let lastHiddenFlush = 0
+function flushDeltas(force?: ID) {
   deltaFrame = 0
-  const all = [...deltas.values()]
-  deltas.clear()
-  for (const d of all) patchTranscript(d.key, (t, m) => applyTextDelta(t, m, d.msgId, d.text))
+  // the chat on screen streams every frame; the others (their text is not seen) once a second,
+  // so five working sessions are not sixty store updates a second for the whole window
+  const shown = getApp().route.startsWith("/session/") ? getApp().route.slice(9) : ""
+  const now = performance.now()
+  const hiddenDue = now - lastHiddenFlush > 1000
+  if (hiddenDue) lastHiddenFlush = now
+  for (const [k, d] of [...deltas]) {
+    if (d.key !== shown && d.key !== force && !hiddenDue) continue
+    deltas.delete(k)
+    patchTranscript(d.key, (t, m) => applyTextDelta(t, m, d.msgId, d.text))
+  }
+  // what waits is flushed by the next frame that comes after the second is up
+  if (deltas.size && !deltaFrame) deltaFrame = requestAnimationFrame(() => setTimeout(() => flushDeltas(), 250))
 }
 
 function onEvent({ key, event, exit }: EventPayload) {
   // whatever was streamed goes in before the next event (a finished message replaces it)
-  if (deltas.size && event?.type !== "stream_event") flushDeltas()
+  // (this session's at least: a finished message must never be followed by a late piece of its text)
+  if (deltas.size && event?.type !== "stream_event") flushDeltas(key)
   const own = owned.get(key)
   if (exit) {
+    void import("@/features/session-view/sessionStore").then((m) => m.clearStopping(key))
     const cwd = own?.cwd ?? getApp().sessions[key]?.cwd ?? ""
     owned.delete(key)
     cancelRequests(key)
+    // what waited for Claude was not read: back into the prompt box (never sent on its own)
+    const left = getApp().transcripts[key]?.queued ?? []
+    if (left.length) {
+      patchTranscript(key, (t) => ({ ...t, queued: [] }))
+      backToBox(key, left)
+    }
     // 143 / 130: stopped on purpose (SIGTERM, Ctrl+C), not a failure
     const bad = exit.code !== 0 && exit.code !== null && exit.code !== 143 && exit.code !== 130 && !own?.interrupting
     patchTranscript(key, (t, m) => endTurn(t, m, bad))
@@ -1828,6 +2019,8 @@ function onEvent({ key, event, exit }: EventPayload) {
         if (tool && !nextPending(key)) setStatusLocal(key, getApp().sessions[key]?.status === "starting" ? "working" : (getApp().sessions[key]?.status ?? "working"), { activity: activityOf(tool.name ?? "tool", tool.input ?? {}) })
         break
       }
+      // --replay-user-messages: Claude's echo of a message it got from the app (already shown)
+      if (event.isReplay === true) break
       patchTranscript(key, (t, m) => applyRecords(t, m, [event], { running: true }))
       if (tool) {
         // a prompt still waiting for you stays in front (the next block may come while it waits)
@@ -1905,11 +2098,12 @@ function onEvent({ key, event, exit }: EventPayload) {
       break
     }
     case "result": {
+      void import("@/features/session-view/sessionStore").then((m) => m.clearStopping(key))
       // the turn you stopped ends with an error result: that is not a failure
       // an API error ends as subtype "success" with is_error; error subtypes carry their text in errors[]
       const failed = (event.is_error === true || (typeof event.subtype === "string" && event.subtype !== "success")) && !own.interrupting
       own.interrupting = false
-      patchTranscript(key, (t, m) => endTurn(t, m, failed))
+      patchTranscript(key, (t, m) => endTurn(t, m, failed, typeof event.duration_ms === "number" ? event.duration_ms : undefined))
       const onScreen = getApp().route === `/session/${key}`
       // total_cost_usd is already this process's running total (stream-json): take it, don't add it
       const cost = typeof event.total_cost_usd === "number" ? event.total_cost_usd + (own.baseCost ?? 0) : undefined
@@ -1930,9 +2124,14 @@ function onEvent({ key, event, exit }: EventPayload) {
       askContext(key)
       break
     }
+    case "command_lifecycle":
+      onLifecycle(key, (event.command_uuid ?? event.uuid) as string | undefined, event.state as string | undefined)
+      break
     case "control_response": {
-      const resp = event.response as { request_id?: string; response?: Record<string, unknown> } | undefined
-      if (resp?.request_id?.startsWith("ctx-") && resp.response) onContextUsage(key, resp.response as never)
+      const resp = event.response as { request_id?: string; response?: Record<string, unknown>; subtype?: string; error?: string } | undefined
+      const waiter = resp?.request_id ? answers.get(resp.request_id) : undefined
+      if (waiter) waiter({ ok: resp?.subtype !== "error", response: resp?.response, error: resp?.error })
+      else if (resp?.request_id?.startsWith("ctx-") && resp.response) onContextUsage(key, resp.response as never)
       else if (resp?.request_id?.startsWith("mcp-") && resp.response) onMcpStatus(key, resp.response as never)
       break
     }
@@ -1966,6 +2165,7 @@ export async function startReal() {
   }
   registerSync(sync)
   if (!POPOUT) void import("./ports").then((p) => p.startPorts())
+  if (!POPOUT) keepQueuesAcrossQuit()
   // other accounts' folders are read too (set before the first scan)
   await invoke("claude_set_config_dirs", { dirs: getApp().settings.claudeConfigDirs ?? [] }).catch(() => undefined)
   useApp.subscribe(
@@ -1973,6 +2173,10 @@ export async function startReal() {
     (dirs) => void invoke("claude_set_config_dirs", { dirs: dirs ?? [] }).then(() => pollScan().then(sync)).catch(() => undefined),
   )
   await listen<EventPayload>("claude-event", (e) => onEvent(e.payload))
+  // stream lines come in batches (one per ~40 ms per session)
+  await listen<{ key: ID; events: NonNullable<EventPayload["event"]>[] }>("claude-events", (e) => {
+    for (const event of e.payload.events) onEvent({ key: e.payload.key, event })
+  })
   // a prompt answered in another window of the app
   await listen<{ requestId: string }>("sd-answered", (e) => settleLocal(e.payload.requestId))
   await attachRunning()
@@ -2036,14 +2240,11 @@ export async function startReal() {
   setInterval(() => void pollGit(false), 20_000)
   // the workspace: its repos now, again when Settings change it, and every 2 minutes (new clones)
   void loadWorkspace()
-  let ws = JSON.stringify(getApp().settings.workspaces)
-  useApp.subscribe((s) => {
-    const now = JSON.stringify(s.settings.workspaces)
-    if (now !== ws) {
-      ws = now
-      void loadWorkspace()
-    }
-  })
+  // only when the workspaces themselves change (not a JSON round on every store update)
+  useApp.subscribe(
+    (s) => s.settings.workspaces,
+    () => void loadWorkspace(),
+  )
   setInterval(() => void loadWorkspace(), 120_000)
 }
 

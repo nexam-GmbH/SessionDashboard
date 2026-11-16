@@ -11,15 +11,20 @@ import { resolveRequest } from "@/features/session-view/sessionStore"
 import { planChecks } from "@/features/session-view/signals"
 import { Checkbox } from "@/components/ui/checkbox"
 import { REAL } from "@/backend/mode"
-import { CardFrame, canStealFocus, FeedbackField, OptionButton, optionLabel, type Pager } from "./cardChrome"
+import { useApp } from "@/store/app"
+import { CardFrame, canStealFocus, FeedbackField, MoreAnswers, OptionButton, optionLabel, type Pager } from "./cardChrome"
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
+/** in the menu beside "Accept and allow edits" (Claude Code desktop), not buttons of their own */
+const IN_MENU = new Set(["approve-auto", "approve-bypass"])
 
-/** Plain words for ExitPlanMode's answers (the mode each one switches to). */
+/** ExitPlanMode's answers in Claude Code desktop's words (the mode each one switches to). */
 const PLAN_LABEL: Record<string, string> = {
-  "approve-accept": "Start, auto-accept edits",
-  "approve-manual": "Start, approve each edit",
-  "keep-planning": "Revise",
+  "approve-accept": "Accept and allow edits",
+  "approve-auto": "Accept and use Auto mode",
+  "approve-bypass": "Accept and bypass permissions",
+  "approve-manual": "Accept",
+  "keep-planning": "Revise…",
 }
 
 export const PlanApprovalCard = memo(function PlanApprovalCard({
@@ -54,13 +59,16 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
       else resolveRequest(request, o.id)
     }
   }
-  const primary = request.options.find((o) => !isReject(o))
+  const allowBypass = useApp((s) => s.settings.allowBypass || s.caps?.defaultMode === "bypassPermissions")
+  const menu = request.options.filter((o) => IN_MENU.has(o.id) && (o.id !== "approve-bypass" || allowBypass))
+  const buttons = request.options.filter((o) => !IN_MENU.has(o.id))
+  const primary = buttons.find((o) => !isReject(o))
   return (
     <CardFrame
       ref={ref}
       tone="input"
       label="Plan approval"
-      keyHint={`Enter: approve. 1 to ${Math.min(9, request.options.length)}: pick an option.`}
+      keyHint={`Enter: approve. 1 to ${Math.min(9, buttons.length)}: pick an option.`}
       title={
         <span className="flex min-w-0 items-center gap-2">
           <ListChecks size={16} className="shrink-0 text-muted-foreground" />
@@ -74,7 +82,8 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
           e.preventDefault()
           choose(primary)
         } else if (/^[1-9]$/.test(e.key)) {
-          const o = request.options[Number(e.key) - 1]
+          // the buttons only (the menu's answers are picked from the menu)
+          const o = buttons[Number(e.key) - 1]
           if (o) {
             e.preventDefault()
             choose(o)
@@ -84,7 +93,7 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
       footer={
         feedbackFor ? (
           <FeedbackField
-            placeholder="What should change? (optional)"
+            placeholder="What should change?"
             value={feedback}
             onChange={setFeedback}
             onSubmit={() => resolveRequest(request, feedbackFor.id, feedback.trim() || undefined)}
@@ -93,16 +102,16 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
               setFeedback("")
               ref.current?.focus()
             }}
-            submitLabel="Keep planning"
+            submitLabel="Revise"
           />
         ) : (
           <>
             {!canApprove && <span className="mr-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
             {/* Revise on the left, the main answer on the right (Claude Code desktop's order) */}
-            {[...request.options.filter(isReject), ...request.options.filter((o) => !isReject(o) && o !== primary), ...(primary ? [primary] : [])].map((o) => (
+            {[...buttons.filter(isReject), ...buttons.filter((o) => !isReject(o) && o !== primary), ...(primary ? [primary] : [])].map((o) => (
               <OptionButton
                 key={o.id}
-                n={request.options.indexOf(o) + 1}
+                n={buttons.indexOf(o) + 1}
                 disabled={!canApprove}
                 variant={o === primary ? "primary" : isReject(o) ? "quiet" : "secondary"}
                 onClick={() => choose(o)}
@@ -112,6 +121,11 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
                 {PLAN_LABEL[o.id] ?? optionLabel(o)}
               </OptionButton>
             ))}
+            <MoreAnswers
+              disabled={!canApprove}
+              label="More ways to accept"
+              items={menu.map((o) => ({ label: PLAN_LABEL[o.id] ?? optionLabel(o), danger: o.id === "approve-bypass", onSelect: () => choose(o) }))}
+            />
           </>
         )
       }

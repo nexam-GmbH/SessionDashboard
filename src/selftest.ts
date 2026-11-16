@@ -28,6 +28,152 @@ async function until<T>(f: () => T | undefined | null | false, ms: number): Prom
 
 export async function runSelftest() {
   log("start")
+  // with a stand-in claude (SD_CLAUDE_BIN, test runs only): a session the app runs streams its
+  // answer through the batched events and ends idle with the whole text
+  if (await invoke<boolean>("sd_fake_claude").catch(() => false)) {
+    await step("stream: an app-run session's reply arrives whole through the batches", async () => {
+      const { realStart } = await import("@/backend/real")
+      await until(() => getApp().ready, 30000)
+      const id = realStart({ cwd: "/tmp", prompt: "say hi" })
+      const t0 = performance.now()
+      const text = await until(() => {
+        const t = getApp().transcripts[id]
+        const s = getApp().sessions[id]
+        const done = s && s.status !== "working" && s.status !== "starting"
+        const last = t?.order.map((x) => t.items[x]).filter((x) => x?.type === "agent_message").at(-1)
+        return done && last && last.type === "agent_message" && last.text.endsWith("SD-FAKE-DONE") ? last.text : null
+      }, 20000)
+      const t = getApp().transcripts[id]
+      const live = t.order.filter((x) => x.startsWith("live:")).length
+      if (live) throw new Error(`${live} streaming placeholders left`)
+      return `${text.split(" ").length} words, ${t.order.length} items, status ${getApp().sessions[id].status}, ${Math.round(performance.now() - t0)} ms`
+    })
+    // a session in the middle of a long turn (the stand-in streams for ~12 s when asked for
+    // "long"), past its first 5 s (before that a new message replaces the turn: rapid follow-up)
+    const settled = async (id: string) => {
+      await until(() => getApp().sessions[id]?.status === "working" && getApp().transcripts[id]?.order.some((x) => x.startsWith("live:")), 10000)
+      const turn = getApp().transcripts[id].turns.at(-1)!
+      await until(() => Date.now() - Date.parse(turn.startedAt) > 5300, 8000)
+    }
+    const busy = async (id: string, text = "long turn please") => {
+      const { sendMessage } = await import("@/store/actions")
+      await until(() => getApp().sessions[id]?.status === "idle" || getApp().sessions[id]?.status === "done_unseen", 25000)
+      sendMessage(id, text)
+      await settled(id)
+    }
+    const said = (id: string, text: string) => getApp().transcripts[id]?.order.map((x) => getApp().transcripts[id].items[x]).filter((x) => x?.type === "user_message" && x.text === text) ?? []
+    await step("queue: Enter mid-turn waits at the end of the chat, then joins the turn (once)", async () => {
+      const { realStart } = await import("@/backend/real")
+      const { sendMessage } = await import("@/store/actions")
+      const id = realStart({ cwd: "/tmp", prompt: "long turn please" })
+      await settled(id)
+      sendMessage(id, "also check the docs")
+      const queued = await until(() => getApp().transcripts[id]?.queued.length === 1 && "waiting", 3000)
+      const t0 = performance.now()
+      await until(() => getApp().transcripts[id]?.queued.length === 0, 5000)
+      const shown = said(id, "also check the docs")
+      if (shown.length !== 1) throw new Error(`shown ${shown.length} times (the replayed echo must not add one)`)
+      const steer = shown[0]
+      if (steer?.type !== "user_message" || !steer.steer) throw new Error("the message did not join the running turn")
+      ;(window as unknown as { __q: string }).__q = id
+      return `${queued}, taken in after ${Math.round(performance.now() - t0)} ms, shown once in the turn`
+    })
+    await step("queue: Remove and Esc take a waiting message back (cancel_async_message)", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { sendMessage } = await import("@/store/actions")
+      const { realCancelQueued } = await import("@/backend/real")
+      const { takeBackWaiting, getDraft, setDraft } = await import("@/features/session-view/sessionStore")
+      await busy(id)
+      sendMessage(id, "never mind this one")
+      const q = await until(() => getApp().transcripts[id]?.queued[0], 3000)
+      const ok = await realCancelQueued(id, q.id)
+      if (!ok || getApp().transcripts[id].queued.length) throw new Error(`cancelled ${ok}, left ${getApp().transcripts[id].queued.length}`)
+      sendMessage(id, "back into the box")
+      await until(() => getApp().transcripts[id]?.queued.length === 1, 3000)
+      if (!takeBackWaiting(id)) throw new Error("Esc found nothing waiting")
+      await until(() => getDraft(id).text === "back into the box", 3000)
+      if (getApp().transcripts[id].queued.length) throw new Error("still waiting after Esc")
+      setDraft(id, { text: "", attachments: [] })
+      return "removed; Esc put the text back in the box"
+    })
+    await step("send now: a waiting message is read next (interrupt send_now)", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { sendMessage } = await import("@/store/actions")
+      const { sendWaitingNow } = await import("@/features/session-view/sessionStore")
+      await busy(id)
+      sendMessage(id, "read this now")
+      const q = await until(() => getApp().transcripts[id]?.queued[0], 3000)
+      const t0 = performance.now()
+      sendWaitingNow(id, q.id)
+      await until(() => said(id, "read this now").length === 1 && getApp().transcripts[id].queued.length === 0, 4000)
+      return `in the chat ${Math.round(performance.now() - t0)} ms after Send now`
+    })
+    await step("later: Ctrl+Enter holds the message until the turn is over", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { queueMessage, getUiValue } = await import("@/features/session-view/sessionStore")
+      await busy(id)
+      queueMessage(id, "after this turn")
+      const held = getUiValue<unknown[]>(`outbox:${id}`, []).length
+      if (held !== 1 || getApp().transcripts[id].queued.length) throw new Error(`outbox ${held}, sent ${getApp().transcripts[id].queued.length}`)
+      const turns = getApp().transcripts[id].turns.length
+      await until(() => said(id, "after this turn").length === 1, 15000)
+      const t = getApp().transcripts[id]
+      const turn = t.turns.find((x) => x.itemIds.some((i) => (t.items[i] as { text?: string })?.text === "after this turn"))
+      if (!turn || t.turns.indexOf(turn) < turns) throw new Error("it did not start a turn of its own")
+      return "sent when the turn ended, as a turn of its own"
+    })
+    await step("rapid follow-up: a message right after the turn began replaces it (priority now)", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { sendMessage } = await import("@/store/actions")
+      await until(() => getApp().sessions[id]?.status === "idle" || getApp().sessions[id]?.status === "done_unseen", 25000)
+      sendMessage(id, "long turn please")
+      await until(() => getApp().sessions[id]?.status === "working", 5000)
+      const t0 = performance.now()
+      sendMessage(id, "oh, and use the docs")
+      await until(() => said(id, "oh, and use the docs").length === 1, 5000)
+      const ms = Math.round(performance.now() - t0)
+      if (getApp().sessions[id].status === "error") throw new Error("the replaced turn shows as failed")
+      await until(() => getApp().sessions[id]?.status !== "working" && getApp().sessions[id]?.status !== "starting", 20000)
+      const t = getApp().transcripts[id]
+      const replaced = t.turns.filter((x) => x.itemIds.some((i) => (t.items[i] as { text?: string })?.text === "long turn please")).at(-1)
+      if (replaced?.status === "failed") throw new Error("the replaced turn is marked failed")
+      return `the follow-up started ${ms} ms later as a turn of its own; the replaced turn ${replaced?.status}`
+    })
+    await step("stop: Stop ends the turn at once; a waiting message runs next", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { sendMessage } = await import("@/store/actions")
+      const { interruptSession } = await import("@/features/session-view/sessionStore")
+      await busy(id)
+      sendMessage(id, "do this instead")
+      await until(() => getApp().transcripts[id]?.queued.length === 1, 3000)
+      const t0 = performance.now()
+      interruptSession(id)
+      // stopped: the turn ended (failed or not) and the waiting message starts a turn of its own
+      await until(() => said(id, "do this instead").length === 1, 5000)
+      const stopMs = Math.round(performance.now() - t0)
+      await until(() => getApp().sessions[id]?.status !== "working" && getApp().sessions[id]?.status !== "starting", 15000)
+      return `stopped and the waiting message started ${stopMs} ms after Stop; session ${getApp().sessions[id].status}`
+    })
+    await step("stop: a claude that does not answer Stop is ended; what waited goes back to the box", async () => {
+      const id = (window as unknown as { __q: string }).__q
+      const { sendMessage } = await import("@/store/actions")
+      const { interruptSession, getDraft, clearStopping } = await import("@/features/session-view/sessionStore")
+      await busy(id, "long deaf turn")
+      sendMessage(id, "kept for later")
+      await until(() => getApp().transcripts[id]?.queued.length === 1, 3000)
+      const t0 = performance.now()
+      interruptSession(id)
+      await until(() => getApp().sessions[id]?.status !== "working" && getApp().sessions[id]?.status !== "starting", 8000)
+      const ms = Math.round(performance.now() - t0)
+      await until(() => getDraft(id).text.includes("kept for later"), 3000)
+      clearStopping(id)
+      const t = getApp().transcripts[id]
+      if (!t.order.some((x) => (t.items[x] as { text?: string })?.text?.startsWith("Claude did not answer Stop"))) throw new Error("no note in the chat")
+      return `ended ${ms} ms after Stop; the waiting message is back in the box, a note says why`
+    })
+    log("done")
+    return
+  }
   await step("discovery", async () => {
     const n = await until(() => {
       const s = getApp()

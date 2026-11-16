@@ -10,9 +10,12 @@ import type { ID, Item } from "@/lib/model"
 import { getApp } from "@/store/app"
 import { estimateBlock, type Block } from "./rowModel"
 
+/** Measured block heights per chat, by block key, with the width they were measured at. */
+const measuredSizes = new Map<ID, { width: number; sizes: Map<string, number> }>()
+
 /** Pixel distance from the bottom within which the reader counts as "at bottom". */
 export const NEAR_BOTTOM_THRESHOLD_PX = 64
-const OVERSCAN = 4
+const OVERSCAN = 2
 
 export function isNearBottom(scrollTop: number, clientHeight: number, scrollHeight: number) {
   return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_THRESHOLD_PX
@@ -37,8 +40,11 @@ export function useTranscriptVirtualizer({
   const smoothDeadlineRef = useRef(0)
   // TanStack re-runs estimateSize for every unmeasured row after each measurement,
   // so estimates are cached per row key (and per 40px width bucket); never touch layout here.
-  const widthRef = useRef(800)
+  const widthRef = useRef(measuredSizes.get(sessionId)?.width ?? 800)
   const estimatesRef = useRef(new Map<string, number>())
+  // sizes measured the last time this chat was on screen (at this width): a chat opened again
+  // starts with them instead of estimates, so nothing jumps while it measures itself
+  const remembered = measuredSizes.get(sessionId)
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -46,6 +52,8 @@ export function useTranscriptVirtualizer({
     estimateSize: (index) => {
       const row = rows[index]
       if (!row) return 40
+      const known = remembered && remembered.width === widthRef.current ? remembered.sizes.get(row.key) : undefined
+      if (known !== undefined) return known
       const hit = estimatesRef.current.get(row.key)
       if (hit !== undefined) return hit
       const items: Record<ID, Item> = getApp().transcripts[sessionId]?.items ?? {}
@@ -75,10 +83,14 @@ export function useTranscriptVirtualizer({
   }, [virtualizer, scrollRef])
 
   const [isAtBottom, setIsAtBottom] = useState(true)
+  // more than 200 px up: Claude Code desktop's "Scroll to bottom" shows
+  const [farFromBottom, setFarFromBottom] = useState(false)
   const syncIsAtBottom = useCallback(() => {
     const el = scrollRef.current
     const next = bottomLockedRef.current ? true : el ? isNearBottom(el.scrollTop, el.clientHeight, el.scrollHeight) : true
     setIsAtBottom((cur) => (cur === next ? cur : next))
+    const far = !next && !!el && el.scrollHeight - el.scrollTop - el.clientHeight > 200
+    setFarFromBottom((cur) => (cur === far ? cur : far))
   }, [scrollRef])
 
   const pin = useCallback(() => {
@@ -174,6 +186,20 @@ export function useTranscriptVirtualizer({
     return () => ro.disconnect()
   }, [contentRef, scrollRef, pin, syncIsAtBottom])
 
+  // keep what was measured when the chat leaves the screen (a hidden <Activity> runs this cleanup)
+  useEffect(
+    () => () => {
+      const sizes = new Map<string, number>()
+      for (const [k, v] of virtualizer.itemSizeCache) sizes.set(String(k), v)
+      if (sizes.size) {
+        measuredSizes.set(sessionId, { width: widthRef.current, sizes })
+        // a few dozen chats at most
+        if (measuredSizes.size > 40) measuredSizes.delete(measuredSizes.keys().next().value as ID)
+      }
+    },
+    [virtualizer, sessionId],
+  )
+
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
 
@@ -205,5 +231,5 @@ export function useTranscriptVirtualizer({
 
   const measure = useCallback((node: Element | null) => virtualizer.measureElement(node), [virtualizer])
 
-  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom }
+  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom, farFromBottom }
 }

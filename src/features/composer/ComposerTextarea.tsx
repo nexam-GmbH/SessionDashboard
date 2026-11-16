@@ -21,11 +21,17 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
   const [scrollTop, setScrollTop] = useState(0)
   const value = typeof props.value === "string" ? props.value : ""
 
-  // Auto-grow to content, capped.
+  // Auto-grow to content, capped. Typing on a line that still fits changes no height: only then
+  // is the box measured from scratch (collapsing it to "auto" first forces the whole window's
+  // layout twice per key, which WebKitGTK feels on a long chat)
+  const lastLen = useRef(0)
   useLayoutEffect(() => {
     const el = innerRef.current
     if (!el) return
-    el.style.height = "auto"
+    const shrank = value.length < lastLen.current
+    lastLen.current = value.length
+    if (shrank || !el.style.height) el.style.height = "auto"
+    else if (el.scrollHeight <= el.clientHeight) return
     // +1: zoomed web views round heights to fractions; without it a scrollbar shows up empty
     const h = el.scrollHeight + 1
     el.style.height = `${Math.min(h, maxHeight)}px`

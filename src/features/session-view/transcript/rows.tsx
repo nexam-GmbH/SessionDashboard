@@ -16,6 +16,7 @@ import { useApp } from "@/store/app"
 import { forkSession, openReview, openSession, sendMessage } from "@/store/actions"
 import { DiffStat } from "@/components/common/bits"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { capabilities } from "@/lib/status"
 import { compact, plural, usd } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -59,6 +60,72 @@ function forkFromHere(sessionId: ID, itemId: ID) {
 const ACTION_BTN =
   "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
 
+/**
+ * Rewind on a message of yours (Claude Code's own choices): the conversation, the code or both back
+ * to before it, or a fork of the conversation from here (with the code rewound too, if you like).
+ * Not while Claude works (Claude Code desktop): it would change files under its feet.
+ */
+function RewindMenu({ sessionId, itemId, turnId, canRewind, canFork }: { sessionId: ID; itemId: ID; turnId: ID; canRewind: boolean; canFork: boolean }) {
+  const busy = useApp((s) => {
+    const st = s.sessions[sessionId]?.status
+    return st === "working" || st === "starting" || st === "waiting_permission" || st === "waiting_input"
+  })
+  const rewind = (scope: "both" | "conversation" | "code") => void import("../rewind").then((r) => r.rewindTo(sessionId, turnId, scope))
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" title="Rewind or fork from here" aria-label="Rewind or fork from here" className={ACTION_BTN}>
+          <History size={13} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        {canRewind && busy && <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Rewind waits until Claude stops</DropdownMenuLabel>}
+        {canRewind && (
+          <>
+            <DropdownMenuItem disabled={busy} onSelect={() => rewind("conversation")}>
+              <History /> Rewind conversation to here
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => rewind("code")}>
+              <FileDiff /> Rewind code to here
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={busy} onSelect={() => rewind("both")}>
+              <History /> Rewind conversation and code
+            </DropdownMenuItem>
+          </>
+        )}
+        {canRewind && canFork && <DropdownMenuSeparator />}
+        {canFork && (
+          <>
+            <DropdownMenuItem onSelect={() => forkFromHere(sessionId, itemId)}>
+              <GitFork /> Fork conversation from here
+            </DropdownMenuItem>
+            {canRewind && (
+              <DropdownMenuItem
+                disabled={busy}
+                onSelect={() => {
+                  rewind("code")
+                  forkFromHere(sessionId, itemId)
+                }}
+              >
+                <GitFork /> Fork conversation and rewind code
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+        {canRewind && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setTimeout(() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId } })), 0)}>
+              Choose another message…
+              <DropdownMenuShortcut>Esc Esc</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
   const item = useItem(sessionId, itemId)
   const control = useApp((s) => s.sessions[sessionId]?.control)
@@ -74,9 +141,11 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
         {item.images && item.images.length > 0 && <Pictures pictures={item.images} className={item.text ? "mb-2" : "my-0.5"} />}
         {item.text && (
           <div
-            className={cn("text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text", item.command && "font-mono text-[13px]", long && !open && "max-h-[19rem] overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]")}
+            className={cn("relative text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text", item.command && "font-mono text-[13px]", long && !open && "max-h-[19rem] overflow-hidden")}
           >
             {item.text}
+            {/* a fade into the bubble's colour (a mask-image is an offscreen pass per frame in WebKit) */}
+            {long && !open && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-b from-transparent to-muted" />}
           </div>
         )}
         {long && (
@@ -100,22 +169,7 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
           {TIME.format(new Date(item.at))}
         </time>
         <CopyButton text={item.text} />
-        {canRewind && (
-          <button
-            type="button"
-            title="Rewind to here: back to before this message (conversation, code or both)"
-            aria-label="Rewind to here"
-            onClick={() => window.dispatchEvent(new CustomEvent("sd:rewind", { detail: { sessionId, turnId: item.turnId } }))}
-            className={ACTION_BTN}
-          >
-            <History size={13} />
-          </button>
-        )}
-        {canFork && (
-          <button type="button" title="Fork from here: a copy of the session up to before this message" aria-label="Fork from here" onClick={() => forkFromHere(sessionId, itemId)} className={ACTION_BTN}>
-            <GitFork size={13} />
-          </button>
-        )}
+        {(canRewind || canFork) && <RewindMenu sessionId={sessionId} itemId={itemId} turnId={item.turnId} canRewind={canRewind} canFork={canFork} />}
       </div>
     </div>
   )

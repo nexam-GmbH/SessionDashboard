@@ -50,15 +50,35 @@ export function verification(t: Transcript): Verification {
   return anyEdit ? { state: "unchecked", edits: editsAfter } : { state: "none" }
 }
 
-const vCache = new Map<ID, { order: ID[]; items: Transcript["items"]; value: Verification }>()
+/**
+ * The tool calls of a transcript, by order (cached per order array). Streamed text replaces
+ * `items` many times a second without touching a tool call: the signals below are only worked out
+ * again when a tool call itself changed, not on every token.
+ */
+const toolIdsOf = new WeakMap<ID[], ID[]>()
+function toolIds(t: Transcript): ID[] {
+  let ids = toolIdsOf.get(t.order)
+  if (!ids) {
+    ids = t.order.filter((id) => t.items[id]?.type === "tool_call")
+    toolIdsOf.set(t.order, ids)
+  }
+  return ids
+}
+type Hit<T> = { order: ID[]; items: Transcript["items"]; turns: Transcript["turns"]; value: T }
+const unchanged = <T,>(hit: Hit<T> | undefined, t: Transcript) =>
+  !!hit && hit.order === t.order && hit.turns === t.turns && (hit.items === t.items || toolIds(t).every((id) => hit.items[id] === t.items[id]))
+
+const vCache = new Map<ID, Hit<Verification>>()
 export function useVerification(sessionId: ID): Verification | null {
   return useApp((s) => {
     const t = s.transcripts[sessionId]
     if (!t) return null
     const hit = vCache.get(sessionId)
-    if (hit && hit.order === t.order && hit.items === t.items) return hit.value
-    const value = verification(t)
-    vCache.set(sessionId, { order: t.order, items: t.items, value })
+    if (unchanged(hit, t)) return hit!.value
+    const next = verification(t)
+    // the same answer keeps its object (no re-render of the details panel)
+    const value = hit && JSON.stringify(hit.value) === JSON.stringify(next) ? hit.value : next
+    vCache.set(sessionId, { order: t.order, items: t.items, turns: t.turns, value })
     return value
   })
 }
@@ -110,15 +130,16 @@ export function stuck(t: Transcript): Stuck | null {
   return { count: best.n, what: cmd ? cmd.split("\n")[0].slice(0, 120) : best.call.title || best.call.name }
 }
 
-const sCache = new Map<ID, { order: ID[]; items: Transcript["items"]; value: Stuck | null }>()
+const sCache = new Map<ID, Hit<Stuck | null>>()
 export function useStuck(sessionId: ID): Stuck | null {
   return useApp((s) => {
     const t = s.transcripts[sessionId]
     if (!t) return null
     const hit = sCache.get(sessionId)
-    if (hit && hit.order === t.order && hit.items === t.items) return hit.value
-    const value = stuck(t)
-    sCache.set(sessionId, { order: t.order, items: t.items, value })
+    if (unchanged(hit, t)) return hit!.value
+    const next = stuck(t)
+    const value = hit && JSON.stringify(hit.value) === JSON.stringify(next) ? hit.value : next
+    sCache.set(sessionId, { order: t.order, items: t.items, turns: t.turns, value })
     return value
   })
 }

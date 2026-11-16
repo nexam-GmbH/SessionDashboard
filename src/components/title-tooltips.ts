@@ -22,6 +22,8 @@ function box(): HTMLDivElement {
 }
 
 function hide() {
+  // scroll and wheel call this all the time: nothing to do unless a tooltip is up or on its way
+  if (!timer && !current && (!tip || tip.style.display === "none")) return
   window.clearTimeout(timer)
   timer = 0
   current = null

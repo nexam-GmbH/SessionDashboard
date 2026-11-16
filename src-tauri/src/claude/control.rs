@@ -92,6 +92,9 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        // each message echoed back (isReplay, same uuid) once Claude takes it in, as Claude Code
+        // desktop and the VS Code panel run it
+        "--replay-user-messages",
         "--permission-prompt-tool",
         "stdio",
     ]
@@ -126,13 +129,6 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     for d in &o.add_dirs {
         args.push("--add-dir".into());
         args.push(d.clone());
-    }
-    // files you attach in the app are read from its attachments folder without a permission prompt
-    if o.host.is_none() {
-        let att = crate::sys::attachments_dir();
-        let _ = std::fs::create_dir_all(&att);
-        args.push("--add-dir".into());
-        args.push(att.to_string_lossy().to_string());
     }
 
     let mut cmd = match &o.host {
@@ -193,14 +189,40 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     }
     let key = o.key.clone();
     let reader_procs = procs.clone();
+    // stdout lines → batches: every event the web view gets is one script run there, and token
+    // streaming is hundreds of lines a second per session; what arrives within ~40 ms goes as one
+    let (tx, rx) = std::sync::mpsc::channel::<Value>();
+    {
+        let app = app.clone();
+        let key = key.clone();
+        std::thread::spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut batch = vec![first];
+                let until = std::time::Instant::now() + std::time::Duration::from_millis(40);
+                while batch.len() < 400 {
+                    match rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) {
+                        Ok(v) => batch.push(v),
+                        Err(_) => break,
+                    }
+                }
+                let _ = app.emit("claude-events", json!({"key": key, "events": batch}));
+            }
+        });
+    }
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim().is_empty() {
                 continue;
             }
             let ev: Value = serde_json::from_str(&line).unwrap_or_else(|_| json!({"type": "raw", "text": line}));
-            let _ = app.emit("claude-event", json!({"key": key, "event": ev}));
+            if !wanted_by_ui(&ev) {
+                continue;
+            }
+            let _ = tx.send(ev);
         }
+        // everything read is out before the exit (the batcher ends when this sender is gone)
+        drop(tx);
+        std::thread::sleep(std::time::Duration::from_millis(60));
         // take this start's entry out under a short lock, then wait for the process outside it
         let mine = {
             let mut map = reader_procs.0.lock().unwrap();
@@ -216,7 +238,9 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
 
     // the readers run before anything is written: claude answering `initialize` with more than a
     // pipe's worth never blocks the first prompt's write (and so the start)
-    let init = json!({"type": "control_request", "request_id": format!("init-{}", o.key), "request": {"subtype": "initialize", "hooks": null}});
+    // perTaskStopAffordance: Stop ends the turn, background subagents and shells keep running (as in
+    // Claude Code desktop)
+    let init = json!({"type": "control_request", "request_id": format!("init-{}", o.key), "request": {"subtype": "initialize", "hooks": null, "perTaskStopAffordance": true}});
     let first = o.prompt.as_ref().filter(|p| !p.trim().is_empty()).map(|p| user_message_full(p, &images, o.prompt_uuid.as_deref()));
     let mut guard = stdin.lock().unwrap();
     if let Some(w) = guard.as_mut() {
@@ -255,9 +279,14 @@ fn user_message_full(text: &str, images: &[String], uuid: Option<&str>) -> Value
     m
 }
 
-/// A message with its uuid (and pictures).
-pub fn send_full(procs: &Procs, key: &str, text: &str, images: &[String], uuid: Option<&str>) -> Result<(), String> {
-    write(procs, key, user_message_full(text, images, uuid))
+/// A message with its uuid (and pictures), and while Claude works its priority: "next" (read at
+/// its next step), "later" (after the turn) or "now" (replaces a turn that has just begun).
+pub fn send_full(procs: &Procs, key: &str, text: &str, images: &[String], uuid: Option<&str>, priority: Option<&str>) -> Result<(), String> {
+    let mut m = user_message_full(text, images, uuid);
+    if let Some(p) = priority.filter(|p| matches!(*p, "next" | "later" | "now")) {
+        m["priority"] = Value::String(p.to_string());
+    }
+    write(procs, key, m)
 }
 
 /// Restore the files of a session to how they were before the prompt `uuid` (Claude Code's own
@@ -419,4 +448,37 @@ pub fn save_attachment(name: &str, data_b64: &str) -> Result<String, String> {
     let path = dir.join(clean);
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Stream fragments the app never shows (a tool call's input arriving piece by piece, thinking text,
+/// signatures): left out instead of crossing into the web view many times a second.
+fn wanted_by_ui(ev: &Value) -> bool {
+    if ev.get("type").and_then(Value::as_str) != Some("stream_event") {
+        return true;
+    }
+    let inner = ev.get("event");
+    match inner.and_then(|e| e.get("type")).and_then(Value::as_str) {
+        Some("message_start") | Some("content_block_start") => true,
+        Some("content_block_delta") => inner.and_then(|e| e.get("delta")).and_then(|d| d.get("type")).and_then(Value::as_str) == Some("text_delta"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_what_the_ui_shows_crosses() {
+        let se = |t: &str, d: Option<&str>| json!({"type": "stream_event", "event": {"type": t, "delta": d.map(|d| json!({"type": d}))}});
+        assert!(wanted_by_ui(&json!({"type": "assistant"})));
+        assert!(wanted_by_ui(&json!({"type": "result"})));
+        assert!(wanted_by_ui(&se("message_start", None)));
+        assert!(wanted_by_ui(&se("content_block_start", None)));
+        assert!(wanted_by_ui(&se("content_block_delta", Some("text_delta"))));
+        assert!(!wanted_by_ui(&se("content_block_delta", Some("input_json_delta"))));
+        assert!(!wanted_by_ui(&se("content_block_delta", Some("thinking_delta"))));
+        assert!(!wanted_by_ui(&se("message_delta", None)));
+        assert!(!wanted_by_ui(&se("content_block_stop", None)));
+    }
 }

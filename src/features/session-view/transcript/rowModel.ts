@@ -22,7 +22,7 @@ export type Row =
   | { kind: "compaction"; key: string; itemId: ID }
   | { kind: "notice"; key: string; itemId: ID; turnId: ID }
   | { kind: "receipt"; key: string; turnId: ID; receipt: NonNullable<Turn["receipt"]> }
-  | { kind: "done"; key: string; turnId: ID; durationMs: number; at?: string }
+  | { kind: "done"; key: string; turnId: ID; durationMs: number; at?: string; tokens?: number }
   | { kind: "date"; key: string; turnId: ID; at: string }
 
 /**
@@ -61,7 +61,7 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
     edits = []
     if (t?.receipt) rows.push({ kind: "receipt", key: `r:${turnId}`, turnId, receipt: t.receipt })
     // "✻ Cooked for 26s · done 19:49", as Claude Code ends a turn
-    else if (t?.durationMs !== undefined && t.status !== "in_progress") rows.push({ kind: "done", key: `d:${turnId}`, turnId, durationMs: t.durationMs, at: t.completedAt })
+    else if (t?.durationMs !== undefined && t.status !== "in_progress") rows.push({ kind: "done", key: `d:${turnId}`, turnId, durationMs: t.durationMs, at: t.completedAt, tokens: t.outputTokens })
   }
 
   for (const id of order) {
@@ -130,6 +130,30 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
   return rows
 }
 
+/**
+ * The height an answer will take, by what it is made of: wrapped prose at 23 px a line, code at
+ * 19 px a line plus the box, table rows at ~30 px, headings and lists a little taller. Close
+ * enough that a row barely changes size when it is measured (each change moves the chat under the
+ * wheel).
+ */
+function markdownHeight(text: string, cpl: number): number {
+  let h = 0
+  let inCode = false
+  for (const line of text.split("\n")) {
+    if (line.startsWith("```")) {
+      h += inCode ? 14 : 24
+      inCode = !inCode
+      continue
+    }
+    if (inCode) h += 19
+    else if (line.startsWith("|")) h += /^\|[\s:|-]+\|?\s*$/.test(line) ? 0 : 30
+    else if (/^#{1,6}\s/.test(line)) h += 34
+    else if (!line.trim()) h += 10
+    else h += Math.max(1, Math.ceil(line.length / cpl)) * 23 + (/^\s*([-*]|\d+\.)\s/.test(line) ? 4 : 0)
+  }
+  return Math.max(23, h)
+}
+
 /** Coarse first-paint height per row; ResizeObserver measurement corrects it. */
 export function estimateRow(row: Row, items: Record<ID, Item>, width: number): number {
   const charsPerLine = Math.max(40, Math.floor((Math.min(width, 1140) - 40) / 7.6))
@@ -146,7 +170,7 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
     }
     case "agent": {
       const it = items[row.itemId]
-      return 16 + (it?.type === "agent_message" ? textLines(it.text) : 2) * 23
+      return it?.type === "agent_message" ? 16 + markdownHeight(it.text, charsPerLine) : 62
     }
     case "tools":
     case "tool":

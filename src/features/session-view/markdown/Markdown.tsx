@@ -70,6 +70,11 @@ export const Markdown = memo(function Markdown({
       caret={streaming ? "block" : undefined}
       parseIncompleteMarkdown={streaming}
       lineNumbers={false}
+      // no box with its own scrollbar inside the chat (streamdown caps tables at 300 px and code at
+      // 400 px): the wheel scrolls the chat, and WebKitGTK has no nested scroller with a sticky
+      // header to repaint on every step
+      tableMaxHeight={0}
+      codeBlockMaxHeight={0}
       dir="auto"
     >
       {content}

@@ -43,6 +43,8 @@ export const QuestionCard = memo(function QuestionCard({
   const a = answers[tab] ?? EMPTY
   const answered = answers.map((x, i) => answerValue(x, request.questions[i].multiSelect) !== undefined)
   const allAnswered = answered.every(Boolean)
+  // Claude Code desktop sends as soon as one question has an answer (the rest go unanswered)
+  const anyAnswered = answered.some(Boolean)
   const last = tab === request.questions.length - 1
 
   const patch = (i: number, p: Partial<Answer>) => setAnswers((prev) => prev.map((x, j) => (j === i ? { ...x, ...p } : x)))
@@ -56,7 +58,7 @@ export const QuestionCard = memo(function QuestionCard({
     }
   }
   const submit = () => {
-    if (!allAnswered || !canAnswer) return
+    if (!anyAnswered || !canAnswer) return
     const out: Record<string, string | string[]> = {}
     request.questions.forEach((qq, i) => {
       const v = answerValue(answers[i], qq.multiSelect)
@@ -72,7 +74,7 @@ export const QuestionCard = memo(function QuestionCard({
       if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT") && !ref.current?.contains(t) && (t as HTMLTextAreaElement).value.trim()) return
-      if (!allAnswered) return
+      if (!anyAnswered) return
       e.preventDefault()
       e.stopPropagation()
       submit()
@@ -138,7 +140,7 @@ export const QuestionCard = memo(function QuestionCard({
               Next
             </OptionButton>
           )}
-          <OptionButton variant="primary" disabled={!allAnswered || !canAnswer} onClick={submit} keys={[MOD, "↵"]} title="Submit">
+          <OptionButton variant="primary" disabled={!anyAnswered || !canAnswer} onClick={submit} keys={[MOD, "↵"]} title={anyAnswered ? "Submit" : "Answer a question to send"}>
             Submit
           </OptionButton>
         </>

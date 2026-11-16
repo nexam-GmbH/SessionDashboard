@@ -13,9 +13,10 @@ import { getApp, useApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { useTranscriptShape } from "../sessionStore"
+import { useTranscriptShape, useUiValue } from "../sessionStore"
 import { buildRows, groupBlocks, tailStartIndex, type Block, type Row, type TranscriptView } from "./rowModel"
 import { DoneLine, LiveSpinner } from "./Spinner"
+import { WaitingMessages } from "./Waiting"
 import { useTranscriptVirtualizer } from "./useTranscriptVirtualizer"
 import { TRANSCRIPT_VIEWS } from "./view"
 import {
@@ -60,7 +61,7 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
     case "notice":
       return <NoticeRow sessionId={sessionId} itemId={row.itemId} />
     case "done":
-      return <DoneLine turnId={row.turnId} durationMs={row.durationMs} at={row.at} />
+      return <DoneLine turnId={row.turnId} durationMs={row.durationMs} at={row.at} tokens={row.tokens} />
     case "receipt":
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
     case "date":
@@ -97,7 +98,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, isAtBottom } = useTranscriptVirtualizer({
+  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, farFromBottom } = useTranscriptVirtualizer({
     sessionId,
     rows: head,
     totalRowCount: rows.length,
@@ -113,6 +114,12 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
     opened.current = sessionId
     scrollToBottom("auto")
   }, [ready, sessionId, scrollToBottom])
+
+  // You sent a message: the chat goes to its end, where it shows (Claude Code desktop)
+  const sent = useUiValue<number>(`sent:${sessionId}`, 0)
+  useEffect(() => {
+    if (sent) scrollToBottom("auto")
+  }, [sent, scrollToBottom])
 
   // A message asked for (a search hit, Find): scroll to it, reading further back first when an old
   // part of a long chat is not loaded yet; then a short glow
@@ -219,32 +226,31 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
             ))}
             {requests}
             <LiveSpinner sessionId={sessionId} />
+            <WaitingMessages sessionId={sessionId} />
           </div>
         </div>
       </div>
       <ViewNotice view={view} />
       <FindBar sessionId={sessionId} />
-      {!isAtBottom && <JumpToLatest sessionId={sessionId} onClick={() => scrollToBottom("smooth")} />}
+      {farFromBottom && <JumpToLatest sessionId={sessionId} onClick={() => scrollToBottom("smooth")} />}
     </div>
   )
 })
 
-/** Back to the end of the chat: a round ⌄ above the prompt box; it says so when a request waits there. */
+/** Back to the end of the chat (Claude Code desktop): "Scroll to bottom", or "Needs your input" when a card waits there. */
 function JumpToLatest({ sessionId, onClick }: { sessionId: ID; onClick: () => void }) {
   const waiting = usePendingRequests(sessionId).length > 0
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={waiting ? "Claude needs you: jump to the request" : "Jump to latest message"}
-      title={waiting ? "Claude needs you" : "Jump to latest"}
       className={cn(
-        "absolute bottom-3 left-1/2 z-10 inline-flex h-8 -translate-x-1/2 items-center justify-center gap-1.5 rounded-full border bg-popover text-sm shadow-lg outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
-        waiting ? "border-st-perm/50 px-3 text-st-perm-fg" : "w-8 border-border text-muted-foreground hover:text-foreground",
+        "absolute bottom-3 left-1/2 z-10 inline-flex h-8 -translate-x-1/2 items-center justify-center gap-1.5 rounded-full border bg-popover px-3 text-sm shadow-lg outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+        waiting ? "border-st-perm/50 text-st-perm-fg" : "border-border text-muted-foreground hover:text-foreground",
       )}
     >
-      {waiting && <span>Claude needs you</span>}
       <ArrowDown size={15} aria-hidden />
+      {waiting ? "Needs your input" : "Scroll to bottom"}
     </button>
   )
 }

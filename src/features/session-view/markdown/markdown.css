@@ -89,66 +89,106 @@
   color: var(--foreground);
 }
 
-/* Code blocks: collapse streamdown's double box into one quiet bordered block. */
+/* Code blocks as in Claude's apps: one bordered box, a header line with the language on the left
+   and Copy on the right, the code under it. Nothing lies over the code, and long lines wrap (no
+   scrollbar under a one-line block). */
 .sd-markdown [data-streamdown="code-block"] {
+  position: relative;
   margin-block: 0.6rem;
   padding: 0;
   gap: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  max-width: 100%;
-}
-.sd-markdown [data-streamdown="code-block-header"] {
-  display: none;
-}
-.sd-markdown [data-streamdown="code-block-body"] {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
+  max-width: 100%;
+  overflow: hidden;
+}
+.sd-markdown [data-streamdown="code-block-header"] {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 72px 0 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+.sd-markdown [data-streamdown="code-block-body"] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   padding: 0.625rem 0.875rem;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.55;
+  overflow: visible;
 }
 .sd-markdown [data-streamdown="code-block-body"] pre {
   background: transparent !important;
+  margin: 0;
 }
 .sd-markdown [data-streamdown="code-block"] :is(pre, code) {
-  white-space: pre;
-  overflow-wrap: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 /* Stack Shiki line spans when line numbers are off (Cline fix). */
 .sd-markdown [data-streamdown="code-block-body"] code > span {
   display: block;
 }
-.sd-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
-  margin-block: 0 -2rem;
-  padding: 0.25rem 0.25rem 0 0;
-  opacity: 0;
-  transition: opacity 120ms ease;
+/* the actions (Copy) sit in the header line, top right (the code block's only child without a
+   data-streamdown name; no :has(), which WebKit re-checks on every change of the chat) */
+.sd-markdown [data-streamdown="code-block"] > div:not([data-streamdown]) {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 4px 0 0;
 }
 .sd-markdown [data-streamdown="code-block-actions"] {
-  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
 }
-.sd-markdown [data-streamdown="code-block"]:hover > div:has(> [data-streamdown="code-block-actions"]),
-.sd-markdown [data-streamdown="code-block"] > div:focus-within:has(> [data-streamdown="code-block-actions"]) {
-  opacity: 1;
+.sd-markdown [data-streamdown="code-block-actions"] button {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
 }
-.sd-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
-.sd-markdown [data-streamdown="code-block"] > div:focus-within [data-streamdown="code-block-actions"] {
-  pointer-events: auto;
+.sd-markdown [data-streamdown="code-block-actions"] button:hover {
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .sd-markdown [data-streamdown="table-wrapper"] {
   margin-block: 0.6rem;
   padding: 0;
   gap: 0;
-  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: transparent;
+}
+/* one horizontal scroller for a wide table, never a vertical one: the wheel keeps scrolling the
+   chat; no sticky header (a sticky element in a nested scroller repaints on every scroll step) */
+.sd-markdown [data-streamdown="table-wrapper"] > div:not([data-streamdown]):last-child {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: none !important;
+  border: 0;
+  border-radius: 8px;
+}
+.sd-markdown [data-streamdown="table-wrapper"] thead {
+  position: static !important;
 }
 .sd-markdown [data-streamdown="table"] {
   min-width: 100%;
@@ -207,4 +247,12 @@
 }
 .sd-view-notice {
   animation: sd-view-notice 2.2s ease-in forwards;
+}
+
+/* streamdown gives each code block content-visibility:auto with a 200 px placeholder size: a block
+   just off screen is measured at 200 px and grows as it comes into view, so the virtualized chat
+   keeps correcting its scroll position under the wheel. The virtualizer already limits the work. */
+.sd-markdown [data-streamdown="code-block"] {
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
 }

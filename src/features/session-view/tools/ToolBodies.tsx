@@ -42,7 +42,7 @@ function ClampedOutput({ text, running, tone, lines = 14 }: { text: string; runn
         )}
       >
         {body}
-        {running && <span aria-hidden className="ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 animate-pulse bg-muted-foreground" />}
+        {running && <span aria-hidden className="ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 bg-muted-foreground/70" />}
       </pre>
       {total > lines && (
         <button

@@ -7,7 +7,7 @@
 // ↑ edits a queued message, Esc Esc rewinds, Shift+Tab cycles the mode) come in through callbacks.
 import { addFiles as keepFiles, addImages, imageUrl } from "./images"
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
-import { AtSign, Check, CornerDownLeft, FileText, FolderPlus, GitFork, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
+import { AtSign, Check, ChevronDown, CornerDownLeft, FileText, FolderPlus, GitFork, ListPlus, LoaderCircle, Mic, Paperclip, Plus, Slash, Square, X } from "lucide-react"
 import { MOD } from "@/components/common/bits"
 import {
   DropdownMenu,
@@ -51,6 +51,8 @@ export interface PromptBoxProps {
   onValueChange?: (update: (v: PromptValue) => PromptValue) => void
   /** a turn is running: an empty box shows Stop instead of Send */
   busy?: boolean
+  /** Stop was pressed and the turn has not ended yet */
+  stopping?: boolean
   onStop?: () => void
   /** a queued message is open in the box: Enter saves it (an empty box removes it) */
   editing?: boolean
@@ -65,8 +67,9 @@ export interface PromptBoxProps {
   onShiftTab?: () => void
   /** ↑ / ↓ through what you sent before (Claude Code's prompt history): the text to show, or null */
   onHistory?: (dir: -1 | 1, current: string) => string | null
-  /** while Claude works: Ctrl+Enter stops its current step and sends this at once */
-  onInterruptSend?: (text: string, attachments: string[]) => void
+  /** while Claude works: Ctrl+Enter (queue for later), with its name for the send button's tooltip */
+  onModSend?: (text: string, attachments: string[]) => void
+  modSendHint?: string
   /** Ctrl+Alt+Enter: this message starts a copy of the session (a fork) */
   onForkSend?: (text: string, attachments: string[]) => void
   /** "+ → Add folder": the repos you can add (`--add-dir`) and the ones already added */
@@ -99,7 +102,7 @@ const SEND_BTN =
   "inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-50"
 /** Stop: a round button with a square, while Claude works. */
 const STOP_BTN =
-  "inline-flex size-8 items-center justify-center rounded-full bg-foreground text-background outline-none transition-colors hover:bg-foreground/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+  "inline-flex size-8 items-center justify-center rounded-full bg-foreground text-background outline-none transition-colors hover:bg-foreground/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:opacity-70"
 
 const EMPTY: PromptValue = { text: "", attachments: [] }
 const isImage = (f: File) => f.type.startsWith("image/")
@@ -235,6 +238,16 @@ export function PromptBox(props: PromptBoxProps) {
   }
   const removeAttachment = (i: number) => update((v) => ({ ...v, attachments: v.attachments.filter((_, j) => j !== i) }))
   const showStop = busy && !text.trim() && !editing && !!onStop
+  // "More send options" (Claude Code desktop): queue for later while Claude works, send in a fork
+  const later = busy ? props.onModSend : undefined
+  const moreSend = !editing && !disabled && !!text.trim() && !!(later || props.onForkSend)
+  const sendVia = (fn: (text: string, attachments: string[]) => void) => {
+    const value = text.trim()
+    if (!value || disabled) return
+    fn(value, attachments)
+    update(() => EMPTY)
+    setTrigger(null)
+  }
   const folderChips = folders?.chips !== false && folders ? folders.added : []
 
   return (
@@ -353,12 +366,12 @@ export function PromptBox(props: PromptBoxProps) {
                 props.onForkSend(value, attachments)
                 update(() => EMPTY)
               }
-            } else if (e.key === "Enter" && mod && busy && props.onInterruptSend && !editing) {
-              // Ctrl+Enter while Claude works: stop its current step, this message is read now
+            } else if (e.key === "Enter" && mod && !modSends && busy && props.onModSend && !editing) {
+              // Ctrl+Enter while Claude works: queued for later (Claude Code desktop)
               e.preventDefault()
               const value = text.trim()
               if (value && !disabled) {
-                props.onInterruptSend(value, attachments)
+                props.onModSend(value, attachments)
                 update(() => EMPTY)
                 setTrigger(null)
               }
@@ -474,14 +487,37 @@ export function PromptBox(props: PromptBoxProps) {
               <TooltipContent side="top">{listening ? "Stop dictation" : "Dictate"}</TooltipContent>
             </Tooltip>
           )}
+          {moreSend && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" aria-label="More send options" title="More send options" className={cn(ICON_BTN, "size-7 rounded-full")}>
+                  <ChevronDown size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top" className="w-80">
+                {later && (
+                  <DropdownMenuItem onSelect={() => sendVia(later)}>
+                    <ListPlus /> {props.modSendHint ?? "Queue for later"}
+                    {!modSends && <DropdownMenuShortcut>{MOD}+Enter</DropdownMenuShortcut>}
+                  </DropdownMenuItem>
+                )}
+                {props.onForkSend && (
+                  <DropdownMenuItem onSelect={() => sendVia(props.onForkSend!)}>
+                    <GitFork /> Send in a forked session
+                    <DropdownMenuShortcut>{MOD}+Alt+Enter</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {showStop ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" aria-label="Stop" onClick={onStop} className={STOP_BTN}>
-                  <Square size={10} fill="currentColor" />
+                <button type="button" aria-label={props.stopping ? "Stopping" : "Stop"} aria-busy={props.stopping || undefined} disabled={props.stopping} onClick={onStop} className={STOP_BTN}>
+                  {props.stopping ? <LoaderCircle size={14} className="animate-spin-steps" /> : <Square size={10} fill="currentColor" />}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="top">Stop · Esc</TooltipContent>
+              <TooltipContent side="top">{props.stopping ? "Stopping…" : "Stop · Esc"}</TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
@@ -499,10 +535,12 @@ export function PromptBox(props: PromptBoxProps) {
               <TooltipContent side="top" className="flex flex-col gap-0.5">
                 {editing ? (
                   "Save · Enter"
-                ) : busy && props.onInterruptSend ? (
+                ) : busy && props.onModSend && !modSends ? (
                   <>
                     <span>{sendHint}</span>
-                    <span className="text-background/70">Interrupt and send · {MOD}+Enter</span>
+                    <span className="text-background/70">
+                      {props.modSendHint ?? "Queue for later"} · {MOD}+Enter
+                    </span>
                     {props.onForkSend && <span className="text-background/70">Send in a forked session · {MOD}+Alt+Enter</span>}
                   </>
                 ) : (

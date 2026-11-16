@@ -25,6 +25,12 @@ interface Entry {
   fit: FitAddon
   host: HTMLDivElement
   alive: boolean
+  /** start the shell (once): after the dock fitted the terminal, so it starts at its real size */
+  start: () => void
+  /** the shell runs (or could not start) */
+  ready: Promise<void>
+  /** the GPU renderer was tried */
+  gpu?: boolean
 }
 
 const entries = new Map<string, Entry>()
@@ -48,8 +54,37 @@ export function currentPlace(): Place {
 // ---------- xterm, loaded once (preloaded while idle, so the first open is instant) ----------
 let lib: Promise<{ Terminal: typeof Terminal; FitAddon: typeof FitAddon }> | null = null
 export function loadXterm() {
-  lib ??= Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit"), import("@xterm/xterm/css/xterm.css")]).then(([x, f]) => ({ Terminal: x.Terminal, FitAddon: f.FitAddon }))
+  lib ??= Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+    import("@xterm/xterm/css/xterm.css"),
+    // xterm measures its cell once, when it opens: with the font not loaded yet it measures the
+    // fallback and draws every glyph through font fallback afterwards
+    document.fonts?.load('13px "JetBrains Mono Variable"').catch(() => undefined),
+    document.fonts?.load('bold 13px "JetBrains Mono Variable"').catch(() => undefined),
+  ]).then(([x, f]) => ({ Terminal: x.Terminal, FitAddon: f.FitAddon }))
   return lib
+}
+
+/**
+ * Draw with the GPU (WebGL), as VS Code's terminal does: the DOM renderer re-lays out spans for
+ * every line of output, which WebKitGTK feels. If WebGL can't start or its context is lost, the
+ * terminal goes on with the DOM renderer.
+ */
+export function enableGpu(e: Entry) {
+  if (e.gpu || !e.term.element) return
+  e.gpu = true
+  void import("@xterm/addon-webgl")
+    .then(({ WebglAddon }) => {
+      try {
+        const gl = new WebglAddon()
+        gl.onContextLoss(() => gl.dispose())
+        e.term.loadAddon(gl)
+      } catch {
+        /* no WebGL here: the DOM renderer stays */
+      }
+    })
+    .catch(() => undefined)
 }
 
 function css(name: string, fallback: string) {
@@ -101,6 +136,9 @@ async function create_(place: Place): Promise<Entry> {
     cursorBlink: false,
     scrollback: 5000,
     allowProposedApi: false,
+    // box drawing and blocks (Claude Code's own frames) drawn by the renderer, not by font fallback
+    customGlyphs: true,
+    allowTransparency: false,
     theme: THEME(),
   })
   const fit = new FitAddon()
@@ -108,7 +146,26 @@ async function create_(place: Place): Promise<Entry> {
   const host = document.createElement("div")
   host.className = "h-full w-full"
   host.dataset.terminal = key
-  const entry: Entry = { key, place, term, fit, host, alive: true }
+  let started = false
+  let ready!: () => void
+  const entry: Entry = {
+    key,
+    place,
+    term,
+    fit,
+    host,
+    alive: true,
+    ready: new Promise<void>((r) => (ready = r)),
+    start: () => {
+      if (started) return
+      started = true
+      if (IN_TAURI && REAL) void connect(entry).finally(ready)
+      else {
+        fakeShell(entry)
+        ready()
+      }
+    },
+  }
   entries.set(key, entry)
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true
@@ -119,8 +176,8 @@ async function create_(place: Place): Promise<Entry> {
     }
     return !appKey(e)
   })
-  if (IN_TAURI && REAL) await connect(entry)
-  else fakeShell(entry)
+  // the dock starts it once fitted; a terminal that never gets on screen starts anyway
+  setTimeout(entry.start, 1500)
   return entry
 }
 
@@ -247,6 +304,7 @@ export function toggleTerminal() {
 /** Run a command in the terminal of what is on screen (a `! command` in the prompt box or in a reply). */
 export async function runInTerminal(command: string, place: Place = currentPlace()) {
   const e = await show(place)
+  await e.ready
   if (!e.alive) return
   e.term.focus()
   if (IN_TAURI && REAL) {

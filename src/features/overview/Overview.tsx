@@ -3,8 +3,8 @@
 // rest: a card is status glyph + title + one line saying where the session is; only what needs
 // the owner is coloured, and a permission can be answered right on its card (once options only).
 import { memo } from "react"
-import { Cloud, FolderGit2, Layers, Pencil, Plus, Server, TriangleAlert } from "lucide-react"
-import { EditableTitle, SessionMenu, startRename } from "@/features/rename/Rename"
+import { Cloud, FolderGit2, Layers, Plus, Server, TriangleAlert } from "lucide-react"
+import { EditableTitle, SessionMenu } from "@/features/rename/Rename"
 import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
 import { selectOverviewSessionIds, selectNeedsYou, shownStatus, useHomeRepos, useSession, useVisibleRepos } from "@/store/selectors"
@@ -301,20 +301,8 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
             </EditableTitle>
           </h3>
           <ModeMark mode={s.permissionMode} className="mt-[3px]" />
-          {/* how long it has been waiting: only where it matters */}
-          {needs ? (
-            <RelativeTime iso={s.statusObservedAt} className="tabular shrink-0 pt-px text-xs leading-[17px] text-muted-foreground/70" />
-          ) : (
-            <button
-              onClick={() => startRename(s.id, "overview")}
-              aria-label={`Rename ${s.title}`}
-              title="Rename (or right-click the card)"
-              // over the card's corner, not beside the title: it takes no width from it
-              className="pointer-events-auto absolute -top-1.5 -right-1.5 z-10 flex size-6 shrink-0 items-center justify-center rounded-md bg-card text-muted-foreground/70 opacity-0 transition-opacity group-hover/card:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
-            >
-              <Pencil size={12} />
-            </button>
-          )}
+          {/* how long it has been waiting: only where it matters (rename: right-click the card) */}
+          {needs && <RelativeTime iso={s.statusObservedAt} className="tabular shrink-0 pt-px text-xs leading-[17px] text-muted-foreground/70" />}
         </div>
         {where.text && (
           <p

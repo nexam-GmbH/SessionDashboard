@@ -15,6 +15,12 @@ fn sd_selftest() -> bool {
     std::env::var("SD_SELFTEST").is_ok_and(|v| v == "1")
 }
 
+/// A self-test run against a stand-in claude (SD_CLAUDE_BIN): only the stream steps run.
+#[tauri::command]
+fn sd_fake_claude() -> bool {
+    sd_selftest() && std::env::var_os("SD_CLAUDE_BIN").is_some()
+}
+
 fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::<R>::new("external-navigation")
         .on_navigation(|webview, url| {
@@ -88,6 +94,15 @@ pub fn cli() -> Option<i32> {
 }
 
 pub fn run() {
+    // Fedora's KDE sets GDK_CORE_DEVICE_EVENTS=1 for every GTK3 app on X11 (a 2015 workaround):
+    // GTK then gets no XInput2 events, so the web view scrolls in coarse wheel jumps, with no
+    // smooth or touchpad scrolling. Not for this app: set before GTK starts, while nothing else
+    // runs yet.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_CORE_DEVICE_EVENTS").is_some() && std::env::var_os("SD_KEEP_CORE_EVENTS").is_none() {
+        // SAFETY: the first thing the app does, before any other thread exists
+        unsafe { std::env::remove_var("GDK_CORE_DEVICE_EVENTS") };
+    }
     // started from the Dock, Finder or a launcher: the shell's PATH, so claude, gh and git are found
     sys::fix_path();
     let mut builder = tauri::Builder::default();
@@ -136,6 +151,7 @@ pub fn run() {
         .manage(term::Terms::default())
         .invoke_handler(tauri::generate_handler![
             sd_selftest,
+            sd_fake_claude,
             claude::claude_live,
             claude::claude_pids,
             claude::claude_scan,

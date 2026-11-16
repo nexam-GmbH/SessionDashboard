@@ -32,7 +32,7 @@ import type { TranscriptView } from "../transcript/rowModel"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { STATUS_LABEL, capabilities } from "@/lib/status"
 import { homePath, plural } from "@/lib/format"
-import { useChangedFiles, useDelegatedCount } from "../sessionStore"
+import { useChangedFiles, useDelegatedCount, useStopping } from "../sessionStore"
 import { archiveWithUndo } from "@/features/notifications/undo"
 
 /** Tooltip that also works on disabled controls (disabled buttons emit no pointer events). */
@@ -96,6 +96,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
   const s = useApp((st) => st.sessions[sessionId])
   const repo = useApp((st) => (s?.repoId ? st.repos[s.repoId] : undefined))
   const files = useChangedFiles(sessionId)
+  const stopping = useStopping(sessionId) > 0
   // the main agent has no edits of its own; its Review is the combined review of its delegated sessions
   const delegated = useDelegatedCount(sessionId)
   const [editing, setEditing] = useState(false)
@@ -126,7 +127,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
   const removed = files.length ? files.reduce((a, f) => a + f.removed, 0) : s.diff.linesRemoved
   return (
     <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
-      <StatusGlyph status={s.status} size="md" animate title={s.activity ? `${STATUS_LABEL[s.status]}: ${s.activity}` : undefined} />
+      <StatusGlyph status={s.status} size="md" animate title={stopping ? "Claude is stopping" : s.activity ? `${STATUS_LABEL[s.status]}: ${s.activity}` : undefined} />
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-baseline gap-2">
         <Title session={s} editing={editing} setEditing={setEditing} />
         {!editing && (

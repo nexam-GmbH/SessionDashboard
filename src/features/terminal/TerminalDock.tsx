@@ -6,7 +6,7 @@ import { SquareTerminal, X, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
 import { homePath } from "@/lib/format"
-import { closeTerminal, currentPlace, entryOf, hideTerminal, keyOf, loadXterm, setTerminalHeight, show, useTerminal } from "./terminals"
+import { closeTerminal, currentPlace, enableGpu, entryOf, hideTerminal, keyOf, loadXterm, setTerminalHeight, show, useTerminal } from "./terminals"
 
 // xterm is preloaded while the app is idle, so the first Ctrl+` opens at once
 if (typeof window !== "undefined") {
@@ -56,7 +56,16 @@ function Dock() {
         }
       }
       fit()
-      ro = new ResizeObserver(() => requestAnimationFrame(fit))
+      // GPU drawing, then the shell, now that it knows its real size (no 80×24 start and redraw)
+      enableGpu(e)
+      e.start()
+      // a resize settles before the terminal reflows: each column change rewraps the whole
+      // scrollback and makes Claude Code redraw its screen (VS Code debounces the same way)
+      let timer = 0
+      ro = new ResizeObserver(() => {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(fit, 90)
+      })
       ro.observe(el)
       // the terminal takes the keyboard when you open it, not when it follows you to another
       // session (you were typing in that session's prompt box)
@@ -116,11 +125,17 @@ function Resizer({ height, onDrag }: { height: number; onDrag: (h: number | null
         const target = e.currentTarget
         target.setPointerCapture(e.pointerId)
         let last = height
+        let frame = 0
+        // at most one new height a frame (each one lays the whole window out again)
         const move = (ev: PointerEvent) => {
           last = Math.min(window.innerHeight * 0.8, Math.max(120, height + startY - ev.clientY))
-          onDrag(last)
+          frame ||= requestAnimationFrame(() => {
+            frame = 0
+            onDrag(last)
+          })
         }
         const up = () => {
+          if (frame) cancelAnimationFrame(frame)
           target.removeEventListener("pointermove", move)
           target.removeEventListener("pointerup", up)
           setTerminalHeight(last)

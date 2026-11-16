@@ -79,8 +79,8 @@ pub async fn claude_start(app: AppHandle, procs: State<'_, Procs>, opts: StartOp
 }
 
 #[tauri::command]
-pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String, images: Option<Vec<String>>, uuid: Option<String>) -> Result<(), String> {
-    control::send_full(&procs, &key, &text, &images.unwrap_or_default(), uuid.as_deref())
+pub async fn claude_send(procs: State<'_, Procs>, key: String, text: String, images: Option<Vec<String>>, uuid: Option<String>, priority: Option<String>) -> Result<(), String> {
+    control::send_full(&procs, &key, &text, &images.unwrap_or_default(), uuid.as_deref(), priority.as_deref())
 }
 
 /// A file attached in the prompt box, kept where the session can read it (its path).

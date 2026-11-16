@@ -11,6 +11,7 @@ import { startEngine } from "./mocks/engine"
 import { installShortcuts } from "./features/palette/shortcuts"
 import { installChatWidth, installZoom } from "./app/zoom"
 import { installTitleTooltips } from "./components/title-tooltips"
+import { installSpinClock } from "./components/spin-clock"
 import { installChrome } from "./app/chrome"
 import { POPOUT, REAL } from "./backend/mode"
 import { IN_TAURI } from "./lib/platform"
@@ -33,6 +34,7 @@ installShortcuts()
 installZoom()
 installChatWidth()
 installTitleTooltips()
+installSpinClock()
 installChrome()
 if (!POPOUT) startUsage()
 

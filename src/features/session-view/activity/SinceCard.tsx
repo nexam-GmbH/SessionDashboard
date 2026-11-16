@@ -4,6 +4,7 @@
 import { memo, useEffect, useMemo } from "react"
 import { History } from "lucide-react"
 import type { ID, Transcript } from "@/lib/model"
+import { useNow } from "@/components/common/RelativeTime"
 import { useApp } from "@/store/app"
 import { AWAY_MS, setAway, useAway } from "@/store/away"
 import { currentSessionId } from "@/store/actions"
@@ -57,7 +58,6 @@ function summarize(t: Transcript, since: string): Since | null {
 
 export const SinceCard = memo(function SinceCard({ sessionId }: { sessionId: ID }) {
   const since = useAway(sessionId)
-  const t = useApp((s) => s.transcripts[sessionId])
   // away from the window for a while with this session in front counts too
   useEffect(() => {
     let blurred = 0
@@ -73,6 +73,13 @@ export const SinceCard = memo(function SinceCard({ sessionId }: { sessionId: ID 
       window.removeEventListener("focus", onFocus)
     }
   }, [sessionId])
+  // the transcript is only watched while there is something to sum up (not on every streamed token)
+  return since ? <SinceBody sessionId={sessionId} since={since} /> : null
+})
+
+function SinceBody({ sessionId, since }: { sessionId: ID; since: string }) {
+  const t = useApp((s) => s.transcripts[sessionId])
+  const now = useNow()
   const sum = useMemo(() => (since && t ? summarize(t, since) : null), [since, t])
   if (!since || !sum || !t) return null
   const recap = t.recap && t.recap.at > since ? t.recap.text : undefined
@@ -82,7 +89,7 @@ export const SinceCard = memo(function SinceCard({ sessionId }: { sessionId: ID 
       <header className="flex h-6 items-center gap-2 text-muted-foreground">
         <History size={14} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">
-          Since you were here <time title={new Date(since).toLocaleString()}>{minutes(Date.now() - Date.parse(since))} ago</time>
+          Since you were here <time title={new Date(since).toLocaleString()}>{minutes(now - Date.parse(since))} ago</time>
           {facts.length > 0 && <span className="text-muted-foreground/70"> · {facts.join(" · ")}</span>}
         </span>
         <Button size="xs" variant="ghost" onClick={() => setAway(sessionId, null)}>
@@ -98,4 +105,4 @@ export const SinceCard = memo(function SinceCard({ sessionId }: { sessionId: ID 
       {recap && <p className="line-clamp-3 text-sm text-foreground">{recap}</p>}
     </section>
   )
-})
+}

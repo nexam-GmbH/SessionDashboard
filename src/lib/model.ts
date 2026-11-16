@@ -230,6 +230,8 @@ export interface Turn {
   itemIds: ID[]
   /** how long the turn took, as Claude Code recorded it (system turn_duration) */
   durationMs?: number
+  /** tokens Claude wrote in this turn (its answers' output_tokens) */
+  outputTokens?: number
   receipt?: { durationMs: number; tokens: number; costUsd: number; filesChanged: number }
 }
 
@@ -310,7 +312,8 @@ export interface Transcript {
   order: ID[]
   items: Record<ID, Item>
   liveItemId?: ID
-  queued: { id: ID; text: string; attachments?: string[] }[]
+  /** sent while Claude works, not read yet (a session the app runs); the mock world's queue */
+  queued: { id: ID; text: string; attachments?: string[]; images?: string[]; held?: boolean }[]
   todos: { content: string; status: "pending" | "in_progress" | "completed" }[]
   /** Claude Code's own recap of the session, written while you were away (system away_summary) */
   recap?: { text: string; at: string }

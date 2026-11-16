@@ -5,7 +5,8 @@
 // calm copy: short option labels with the full ACP name as tooltip, keyboard
 // hints only while the card has focus.
 import { forwardRef, useId, type KeyboardEvent, type ReactNode } from "react"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { PermissionOption } from "@/lib/model"
 import { MOD } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
@@ -259,4 +260,31 @@ export function canStealFocus() {
   const a = document.activeElement as HTMLElement | null
   if (!a || a === document.body) return true
   return !(a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
+}
+
+/** A ⌄ beside a card's main answer with its other ways (Claude Code desktop: "Allow and switch to Auto"). */
+export function MoreAnswers({ items, disabled, label = "More options" }: { items: { label: string; onSelect: () => void; danger?: boolean }[]; disabled?: boolean; label?: string }) {
+  if (!items.length) return null
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={label}
+          title={label}
+          className={cn("-ml-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-45 data-[state=open]:bg-accent", FOCUS)}
+        >
+          <ChevronDown size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-52">
+        {items.map((it) => (
+          <DropdownMenuItem key={it.label} variant={it.danger ? "destructive" : undefined} onSelect={it.onSelect}>
+            {it.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
