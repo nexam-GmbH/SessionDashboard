@@ -27,6 +27,7 @@ const GROUPS: { title: string; items: [string, string[]][] }[] = [
       ["Stop", ["Esc"]],
       ["Find in chat", ["mod", "F"]],
       ["Transcript view: Normal, Thinking, Verbose", ["mod", "O"]],
+      ["Show or hide the session rail", ["mod", "."]],
       ["Rewind", ["Esc", "Esc"]],
       ["New session", ["mod", "N"]],
     ],

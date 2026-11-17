@@ -243,11 +243,11 @@ function TranscriptViewMenu() {
   )
 }
 
-/** Show or hide the details panel beside the chat (environment, context, changes, usage). */
+/** Show or hide the session rail beside the chat (environment, context, changes, checks). */
 function DetailsToggle() {
   const open = useApp((s) => s.settings.detailsOpen)
   return (
-    <Hint label={open ? "Hide details" : "Show details"}>
+    <Hint label={`${open ? "Hide session rail" : "Show session rail"} · Ctrl+.`}>
       <Button
         size="icon-sm"
         variant="ghost"

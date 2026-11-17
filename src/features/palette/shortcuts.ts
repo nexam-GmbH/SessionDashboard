@@ -1,6 +1,6 @@
 import { tinykeys } from "tinykeys"
 import { POPOUT } from "@/backend/mode"
-import { getApp } from "@/store/app"
+import { getApp, useApp } from "@/store/app"
 import {
   currentSessionId,
   goToNextWaiting,
@@ -58,6 +58,8 @@ export function installShortcuts() {
         "$mod+Shift+KeyI": mod(() => openPicker("model")),
         "$mod+Shift+KeyE": mod(() => openPicker("effort")),
         "$mod+KeyO": mod(() => cycleTranscriptView()),
+        // the session rail beside the chat (Claude Code desktop: Ctrl+.)
+        "$mod+Period": mod(() => useApp.setState((s) => ({ settings: { ...s.settings, detailsOpen: !s.settings.detailsOpen } }))),
         "$mod+KeyF": mod(() => {
           const id = currentSessionId()
           if (id) openFind(id)
@@ -83,6 +85,7 @@ export function installShortcuts() {
     "$mod+Shift+KeyI": mod(() => openPicker("model")),
     "$mod+Shift+KeyE": mod(() => openPicker("effort")),
     "$mod+KeyO": mod(() => cycleTranscriptView()),
+    "$mod+Period": mod(() => useApp.setState((s) => ({ settings: { ...s.settings, detailsOpen: !s.settings.detailsOpen } }))),
     "$mod+Shift+KeyH": mod(() => openHistory()),
     "$mod+KeyF": mod(() => {
       const id = currentSessionId()

@@ -16,7 +16,8 @@ function branchOf(id: ID) {
   return repo?.worktrees.find((w) => w.id === s?.worktreeId)?.branch || repo?.git?.branch
 }
 
-export function StartFreshButton({ sessionId, size = "xs" }: { sessionId: ID; size?: "xs" | "sm" }) {
+/** `className` styles it as a plain button (the session rail's xs secondary look); else a shadcn outline button. */
+export function StartFreshButton({ sessionId, size = "xs", className }: { sessionId: ID; size?: "xs" | "sm"; className?: string }) {
   const [brief, setBrief] = useState<string | null>(null)
   const open = () => {
     const st = getApp()
@@ -25,9 +26,15 @@ export function StartFreshButton({ sessionId, size = "xs" }: { sessionId: ID; si
   }
   return (
     <>
-      <Button size={size} variant="outline" onClick={open} title="A new session in the same folder, started with a short brief of this one">
-        Start fresh…
-      </Button>
+      {className ? (
+        <button type="button" className={className} onClick={open} title="A new session in the same folder, started with a short brief of this one">
+          Start fresh…
+        </button>
+      ) : (
+        <Button size={size} variant="outline" onClick={open} title="A new session in the same folder, started with a short brief of this one">
+          Start fresh…
+        </Button>
+      )}
       <Dialog open={brief !== null} onOpenChange={(o) => !o && setBrief(null)}>
         <DialogContent className="flex max-h-[85vh] w-[min(760px,92vw)] max-w-none flex-col sm:max-w-none">
           <DialogHeader>
