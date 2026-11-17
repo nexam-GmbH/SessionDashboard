@@ -118,6 +118,7 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
       model,
       effort,
       permissionMode: mode,
+      explicitMode: true,
       additionalRepoIds: addDirs,
       background: bg,
       fastMode: fast,

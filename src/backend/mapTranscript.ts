@@ -415,6 +415,20 @@ export function addPendingUser(base: Transcript, st: MapState, text: string, att
   return b.t
 }
 
+/**
+ * A message's final output tokens (the stream's message_delta): its records while it streams carry
+ * only the count message_start had, so the turn's "1.2k tokens" would read a few dozen.
+ */
+export function noteOutput(base: Transcript, st: MapState, msgId: string, out: number): Transcript {
+  const before = st.outTokens.get(msgId) ?? 0
+  if (out <= before) return base
+  st.outTokens.set(msgId, out)
+  const b = new Builder(base, st)
+  const turn = b.turn()
+  b.t.turns[b.t.turns.length - 1] = { ...turn, outputTokens: (turn.outputTokens ?? 0) + out - before }
+  return b.t
+}
+
 /** Mark a pending tool call as waiting for the user's permission. */
 export function markAwaiting(base: Transcript, st: MapState, toolUseId: string, waiting: boolean): Transcript {
   const b = new Builder(base, st)

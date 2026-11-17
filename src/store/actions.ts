@@ -431,6 +431,9 @@ export interface NewSessionInput {
   model: string
   effort: Effort
   permissionMode: PermissionMode
+  /** the mode was shown and chosen on New session: Manual then really means manual (a resumed
+   * session's unknown "default" instead starts in your claude's own default mode) */
+  explicitMode?: boolean
   additionalRepoIds: ID[]
   background: boolean
   parent?: Session["parent"]
@@ -466,7 +469,7 @@ export function createSession(input: NewSessionInput): ID {
       images: input.images,
       model: input.model,
       effort: input.effort,
-      permissionMode: input.permissionMode,
+      permissionMode: input.explicitMode && input.permissionMode === "default" ? "manual" : input.permissionMode,
       addDirs: [...input.additionalRepoIds.map((r) => st.repos[r]?.rootPath).filter(Boolean), ...outside],
       appendSystemPrompt: [note, input.instructions?.trim()].filter(Boolean).join("\n\n") || undefined,
       agent: input.agent,

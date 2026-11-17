@@ -12,7 +12,7 @@ import { setHomeDir } from "@/lib/format"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
-import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, type MapState } from "./mapTranscript"
+import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, noteOutput, type MapState } from "./mapTranscript"
 import { extByMachine, extSession, folderKey, gitByFolder, hookState, registerSync, requestSync, type ExtSession } from "./ext"
 import { onMovedOn, startHooks } from "./hooks"
 import { remoteTranscript, remoteTranscriptSince, startMachines } from "./machines"
@@ -1999,11 +1999,17 @@ function onEvent({ key, event, exit }: EventPayload) {
     case "stream_event": {
       // a subagent's streamed text belongs to its Task call, not to the main chat's live message
       if (event.parent_tool_use_id) break
-      const ev = event.event as { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string }; content_block?: { type?: string } } | undefined
+      const ev = event.event as { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string }; content_block?: { type?: string }; usage?: { output_tokens?: number } } | undefined
       // the live line says "thinking" while Claude thinks
       if (ev?.type === "content_block_start") {
         const thinking = ev.content_block?.type === "thinking"
         if (!!getApp().transcripts[key]?.thinkingNow !== thinking) patchTranscript(key, (t) => ({ ...t, thinkingNow: thinking }))
+      }
+      // the message is done: its real output count for the turn's tokens
+      if (ev?.type === "message_delta" && own.turnMsgId && typeof ev.usage?.output_tokens === "number") {
+        const msgId = own.turnMsgId
+        const out = ev.usage.output_tokens
+        patchTranscript(key, (t, m) => noteOutput(t, m, msgId, out))
       }
       if (ev?.type === "message_start" && ev.message?.id) own.turnMsgId = ev.message.id
       else if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text && own.turnMsgId) queueDelta(key, own.turnMsgId, ev.delta.text)
@@ -2056,8 +2062,9 @@ function onEvent({ key, event, exit }: EventPayload) {
         const text = event.content.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "").trim().slice(0, 2000)
         patchTranscript(key, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${String(event.uuid ?? crypto.randomUUID())}`, timestamp: new Date().toISOString() }], { running: true }))
       }
-      // Claude Code changed the permission mode itself (left plan mode): the picker follows
-      if (event.subtype === "status" && typeof event.permissionMode === "string") {
+      // Claude Code changed the permission mode itself (left plan mode), or started in the mode of
+      // your settings (no mode picked: no --permission-mode flag): the picker follows
+      if ((event.subtype === "status" || event.subtype === "init") && typeof event.permissionMode === "string") {
         const mode = mapMode(event.permissionMode)
         setApp((st) => {
           const cur = st.sessions[key]
@@ -2066,6 +2073,16 @@ function onEvent({ key, event, exit }: EventPayload) {
         })
       }
       if (event.subtype === "init") {
+        // the mode the session really runs in (a resume with no mode chosen takes your claude's
+        // default, e.g. bypass): the picker shows that, never a mode it does not have
+        if (typeof event.permissionMode === "string") {
+          const mode = mapMode(event.permissionMode)
+          setApp((st) => {
+            const cur = st.sessions[key]
+            if (!cur || cur.permissionMode === mode) return st
+            return { sessions: { ...st.sessions, [key]: { ...cur, permissionMode: mode } } }
+          })
+        }
         void import("@/features/terminal/slash").then((m) => m.setTerminalCommands(event.terminal_slash_commands as string[] | undefined))
         // MCP servers of yours that did not connect: one line, once per session. The claude.ai
         // connectors you never set up (they all come along, unauthorized) are not news.

@@ -485,7 +485,6 @@ mod tests {
         assert!(wanted_by_ui(&se("content_block_delta", Some("text_delta"))));
         assert!(!wanted_by_ui(&se("content_block_delta", Some("input_json_delta"))));
         assert!(!wanted_by_ui(&se("content_block_delta", Some("thinking_delta"))));
-        assert!(!wanted_by_ui(&se("message_delta", None)));
         assert!(!wanted_by_ui(&se("content_block_stop", None)));
     }
 }

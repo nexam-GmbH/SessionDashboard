@@ -61,7 +61,7 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
     case "notice":
       return <NoticeRow sessionId={sessionId} itemId={row.itemId} />
     case "done":
-      return <DoneLine turnId={row.turnId} durationMs={row.durationMs} at={row.at} tokens={row.tokens} />
+      return <DoneLine sessionId={sessionId} turnId={row.turnId} durationMs={row.durationMs} at={row.at} tokens={row.tokens} />
     case "receipt":
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
     case "date":

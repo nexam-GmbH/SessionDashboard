@@ -266,7 +266,7 @@ function TokensChart({ range }: { range: Range }) {
               .slice()
               .reverse()
               .map((f) => (
-                <Area key={f} dataKey={f} type="natural" fill={`url(#fill-${f})`} stroke={`var(--color-${f})`} stackId="a" isAnimationActive={false} />
+                <Area key={f} dataKey={f} type="monotone" fill={`url(#fill-${f})`} stroke={`var(--color-${f})`} stackId="a" isAnimationActive={false} />
               ))}
             {used.length > 1 && <ChartLegend content={<ChartLegendContent />} />}
           </AreaChart>
