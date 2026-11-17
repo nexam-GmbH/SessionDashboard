@@ -73,9 +73,12 @@ pub struct StartOpts {
     pub config_dir: Option<String>,
 }
 
-fn mode_flag(m: &str) -> &str {
-    // the app's "default" is the CLI's "manual"
-    if m == "default" { "manual" } else { m }
+/// The CLI flag for the app's mode. The app's "default" (nothing chosen) passes no flag, so the
+/// session starts in the user's own `permissions.defaultMode` from ~/.claude/settings.json (e.g.
+/// bypassPermissions) instead of forcing "manual" on every session the app starts or resumes.
+/// A mode picked in the composer while the session runs still goes through set_permission_mode.
+fn mode_flag(m: &str) -> Option<&str> {
+    if m == "default" { None } else { Some(m) }
 }
 
 pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
@@ -109,7 +112,7 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     };
     push("--model", &o.model);
     push("--effort", &o.effort);
-    push("--permission-mode", &o.permission_mode.as_deref().map(|m| mode_flag(m).to_string()));
+    push("--permission-mode", &o.permission_mode.as_deref().and_then(mode_flag).map(str::to_string));
     push("--agent", &o.agent);
     push("--append-system-prompt", &o.append_system_prompt);
     push("--name", &o.name);
@@ -333,7 +336,8 @@ pub fn control(procs: &Procs, key: &str, request: Value, request_id: Option<Stri
     let mut request = request;
     if let Some(m) = request.get_mut("mode") {
         if let Some(s) = m.as_str() {
-            *m = Value::String(mode_flag(s).to_string());
+            // picked in the composer while the session runs: the app's "default" is the CLI's "manual"
+            *m = Value::String(if s == "default" { "manual" } else { s }.to_string());
         }
     }
     write(procs, key, json!({"type": "control_request", "request_id": id, "request": request}))
@@ -458,7 +462,9 @@ fn wanted_by_ui(ev: &Value) -> bool {
     }
     let inner = ev.get("event");
     match inner.and_then(|e| e.get("type")).and_then(Value::as_str) {
-        Some("message_start") | Some("content_block_start") => true,
+        // message_delta: the message's final output_tokens (its assistant lines carry only the
+        // count from message_start while partial messages stream)
+        Some("message_start") | Some("content_block_start") | Some("message_delta") => true,
         Some("content_block_delta") => inner.and_then(|e| e.get("delta")).and_then(|d| d.get("type")).and_then(Value::as_str) == Some("text_delta"),
         _ => false,
     }
@@ -475,6 +481,7 @@ mod tests {
         assert!(wanted_by_ui(&json!({"type": "result"})));
         assert!(wanted_by_ui(&se("message_start", None)));
         assert!(wanted_by_ui(&se("content_block_start", None)));
+        assert!(wanted_by_ui(&se("message_delta", None)));
         assert!(wanted_by_ui(&se("content_block_delta", Some("text_delta"))));
         assert!(!wanted_by_ui(&se("content_block_delta", Some("input_json_delta"))));
         assert!(!wanted_by_ui(&se("content_block_delta", Some("thinking_delta"))));
