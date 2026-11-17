@@ -155,8 +155,10 @@ pub fn check(terms: &Terms, pid: u32) -> Option<String> {
     if let Some(w) = way(terms, pid) {
         return Some(name(&w).to_string());
     }
+    // print mode (`claude -p …`: the app's own sessions, or a run another session started) has no
+    // terminal to type into: replies wait until it is done, then continue here
     let cmd = crate::sys::cmdline(pid);
-    (cmd.contains(" -p ") && cmd.contains("stream-json")).then(|| "headless".to_string())
+    cmd.split_whitespace().any(|a| a == "-p" || a == "--print").then(|| "headless".to_string())
 }
 
 fn ok(st: std::io::Result<std::process::ExitStatus>, what: &str) -> Result<(), String> {

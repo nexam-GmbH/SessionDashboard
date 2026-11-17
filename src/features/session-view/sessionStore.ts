@@ -202,7 +202,8 @@ function deliverOutbox() {
       setOutbox(id, [])
       continue
     }
-    if (s.status !== "idle" && s.status !== "done_unseen") continue
+    // done: idle, or a run without a terminal that has ended (the message continues it here)
+    if (s.status !== "idle" && s.status !== "done_unseen" && s.control !== "history") continue
     // the one open in the prompt box stays until it is saved back; held ones wait for Send now
     const editing = getUiValue<QueueEdit | null>(`qedit:${id}`, null)?.id
     const stays = (q: Queued) => q.id === editing || !!q.held

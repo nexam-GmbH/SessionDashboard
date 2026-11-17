@@ -48,8 +48,8 @@ const withNames = (text: string, attachments: string[]) => `${text}${attachments
 
 /** A reply to a terminal session: typed into its terminal, or (when that can't be done) a copy here. */
 function replyToTerminal(id: ID, text: string, attachments: string[], way: string | null) {
-  // a headless session the app started before it restarted: taken back (nothing is lost) once its
-  // turn is over; while it works the message waits in the queue
+  // a run without a terminal (`claude -p`: one the app started before it restarted, or one another
+  // session started): while it works the message waits in the queue; once done it continues here
   if (way === "headless") {
     const s = getApp().sessions[id]
     if (s && s.status !== "idle" && s.status !== "done_unseen") return void queueMessage(id, text, attachments)
@@ -63,10 +63,12 @@ function replyToTerminal(id: ID, text: string, attachments: string[], way: strin
     )
     return
   }
-  // no way into that terminal: say how to get one, keep the text (Fork in the session menu makes a copy)
-  void import("@/backend/real").then((r) =>
-    r.realNotice(id, "This terminal can't be typed into from the app. Turn on Settings → Sessions → Sync terminal sessions, then start claude there again (claude --resume picks this conversation up); or answer in the terminal. Fork in the session menu continues it as a copy here."),
-  )
+  // no way into that terminal: say how to get one (once, not again on every try), keep the text
+  const note =
+    "This terminal can't be typed into from the app. Turn on Settings → Sessions → Sync terminal sessions, then start claude there again (claude --resume picks this conversation up); or answer in the terminal. Fork in the session menu continues it as a copy here."
+  const t = getApp().transcripts[id]
+  const last = t?.items[t.order[t.order.length - 1]]
+  if (!(last?.type === "notice" && last.text === note)) void import("@/backend/real").then((r) => r.realNotice(id, note))
   return false
 }
 
