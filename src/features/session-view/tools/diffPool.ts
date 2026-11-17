@@ -5,7 +5,13 @@
 // targets `:host` (the diff's Shadow DOM host): pierre 1.6.4 never sets
 // `data-theme-type`, so selectors on it were silently ignored.
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker"
+import { registerCustomTheme } from "@pierre/diffs"
+import { CLAUDE_DARK, CLAUDE_LIGHT } from "../markdown/claudeTheme"
 
+// Claude Code desktop's code colours in every diff (chat and Review), under pierre's own theme
+// names: a worker renders with those before it hears of any other
+registerCustomTheme("pierre-dark", async () => ({ ...CLAUDE_DARK, name: "pierre-dark" }))
+registerCustomTheme("pierre-light", async () => ({ ...CLAUDE_LIGHT, name: "pierre-light" }))
 export const DIFF_THEME = { dark: "pierre-dark", light: "pierre-light" } as const
 
 export const POOL_OPTIONS = { workerFactory: () => new DiffsWorker(), poolSize: 2 }

@@ -478,3 +478,124 @@ body {
   animation: sd-flash 1.6s ease-out;
   border-radius: var(--radius-lg);
 }
+
+/* Claude Code desktop's motion in the chat, done cheaply: only opacity and transform (composited)
+   or a gradient sliding inside one short label, and none of it under reduced motion. */
+@keyframes cc-shimmer {
+  0%,
+  15% {
+    background-position: 83.3% 0;
+    animation-timing-function: cubic-bezier(0.714, 0.121, 0.211, 0.888);
+  }
+  85%,
+  100% {
+    background-position: 16.7% 0;
+  }
+}
+/* the live "Working… / Thinking…" label: a light band glides across the text every 3 s */
+.cc-shimmer {
+  --shim-ink: var(--cc-fg2);
+  --shim-peak: color-mix(in srgb, var(--cc-fg) 30%, white);
+  background-image: linear-gradient(120deg, var(--shim-ink) 37.5%, var(--shim-peak) 50%, var(--shim-ink) 62.5%);
+  background-size: 400% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cc-shimmer 3s linear infinite;
+}
+.dark .cc-shimmer {
+  --shim-peak: var(--cc-fg);
+}
+@keyframes cc-breathe {
+  50% {
+    opacity: 0.75;
+  }
+}
+/* a thought still going: its label breathes after 3 s, still under the pointer */
+.cc-breathe {
+  animation: cc-breathe 2s ease-in-out 3s infinite;
+}
+.cc-breathe:hover,
+.cc-breathe:focus-within {
+  animation: none;
+}
+@keyframes cc-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+/* a message on its way out */
+.cc-pulse {
+  animation: cc-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes cc-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+/* a new row of the reply settles in (once) */
+.cc-fade-up {
+  animation: cc-fade-up 1.1s linear(0, 0.246, 0.653, 0.947, 1.076, 1.092, 1.059, 1.022, 0.999, 0.991, 0.992, 0.996, 0.999, 1) both;
+}
+@keyframes cc-rainbow {
+  from {
+    background-position: 100% 0, 0 0;
+  }
+  to {
+    background-position: 0% 0, 0 0;
+  }
+}
+/* "ultrathink" in the prompt box: a rainbow word with a sheen that crosses it twice */
+.cc-rainbow {
+  background-image:
+    linear-gradient(120deg, transparent 40%, color-mix(in srgb, var(--cc-fg) 35%, transparent) 50%, transparent 60%),
+    linear-gradient(90deg, #e5484d, #f76b15, #ffc53d, #30a46c, #0090ff, #8e4ec6, #d6409f);
+  background-size: 300% 100%, 100% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cc-rainbow 3s linear 2;
+}
+/* buttons give a little under the press and spring back (desktop's squish) */
+[data-chat] button:not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+  transition-duration: 60ms, 60ms, 60ms, 60ms, 150ms, 450ms;
+  transition-timing-function: ease-out, ease-out, ease-out, ease-out, ease-out,
+    linear(0, 0.246, 0.653, 0.947, 1.076, 1.092, 1.059, 1.022, 0.999, 0.991, 0.992, 0.996, 0.999, 1);
+}
+[data-chat] button:not(:disabled):active {
+  scale: 0.975;
+  transition-duration: 60ms, 60ms, 60ms, 60ms, 150ms, 60ms;
+}
+:root[data-reduce-motion] :is(.cc-shimmer, .cc-rainbow),
+:root[data-reduce-motion] :is(.cc-breathe, .cc-pulse, .cc-fade-up) {
+  animation: none;
+}
+:root[data-reduce-motion] .cc-shimmer {
+  color: var(--cc-fg2);
+  background: none;
+}
+:root[data-reduce-motion] .cc-rainbow {
+  -webkit-background-clip: text;
+  background-size: 100% 100%;
+}
+:root[data-reduce-motion] [data-chat] button:active {
+  scale: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-shimmer,
+  .cc-rainbow,
+  .cc-breathe,
+  .cc-pulse,
+  .cc-fade-up {
+    animation: none;
+  }
+  .cc-shimmer {
+    color: var(--cc-fg2);
+    background: none;
+  }
+  [data-chat] button:active {
+    scale: none;
+  }
+}

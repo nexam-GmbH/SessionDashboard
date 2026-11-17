@@ -1,14 +1,12 @@
 // The live line under the last message while a session works ("Thinking… · 1m 12s · 1.2k tokens", with
-// Claude Code desktop's turning mark), and under a finished turn how long it took and when.
+// Claude Code desktop's turning mark).
 import { useEffect, useState } from "react"
-import { Check, Copy } from "lucide-react"
-import { getApp, useApp } from "@/store/app"
+import { useApp } from "@/store/app"
 import { describeActivity, formatWorkDuration } from "../tools/toolSummary"
 import { compact } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import type { ID, Transcript } from "@/lib/model"
 import { useStopping } from "../sessionStore"
-
-const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" })
 
 const clock = () => Date.now()
 
@@ -114,7 +112,7 @@ export function LiveSpinner({ sessionId }: { sessionId: ID }) {
         <WorkingMark still={still} />
       </span>
       <span className="flex min-w-0 items-center" aria-hidden>
-        <span className="min-w-0 truncate">{what}</span>
+        <span className={cn("min-w-0 truncate", !still && "cc-shimmer")}>{what}</span>
         {secs >= 2 && (
           <>
             <Dot />
@@ -138,64 +136,6 @@ export function LiveSpinner({ sessionId }: { sessionId: ID }) {
           Force stop
         </button>
       )}
-    </div>
-  )
-}
-
-const DATE = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-
-/** Everything Claude wrote in one turn, its messages one after another (Copy all). */
-function turnText(sessionId: ID, turnId: ID): string {
-  const t = getApp().transcripts[sessionId]
-  const turn = t?.turns.find((x) => x.id === turnId)
-  if (!t || !turn) return ""
-  return turn.itemIds
-    .map((id) => t.items[id])
-    .filter((it) => it?.type === "agent_message")
-    .map((it) => (it as { text: string }).text.trim())
-    .filter(Boolean)
-    .join("\n\n")
-}
-
-/**
- * Under a finished turn, as Claude Code desktop: how long it worked, what it wrote, when ("26s ·
- * 1.2k tokens · 19:49"), and Copy all: Claude's whole answer of that turn.
- */
-export function DoneLine({ sessionId, turnId, durationMs, at, tokens }: { sessionId: ID; turnId: ID; durationMs: number; at?: string; tokens?: number }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="flex h-6 items-center gap-1.5 text-[13px] leading-[17px] text-cc-fg3" title={at ? `Finished ${DATE.format(new Date(at))}` : undefined}>
-      <span className="tabular">{formatWorkDuration(durationMs)}</span>
-      {!!tokens && (
-        <>
-          <span aria-hidden>·</span>
-          <span className="tabular">{compact(tokens)} tokens</span>
-        </>
-      )}
-      {at && (
-        <>
-          <span aria-hidden>·</span>
-          <time dateTime={at} className="tabular">
-            {TIME.format(new Date(at))}
-          </time>
-        </>
-      )}
-      <button
-        type="button"
-        title="Copy all of Claude's answer in this turn"
-        aria-label={copied ? "Copied" : "Copy all"}
-        onClick={() => {
-          const text = turnText(sessionId, turnId)
-          if (!text) return
-          void navigator.clipboard?.writeText(text)
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1200)
-        }}
-        className="ml-auto inline-flex h-6 items-center gap-1.5 rounded-md px-1.5 outline-none hover:bg-cc-ghost hover:text-foreground focus-visible:ring-1 focus-visible:ring-cc-accent"
-      >
-        {copied ? <Check size={13} /> : <Copy size={13} />}
-        {copied ? "Copied" : "Copy all"}
-      </button>
     </div>
   )
 }

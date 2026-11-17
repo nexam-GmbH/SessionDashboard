@@ -5,7 +5,7 @@
 // the turn is over); a terminal session queues it (the mock world too). ↑ in an empty box opens
 // the newest queued message; Esc takes your last waiting message back, then stops; Esc Esc opens
 // Rewind; Shift+Tab cycles the permission mode. The text you leave in the box stays with the session.
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { REAL } from "@/backend/mode"
 import type { ID, PermissionMode } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
@@ -70,15 +70,30 @@ function replyToTerminal(id: ID, text: string, attachments: string[], way: strin
   return false
 }
 
-export const Composer = memo(function Composer({ sessionId }: { sessionId: ID }) {
+/** What you sent in a session, oldest first (repeats in a row once): ↑ / ↓ and Ctrl+R go through it. */
+function sentPrompts(sessionId: ID) {
+  const t = getApp().transcripts[sessionId]
+  const list: string[] = []
+  for (const id of t?.order ?? []) {
+    const it = t?.items[id]
+    if (it?.type === "user_message" && it.text.trim() && list.at(-1) !== it.text) list.push(it.text)
+  }
+  return list
+}
+
+const WRAP = "mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4 pb-3"
+
+/**
+ * `dock`: the request card, shown in place of the box while `docked` (Claude Code desktop keeps the
+ * queue above it and the row of settings under it).
+ */
+export const Composer = memo(function Composer({ sessionId, dock, docked }: { sessionId: ID; dock?: ReactNode; docked?: boolean }) {
   const control = useApp((s) => s.sessions[sessionId]?.control)
   const status = useApp((s) => s.sessions[sessionId]?.status)
-  const mode = useApp((s) => s.sessions[sessionId]?.permissionMode)
-  const model = useApp((s) => s.sessions[sessionId]?.model)
-  const effort = useApp((s) => s.sessions[sessionId]?.effort)
-  const fast = useApp((s) => s.sessions[sessionId]?.fastMode)
-  const ultra = useApp((s) => s.sessions[sessionId]?.ultracode)
-  const style = useApp((s) => s.sessions[sessionId]?.outputStyle)
+  const ready = useApp((s) => {
+    const x = s.sessions[sessionId]
+    return !!(x?.permissionMode && x.model && x.effort)
+  })
   const repoId = useApp((s) => s.sessions[sessionId]?.repoId)
   const dirs = useApp((s) => s.sessions[sessionId]?.additionalDirs)
   const repos = useApp((s) => s.repos)
@@ -96,12 +111,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const hist = useRef<{ list: string[]; at: number; saved: string } | null>(null)
   const onHistory = (dir: -1 | 1, current: string) => {
     if (!hist.current) {
-      const t = getApp().transcripts[sessionId]
-      const list: string[] = []
-      for (const id of t?.order ?? []) {
-        const it = t?.items[id]
-        if (it?.type === "user_message" && it.text.trim() && list.at(-1) !== it.text) list.push(it.text)
-      }
+      const list = sentPrompts(sessionId)
       if (!list.length) return null
       hist.current = { list, at: list.length, saved: current }
     }
@@ -134,7 +144,9 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
     }
   }, [sessionId, control])
 
-  if (!control || !mode || !model || !effort) return null
+  // nothing to write here: only the card, if one waits
+  const bare = dock ? <div className={WRAP}>{dock}</div> : null
+  if (!control || !ready) return bare
   const caps = capabilities(control)
   // a session in a terminal never closes because you replied here: the reply is typed into that
   // terminal when it allows it (Konsole, tmux, kitty, WezTerm, the app's terminal), else it continues
@@ -143,11 +155,10 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   // a past session: type and it goes on (it resumes in the app with your message, as Claude Code
   // desktop continues an old chat); the banner above also offers Resume and Fork
   const past = REAL && control === "history"
-  if (!caps.send && !takeOver && !past) return null
+  if (!caps.send && !takeOver && !past) return bare
   const working = status === "working" || status === "starting"
   // a terminal session: what you pick here applies when it moves into the app (your next message)
   const locked = !caps.changeSettings && !takeOver && !past
-  const lockReason = "Runs in your terminal: change it there"
   const headless = takeOver && injectWay === "headless"
   // the app runs it: a message sent while Claude works goes in at once, read at its next step
   const steers = REAL && control === "owned"
@@ -195,9 +206,13 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   }
 
   return (
-    <div className="mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4 pb-3">
+    <div className={WRAP}>
       <PromptBox
         files={files}
+        dock={dock}
+        docked={docked}
+        shell
+        history={() => sentPrompts(sessionId).reverse()}
         value={draft}
         onValueChange={(fn: (v: PromptValue) => PromptValue) => setDraft(sessionId, fn)}
         editing={editing}
@@ -252,7 +267,14 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
               }
             : undefined
         }
-        onShiftTab={locked ? undefined : () => setSessionSettings(sessionId, { permissionMode: MODE_CYCLE[(MODE_CYCLE.indexOf(mode) + 1) % MODE_CYCLE.length] })}
+        onShiftTab={
+          locked
+            ? undefined
+            : () => {
+                const cur = getApp().sessions[sessionId]?.permissionMode ?? "default"
+                setSessionSettings(sessionId, { permissionMode: MODE_CYCLE[(MODE_CYCLE.indexOf(cur) + 1) % MODE_CYCLE.length] })
+              }
+        }
         folders={
           locked
             ? undefined
@@ -266,27 +288,47 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
               }
         }
 
-        footer={
-          <>
-            {/* Claude Code desktop: the permission mode on the left under the box; model and effort, and context on the right */}
-            <ModePicker value={mode} onChange={(permissionMode) => setSessionSettings(sessionId, { permissionMode })} disabled={locked} disabledReason={lockReason} />
-            <FoldersNote ids={repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))} names={repos} />
-            <span className="flex-1" />
-            <ModelPicker
-              value={model}
-              onChange={(m) => setSessionSettings(sessionId, { model: m })}
-              effort={effort}
-              onEffort={(e) => setSessionSettings(sessionId, { effort: e })}
-              fast={!!fast}
-              disabled={locked}
-              disabledReason={lockReason}
-              extra={<ModelExtras model={model} fast={!!fast} ultra={!!ultra} style={style} onChange={(patch) => setSessionSettings(sessionId, patch)} />}
-            />
-            <ContextRing sessionId={sessionId} canCompact={!locked} />
-          </>
-        }
+        footer={<ChinSettings sessionId={sessionId} locked={locked} />}
       />
     </div>
+  )
+})
+
+const lockReason = "Runs in your terminal: change it there"
+
+/**
+ * Mode, model and effort, context: its own component, so typing in the box (which re-renders the
+ * composer on every key) leaves these alone.
+ */
+const ChinSettings = memo(function ChinSettings({ sessionId, locked }: { sessionId: ID; locked: boolean }) {
+  const mode = useApp((s) => s.sessions[sessionId]?.permissionMode)
+  const model = useApp((s) => s.sessions[sessionId]?.model)
+  const effort = useApp((s) => s.sessions[sessionId]?.effort)
+  const fast = useApp((s) => s.sessions[sessionId]?.fastMode)
+  const ultra = useApp((s) => s.sessions[sessionId]?.ultracode)
+  const style = useApp((s) => s.sessions[sessionId]?.outputStyle)
+  const dirs = useApp((s) => s.sessions[sessionId]?.additionalDirs)
+  const repos = useApp((s) => s.repos)
+  const repoOrder = useApp((s) => s.repoOrder)
+  if (!mode || !model || !effort) return null
+  return (
+    <>
+      {/* Claude Code desktop: the permission mode on the left under the box; model and effort, and context on the right */}
+      <ModePicker value={mode} onChange={(permissionMode) => setSessionSettings(sessionId, { permissionMode })} disabled={locked} disabledReason={lockReason} />
+      <FoldersNote ids={repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))} names={repos} />
+      <span className="flex-1" />
+      <ModelPicker
+        value={model}
+        onChange={(m) => setSessionSettings(sessionId, { model: m })}
+        effort={effort}
+        onEffort={(e) => setSessionSettings(sessionId, { effort: e })}
+        fast={!!fast}
+        disabled={locked}
+        disabledReason={lockReason}
+        extra={<ModelExtras model={model} fast={!!fast} ultra={!!ultra} style={style} onChange={(patch) => setSessionSettings(sessionId, patch)} />}
+      />
+      <ContextRing sessionId={sessionId} canCompact={!locked} />
+    </>
   )
 })
 

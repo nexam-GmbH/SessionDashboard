@@ -2,8 +2,8 @@
 // Also adapted from BloopAI/vibe-kanban@5f06193:packages/web-core/src/shared/components/NormalizedConversation/PendingApprovalEntry.tsx
 // (deny with a reason, Apache-2.0) and cline/cline@72b3d71:sdk/packages/ui/components/agent-approval-card.tsx (Apache-2.0).
 // Claude Code desktop's permission card: "Allow Claude to **run** …?", the command in a well (or the
-// pending diff), warnings, then Deny · Always allow · Allow once. Deny opens a short "what instead"
-// field. A request that is hard to undo (risk.ts) says what it does, offers no "always allow", no
+// pending diff), warnings, then Deny · Always allow · Allow once. Deny answers at once; its caret
+// offers "Tell Claude what to do instead". A request that is hard to undo (risk.ts) says what it does, offers no "always allow", no
 // switch to Auto, takes no focus and no Enter / Ctrl+Enter: a deliberate click or number key.
 import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { TriangleAlert } from "lucide-react"
@@ -13,7 +13,7 @@ import { InlineDiff } from "@/features/session-view/tools/InlineDiff"
 import { resolveRequest } from "@/features/session-view/sessionStore"
 import { riskOf } from "./risk"
 import { useApp } from "@/store/app"
-import { CardFrame, canStealFocus, Decision, FeedbackField, modEnter, OptionButton, optionLabel, plain, Split, useCardKeys, type Pager } from "./cardChrome"
+import { CardFrame, canStealFocus, Decision, FadeScroll, FeedbackField, modEnter, OptionButton, optionLabel, plain, shortAt, Split, useCardKeys, type Pager } from "./cardChrome"
 
 const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
 
@@ -58,30 +58,38 @@ export const PermissionCard = memo(function PermissionCard({
   const ref = useRef<HTMLElement>(null)
   const [feedbackFor, setFeedbackFor] = useState<PermissionOption | null>(null)
   const [feedback, setFeedback] = useState("")
+  // a command taller than its well: Allow waits until it has been scrolled to the end
+  const [gated, setGated] = useState(false)
+  const read = useRef(false)
+  // desktop remembers whether you last chose Always or Once and leads with it
+  const [lead] = useState(readLead)
   const cwd = useApp((s) => s.sessions[request.sessionId]?.cwd)
   const risk = riskOf(request, cwd)
   useEffect(() => {
     if (docked && !risk.high && canStealFocus()) ref.current?.focus({ preventScroll: true })
   }, [docked, request.id, risk.high])
 
-  const choose = (o: PermissionOption) => {
-    if (!canApprove) return
-    if (isReject(o)) setFeedbackFor(o)
-    else resolveRequest(request, o.id)
-  }
   // hard to undo: no standing permission for it
   const options = risk.high ? request.options.filter((o) => o.kind !== "allow_always") : request.options
   const allowOnce = options.find((o) => o.kind === "allow_once")
   const always = options.find((o) => o.kind === "allow_always")
   const deny = options.find(isReject)
   const extras = options.filter((o) => o !== deny && o !== always && o !== allowOnce)
-  // the allow group in visual order, the primary last; digits: 1 Deny, 2… these
-  const allows = [...extras, ...(always ? [always] : []), ...(allowOnce ? [allowOnce] : [])]
+  const leadAlways = !!always && lead === "always"
+  const main = leadAlways ? always : allowOnce
+  // the allow row in visual order, the primary last (Allow once sits in its menu when Always leads);
+  // digits: 1 Deny, 2… these
+  const allows = [...extras, ...(always && !leadAlways ? [always] : []), ...(main ? [main] : [])]
   const command = request.subject?.type === "command" ? request.subject.command : undefined
   const path = request.subject?.type === "tool_call" ? request.subject.path : undefined
   const diff = toolCall?.diff?.[0]
   const [verb, value, mono] = ask(request)
 
+  const choose = (o: PermissionOption) => {
+    if (!canApprove || (gated && !isReject(o))) return
+    if (o === always || o === allowOnce) writeLead(o === always ? "always" : "once")
+    resolveRequest(request, o.id)
+  }
   useCardKeys(
     ref,
     docked &&
@@ -106,19 +114,34 @@ export const PermissionCard = memo(function PermissionCard({
     if (!risk.high && o === always) return [MOD, "Shift", "⏎"]
     return [String(allows.indexOf(o) + 2)]
   }
-
+  const at = shortAt(allows.length + 1)
+  const gateNote = "Scroll through the whole command to allow it."
   const button = (o: PermissionOption, variant: "primary" | "secondary", label: ReactNode, short?: string) => (
-    <OptionButton key={o.id} variant={variant} disabled={!canApprove} onClick={() => choose(o)} keys={keys(o)} title={o.name} short={short}>
+    <OptionButton
+      key={o.id}
+      variant={variant}
+      disabled={!canApprove || (gated && !isReject(o))}
+      onClick={() => choose(o)}
+      keys={keys(o)}
+      title={gated && !isReject(o) ? gateNote : o.name}
+      short={short}
+      at={at}
+    >
       {label}
     </OptionButton>
   )
+  const menu = [
+    ...(leadAlways && allowOnce ? [{ label: "Allow once", onSelect: () => choose(allowOnce) }] : []),
+    // desktop's way to stop asking (Auto mode); never for a request hard to undo
+    ...(risk.high ? [] : [{ label: "Allow and switch to Auto", hint: "Auto reviews the rest of this session.", onSelect: () => resolveRequest(request, "allow-auto") }]),
+  ]
 
   return (
     <CardFrame
       ref={ref}
       docked={docked}
       label={`Permission request${risk.high ? ", hard to undo" : ""}: ${verb} ${value}`.trim()}
-      keyHint={`${risk.high ? "" : "Control+Enter: allow once. "}${always && !risk.high ? "Control+Shift+Enter: always allow. " : ""}1: deny, 2 to ${allows.length + 1}: allow buttons in order. Escape: deny with feedback.`}
+      keyHint={`${risk.high ? "" : "Control+Enter: allow once. "}${always && !risk.high ? "Control+Shift+Enter: always allow. " : ""}1 or Escape: deny, 2 to ${allows.length + 1}: allow buttons in order.`}
       title={
         <>
           Allow Claude to <strong className="font-semibold">{verb}</strong>{" "}
@@ -146,22 +169,21 @@ export const PermissionCard = memo(function PermissionCard({
           <Decision
             start={
               <>
-                {deny && button(deny, "secondary", "Deny")}
+                {/* Deny answers at once (desktop); feedback is the caret's optional path */}
+                {deny && (
+                  <Split variant="secondary" label="More deny options" disabled={!canApprove} items={[{ label: "Tell Claude what to do instead", onSelect: () => setFeedbackFor(deny) }]}>
+                    {button(deny, "secondary", "Deny")}
+                  </Split>
+                )}
                 {!canApprove && <span className="text-xs text-cc-fg3">Approve in your terminal</span>}
               </>
             }
             end={allows.map((o) =>
-              o !== allowOnce ? (
+              o !== main ? (
                 button(o, "secondary", optionLabel(o), o === always ? "Always" : undefined)
               ) : (
-                // desktop's caret: allow this one and stop asking (Auto mode); never for a risky one
-                <Split
-                  key={o.id}
-                  label="More allow options"
-                  disabled={!canApprove}
-                  items={risk.high ? [] : [{ label: "Allow and switch to Auto", hint: "Auto reviews the rest of this session.", onSelect: () => resolveRequest(request, "allow-auto") }]}
-                >
-                  {button(o, "primary", "Allow once")}
+                <Split key={o.id} label="More allow options" disabled={!canApprove || gated} items={menu}>
+                  {button(o, "primary", leadAlways ? optionLabel(o) : "Allow once", leadAlways ? "Always" : undefined)}
                 </Split>
               ),
             )}
@@ -178,15 +200,41 @@ export const PermissionCard = memo(function PermissionCard({
         <InlineDiff path={diff.path} oldText={diff.oldText} newText={diff.newText} maxLines={12} />
       ) : (
         (command ?? path) && (
-          <pre
-            tabIndex={-1}
-            className="max-h-[252px] shrink-0 overflow-auto rounded-lg bg-cc-wash px-4 py-3 font-mono text-[13px] leading-[19px] break-all whitespace-pre-wrap text-cc-fg2 select-text"
-          >
-            {command ?? path}
-          </pre>
+          <div className="flex shrink-0 flex-col gap-1.5">
+            {/* about 12 lines, 8 px edge fades in the well's colour */}
+            <FadeScroll
+              tabIndex={-1}
+              edge="h-2"
+              onMoreBelow={(more) => {
+                if (!more) read.current = true
+                setGated(more && !read.current && !!command)
+              }}
+              className="max-h-[252px] rounded-lg bg-cc-wash [--fade:color-mix(in_srgb,var(--card-bg),var(--cc-fg)_5%)]"
+              inner="px-4 py-3 font-mono text-[13px] leading-[19px] break-all whitespace-pre-wrap text-cc-fg2 select-text"
+            >
+              {command ?? path}
+            </FadeScroll>
+            {gated && <p className="text-[13px] leading-[17px] text-cc-fg3">{gateNote}</p>}
+          </div>
         )
       )}
       {!command && request.description && <p className="max-h-[60px] shrink-0 overflow-y-auto text-cc-fg2">{request.description}</p>}
     </CardFrame>
   )
 })
+
+const LEAD = "sd:allow-lead"
+function readLead(): string | null {
+  try {
+    return localStorage.getItem(LEAD)
+  } catch {
+    return null
+  }
+}
+function writeLead(v: "always" | "once") {
+  try {
+    localStorage.setItem(LEAD, v)
+  } catch {
+    // storage off: the card just leads with Allow once
+  }
+}

@@ -1,7 +1,7 @@
 // Adapted from agent-of-empires/agent-of-empires@d134cfd:web/src/components/acp/ApprovalCard.tsx (MIT). Modified for session-dashboard.
 // Shared chrome of the request cards, shaped after Claude Code desktop's approval card: docked in
 // place of the prompt box while it is the active request, or a plain card in the conversation.
-import { forwardRef, useEffect, useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import { forwardRef, useEffect, useEffectEvent, useId, useRef, type ComponentProps, type KeyboardEvent, type ReactNode, type RefObject } from "react"
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { PermissionOption } from "@/lib/model"
@@ -72,7 +72,8 @@ export const CardFrame = forwardRef<
         "@container flex min-h-0 flex-col gap-3 rounded-xl p-3 text-sm text-foreground outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--cc-accent)]",
         ENTER,
         // the dock keeps the conversation in view: at most max(60vh, 16rem), the body scrolls
-        docked ? "max-h-[max(60vh,16rem)] bg-cc-panel shadow-[var(--cc-shadow-panel)]" : "my-3 max-w-[480px] bg-cc-card ring-1 ring-cc-wash-2",
+        // --card-bg: the colour the scroll fades melt into (the inline card fill is a faint tint over the chat)
+        docked ? "max-h-[max(60vh,16rem)] bg-cc-panel shadow-[var(--cc-shadow-panel)] [--card-bg:var(--cc-panel)]" : "my-3 max-h-[60vh] max-w-[480px] bg-cc-card ring-1 ring-cc-wash-2 [--card-bg:var(--cc-surface)]",
         className,
       )}
     >
@@ -86,9 +87,53 @@ export const CardFrame = forwardRef<
           </span>
         )}
       </header>
-      {children && <div className="-mx-3 flex min-h-0 flex-col gap-3 overflow-y-auto px-3">{children}</div>}
+      {children && (
+        <FadeScroll className="-mx-3 min-h-0 px-3" inner="flex flex-col gap-3">
+          {children}
+        </FadeScroll>
+      )}
       {footer}
     </section>
+  )
+})
+
+/**
+ * A scrolling area with desktop's top and bottom fades: sticky gradient strips in the `--fade`
+ * colour (default `--card-bg`), shown only while there is more to scroll that way (attributes set on scroll and on
+ * resize, no re-render). `onMoreBelow` hears when "more below" changes. Props go to the inner box.
+ */
+export const FadeScroll = forwardRef<
+  HTMLDivElement,
+  ComponentProps<"div"> & { inner?: string; edge?: "h-2" | "h-3"; onMoreBelow?: (more: boolean) => void }
+>(function FadeScroll({ className, inner, edge = "h-3", onMoreBelow, children, ...rest }, ref) {
+  const outer = useRef<HTMLDivElement>(null)
+  const sync = useEffectEvent(() => {
+    const el = outer.current
+    if (!el) return
+    el.toggleAttribute("data-more-above", el.scrollTop > 1)
+    const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1
+    if (below === el.hasAttribute("data-more-below")) return
+    el.toggleAttribute("data-more-below", below)
+    onMoreBelow?.(below)
+  })
+  useEffect(() => {
+    const el = outer.current
+    if (!el) return
+    // first notification on observe: the initial state, without a layout read on mount
+    const ro = new ResizeObserver(() => sync())
+    ro.observe(el)
+    if (el.children[1]) ro.observe(el.children[1])
+    return () => ro.disconnect()
+  }, [])
+  const strip = cn("pointer-events-none sticky z-10 block shrink-0 opacity-0 transition-opacity duration-150", edge)
+  return (
+    <div ref={outer} onScroll={() => sync()} className={cn("overflow-y-auto", className)}>
+      <span aria-hidden className={cn(strip, "top-0 bg-linear-to-b from-[var(--fade,var(--card-bg))] to-transparent [[data-more-above]>&]:opacity-100", edge === "h-2" ? "-mb-2" : "-mb-3")} />
+      <div ref={ref} className={inner} {...rest}>
+        {children}
+      </div>
+      <span aria-hidden className={cn(strip, "bottom-0 bg-linear-to-t from-[var(--fade,var(--card-bg))] to-transparent [[data-more-below]>&]:opacity-100", edge === "h-2" ? "-mt-2" : "-mt-3")} />
+    </div>
   )
 })
 
@@ -122,6 +167,16 @@ function KeyCaps({ keys, onPrimary }: { keys: string[]; onPrimary: boolean }) {
   )
 }
 
+// short labels: earlier with more buttons in the row (desktop: 500 / 425 / 350 px)
+const SHORT = {
+  500: ["@max-[500px]:hidden", "@max-[500px]:inline"],
+  425: ["@max-[425px]:hidden", "@max-[425px]:inline"],
+  350: ["@max-[350px]:hidden", "@max-[350px]:inline"],
+} as const
+export type ShortAt = keyof typeof SHORT
+/** Where a row of `n` buttons switches to short labels. */
+export const shortAt = (n: number): ShortAt => (n >= 4 ? 500 : n === 3 ? 425 : 350)
+
 const VARIANT = {
   primary: "bg-cc-primary font-medium text-cc-on-primary hover:bg-cc-primary-hover",
   secondary: "bg-secondary text-foreground hover:bg-[var(--cc-secondary-hover)]",
@@ -132,6 +187,7 @@ const VARIANT = {
 export function OptionButton({
   children,
   short,
+  at = 500,
   variant,
   onClick,
   disabled,
@@ -140,8 +196,9 @@ export function OptionButton({
   className,
 }: {
   children: ReactNode
-  /** label at card widths ≤ 500 px */
+  /** label at tight card widths (≤ `at` px) */
   short?: ReactNode
+  at?: ShortAt
   variant: keyof typeof VARIANT
   onClick: () => void
   disabled?: boolean
@@ -156,7 +213,7 @@ export function OptionButton({
       disabled={disabled}
       title={title}
       className={cn(
-        "inline-flex h-7 max-w-full min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm whitespace-nowrap transition-colors duration-[60ms] disabled:pointer-events-none disabled:opacity-40",
+        "inline-flex h-7 max-w-full min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm whitespace-nowrap disabled:pointer-events-none disabled:opacity-40",
         FOCUS,
         VARIANT[variant],
         className,
@@ -164,8 +221,8 @@ export function OptionButton({
     >
       {short ? (
         <>
-          <span className="min-w-0 truncate @max-[500px]:hidden">{children}</span>
-          <span className="hidden min-w-0 truncate @max-[500px]:inline">{short}</span>
+          <span className={cn("min-w-0 truncate", SHORT[at][0])}>{children}</span>
+          <span className={cn("hidden min-w-0 truncate", SHORT[at][1])}>{short}</span>
         </>
       ) : (
         <span className="min-w-0 truncate">{children}</span>
@@ -175,17 +232,19 @@ export function OptionButton({
   )
 }
 
-/** A primary split button: `children` is the main button, the caret opens its other answers ("More allow options"). */
+/** A split button: `children` is the main button, the caret opens its other answers ("More allow options"). */
 export function Split({
   children,
   label,
   items,
   disabled,
+  variant = "primary",
 }: {
   children: ReactNode
   label: string
   items: { label: string; hint?: string; danger?: boolean; onSelect: () => void }[]
   disabled?: boolean
+  variant?: "primary" | "secondary"
 }) {
   if (!items.length) return children
   return (
@@ -199,18 +258,20 @@ export function Split({
             aria-label={label}
             title={label}
             className={cn(
-              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-e-lg border-s border-cc-on-primary/20 bg-cc-primary text-cc-on-primary hover:bg-cc-primary-hover disabled:pointer-events-none disabled:opacity-40",
+              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-e-lg border-s disabled:pointer-events-none disabled:opacity-40",
+              variant === "primary" ? "border-cc-on-primary/20" : "border-cc-wash-2",
+              VARIANT[variant],
               FOCUS,
             )}
           >
             <ChevronDown size={14} />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuContent align="end" className="w-auto min-w-56">
           {items.map((it) => (
-            <DropdownMenuItem key={it.label} variant={it.danger ? "destructive" : undefined} onSelect={it.onSelect} className="flex-col items-start gap-0">
+            <DropdownMenuItem key={it.label} variant={it.danger ? "destructive" : undefined} onSelect={it.onSelect} className="flex-col items-start gap-0 py-1.5">
               {it.label}
-              {it.hint && <span className="text-xs text-muted-foreground">{it.hint}</span>}
+              {it.hint && <span className="text-[13px] leading-[17px] text-cc-fg3">{it.hint}</span>}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
@@ -335,6 +396,20 @@ export function useCardKeys(ref: RefObject<HTMLElement | null>, handle: false | 
     window.addEventListener("keydown", onKey, true)
     return () => window.removeEventListener("keydown", onKey, true)
   })
+}
+
+/**
+ * Desktop's exit for a resolved card: fade and fold up over 200 ms (opacity and transform only),
+ * answering 1/12 early; at once under reduced motion.
+ */
+export function leave(el: HTMLElement | null, then: () => void) {
+  if (!el || document.documentElement.hasAttribute("data-reduce-motion") || matchMedia("(prefers-reduced-motion: reduce)").matches) return then()
+  el.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-6px) scaleY(0.96)" }], {
+    duration: 200,
+    easing: "cubic-bezier(0.165, 0.84, 0.44, 1)",
+    fill: "forwards",
+  })
+  setTimeout(then, 183)
 }
 
 /** No modifier keys held. */

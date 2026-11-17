@@ -22,10 +22,17 @@ export function Pictures({ pictures, className }: { pictures: Picture[]; classNa
             key={i}
             type="button"
             onClick={() => setOpen(p)}
-            className="relative overflow-hidden rounded-xl outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:ring-1 after:ring-cc-wash-2 after:ring-inset focus-visible:ring-1 focus-visible:ring-cc-accent"
+            className="relative max-w-[min(100%,480px)] overflow-hidden rounded-xl outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:ring-1 after:ring-cc-wash-2 after:ring-inset focus-visible:ring-1 focus-visible:ring-cc-accent"
             aria-label={pictures.length === 1 ? "View image" : `View image ${i + 1} of ${pictures.length}`}
           >
-            <img src={p.src} alt="" loading="lazy" decoding="async" className="block h-[120px] w-auto max-w-[288px] min-w-20 object-cover" />
+            {/* one picture at its own shape (up to 480 × 320); several as 120 px tiles (Claude Code desktop) */}
+            <img
+              src={p.src}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className={cn("block", pictures.length === 1 ? "max-h-80 min-h-30 w-auto max-w-full min-w-30 object-contain" : "h-30 w-auto max-w-72 min-w-20 object-cover")}
+            />
           </button>
         ))}
         {pictures.length > 24 && <span className="self-center text-[13px] text-cc-fg3">{pictures.length - 24} more images</span>}

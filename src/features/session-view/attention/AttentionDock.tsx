@@ -2,7 +2,8 @@
 // pager. Main-session requests come first, then requests from subagents (their
 // card is labelled with the subagent type). Cards live in src/features/requests.
 // As in Claude Code desktop, a session the app can answer for shows the card in place of the prompt
-// box (the dock); a terminal session's card sits in the conversation and the box stays.
+// box (the dock: the queue above and the settings row under it stay); a terminal session's card sits
+// in the conversation and the box stays.
 import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react"
 import type { ID, PendingRequest } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
@@ -76,8 +77,9 @@ export const AttentionDock = memo(function AttentionDock({
   composer,
 }: {
   sessionId: ID
-  /** given: this is the dock under the conversation, the card replaces the composer; else the in-conversation slot */
-  composer?: ReactNode
+  /** given: this is the dock under the conversation; the composer gets the dock (and whether a card
+   * is in it) to show in place of its box. Else the in-conversation slot */
+  composer?: (dock: ReactNode, docked: boolean) => ReactNode
 }) {
   const pending = usePendingRequests(sessionId)
   const control = useApp((s) => s.sessions[sessionId]?.control)
@@ -89,7 +91,7 @@ export const AttentionDock = memo(function AttentionDock({
   const caps = capabilities(control)
   const docked = !!composer
   // the other place holds this session's cards
-  if (docked !== caps.approve) return composer ?? null
+  if (docked !== caps.approve) return composer?.(null, false) ?? null
   // a subagent's request is shown in the activity bar, not here: announce it from this region too
   const child = pending.find((r) => isChild(r) && !reqs.includes(r))
   const childNote = child?.type === "permission" && (
@@ -97,15 +99,15 @@ export const AttentionDock = memo(function AttentionDock({
       {`${(child.subagentId && getApp().subagents[child.subagentId]?.agentType) || "A subagent"} asks to use ${child.toolName}: ${child.subject?.type === "command" ? child.subject.command : (child.subject?.path ?? child.title)}`}
     </span>
   )
-  if (!reqs.length)
-    return (
-      <>
-        <div aria-live="polite" aria-relevant="additions">
-          {childNote}
-        </div>
-        {composer}
-      </>
+  // the live region stays the same element with or without a card, so a new card is announced
+  if (!reqs.length) {
+    const region = (
+      <div aria-live="polite" aria-relevant="additions">
+        {childNote}
+      </div>
     )
+    return composer ? composer(region, false) : region
+  }
   const found = focusId ? reqs.findIndex((r) => r.id === focusId) : -1
   const index = found >= 0 ? found : 0
   const req = reqs[index]
@@ -124,8 +126,8 @@ export const AttentionDock = memo(function AttentionDock({
     req.type === "permission" && req.subagentId
       ? (getApp().subagents[req.subagentId]?.agentType ?? "subagent")
       : undefined
-  return (
-    <div aria-live="polite" aria-relevant="additions" data-find-skip className={docked ? "mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 pb-3 @max-[560px]:px-4" : undefined}>
+  const region = (
+    <div aria-live="polite" aria-relevant="additions" data-find-skip>
       {childNote}
       <DockSlot key={req.id} sessionId={sessionId}>
         {req.type === "permission" ? (
@@ -162,4 +164,5 @@ export const AttentionDock = memo(function AttentionDock({
       </DockSlot>
     </div>
   )
+  return composer ? composer(region, true) : region
 })

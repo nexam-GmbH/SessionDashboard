@@ -2,7 +2,7 @@
 // Older turns inside TanStack Virtual, the live tail (last turn) rendered after the
 // virtualizer, a bottom lock and a jump-to-latest affordance. Changes: our row model,
 // turn blocks as virtual items, memoized rows that select their own item.
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { usePendingRequests } from "@/store/selectors"
 import { ChevronDown } from "lucide-react"
 import { REAL } from "@/backend/mode"
@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { useTranscriptShape, useUiValue } from "../sessionStore"
 import { buildRows, groupBlocks, tailStartIndex, type Block, type Row, type TranscriptView } from "./rowModel"
-import { DoneLine, LiveSpinner } from "./Spinner"
+import { LiveSpinner } from "./Spinner"
 import { WaitingMessages } from "./Waiting"
 import { useTranscriptVirtualizer } from "./useTranscriptVirtualizer"
 import { TRANSCRIPT_VIEWS } from "./view"
@@ -32,6 +32,7 @@ import {
   FilesRow,
   EditsCard,
   DateRow,
+  DoneLine,
 } from "./rows"
 
 type ViewProps = { sessionId: ID; liveItemId?: ID; inTail?: boolean; view: TranscriptView }
@@ -55,13 +56,13 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
     case "files":
       return <FilesRow sessionId={sessionId} itemId={row.itemId} />
     case "edits":
-      return <EditsCard sessionId={sessionId} itemIds={row.itemIds} />
+      return <EditsCard sessionId={sessionId} itemIds={row.itemIds} turnId={row.turnId} />
     case "compaction":
       return <CompactionRow sessionId={sessionId} itemId={row.itemId} />
     case "notice":
       return <NoticeRow sessionId={sessionId} itemId={row.itemId} />
     case "done":
-      return <DoneLine sessionId={sessionId} turnId={row.turnId} durationMs={row.durationMs} at={row.at} tokens={row.tokens} />
+      return <DoneLine sessionId={sessionId} turnId={row.turnId} promptId={row.promptId} durationMs={row.durationMs} at={row.at} tokens={row.tokens} />
     case "receipt":
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
     case "date":
@@ -69,16 +70,34 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
   }
 })
 
+/** Rows each chat has shown: a row new to the live tail settles in once, never again (scrolling back, or moving into the virtualized part). */
+const seen = new Map<ID, Set<string>>()
+
+function RowSlot({ sessionId, row, gap, inTail, children }: { sessionId: ID; row: Row; gap: number; inTail?: boolean; children: ReactNode }) {
+  // your own message has its own entrance (UserRow)
+  const [fresh] = useState(() => !!inTail && row.kind !== "user" && seen.get(sessionId)?.has(row.key) === false)
+  return (
+    // data-row-key: search hits and Find scroll to a message by its id; data-msg: ↑/↓ and the pinned prompt
+    <div
+      data-row-key={row.key}
+      data-msg={row.kind === "user" || row.kind === "agent" ? row.kind : undefined}
+      style={gap ? { marginTop: gap } : undefined}
+      className={fresh ? "cc-fade-up" : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
 const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail, view }: ViewProps & { block: Block }) {
   // group/turn: the turn receipt shows only while the pointer is over its turn; flow-root keeps
   // the rows' top margins inside the block, so the virtualizer measures them
   return (
     <div className="group/turn flow-root">
       {block.rows.map((row, i) => (
-        // data-row-key: search hits and Find scroll to a message by its id
-        <div key={row.key} data-row-key={row.key} style={block.gaps[i] ? { marginTop: block.gaps[i] } : undefined}>
+        <RowSlot key={row.key} sessionId={sessionId} row={row} gap={block.gaps[i]} inTail={inTail}>
           <RowView sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} view={view} />
-        </div>
+        </RowSlot>
       ))}
     </div>
   )
@@ -100,7 +119,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, farFromBottom, fades } = useTranscriptVirtualizer({
+  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, farFromBottom, fades, viewH } = useTranscriptVirtualizer({
     sessionId,
     rows: head,
     totalRowCount: rows.length,
@@ -117,11 +136,72 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
     scrollToBottom("auto")
   }, [ready, sessionId, scrollToBottom])
 
+  // what the chat has shown: later rows of the live tail are new and settle in (RowSlot)
+  useEffect(() => {
+    if (!ready) return
+    let set = seen.get(sessionId)
+    if (!set) seen.set(sessionId, (set = new Set()))
+    for (const b of set.size ? tail : blocks) for (const r of b.rows) set.add(r.key)
+  }, [ready, sessionId, blocks, tail])
+
   // You sent a message: the chat goes to its end, where it shows (Claude Code desktop)
   const sent = useUiValue<number>(`sent:${sessionId}`, 0)
   useEffect(() => {
     if (sent) scrollToBottom("auto")
   }, [sent, scrollToBottom])
+  // ...and the turn you sent keeps a screen of room under your message, so the reply grows down
+  // from it instead of pushing it up (the room fills as the reply comes)
+  const sentAt = useApp((s) => {
+    const t = s.transcripts[sessionId]
+    const first = t?.items[t.turns.at(-1)?.itemIds[0] ?? ""]
+    return first?.type === "user_message" ? Date.parse(first.at) : 0
+  })
+  const room = sent > 0 && sentAt >= sent - 5000 && viewH > 200 ? viewH - 80 : undefined
+
+  // the prompt of the reply you are reading, pinned at the top once it scrolls away
+  const [pinned, setPinned] = useState<string | null>(null)
+  useEffect(() => {
+    const box = scrollRef.current
+    if (!box) return
+    let raf = 0
+    const check = () => {
+      raf = 0
+      let id: string | null = null
+      if (box.scrollHeight - box.scrollTop - box.clientHeight > 8) {
+        const top = box.getBoundingClientRect().top + 24
+        for (const el of box.querySelectorAll<HTMLElement>('[data-msg="user"]')) {
+          if (el.getBoundingClientRect().bottom >= top) break
+          id = el.dataset.rowKey ?? null
+        }
+      }
+      setPinned(id)
+    }
+    const onScroll = () => {
+      raf ||= requestAnimationFrame(check)
+    }
+    box.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      box.removeEventListener("scroll", onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+  const smooth = () => (getApp().settings.reduceMotion ? "auto" : "smooth") as ScrollBehavior
+  const toPinned = () => {
+    releaseBottomLock()
+    if (pinned) scrollRef.current?.querySelector(`[data-row-key="${CSS.escape(pinned)}"]`)?.scrollIntoView({ block: "start", behavior: smooth() })
+  }
+
+  // ↑ / ↓ on the focused chat: to the previous / next message (Claude Code desktop); elsewhere they scroll
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const box = e.currentTarget
+    if (e.target !== box || (e.key !== "ArrowUp" && e.key !== "ArrowDown") || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const top = box.getBoundingClientRect().top + 32
+    const tops = [...box.querySelectorAll<HTMLElement>("[data-msg]")].map((el) => el.getBoundingClientRect().top - top)
+    const i = e.key === "ArrowDown" ? tops.findIndex((t) => t > 2) : tops.findLastIndex((t) => t < -2)
+    if (i < 0) return
+    e.preventDefault()
+    box.scrollBy({ top: tops[i], behavior: smooth() })
+  }
 
   // A message asked for (a search hit, Find): scroll to it, reading further back first when an old
   // part of a long chat is not loaded yet; then a short glow
@@ -196,6 +276,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
         aria-label="Session transcript"
         aria-live="off"
         tabIndex={0}
+        onKeyDown={onKeyDown}
         className="absolute inset-0 scroll-pt-8 scroll-pb-12 overflow-y-auto outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-cc-accent/60 focus-visible:ring-inset"
       >
         {ready && !rows.length && <EmptyState>No messages yet.</EmptyState>}
@@ -211,8 +292,9 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
                     key={block.key}
                     data-index={v.index}
                     ref={measureElement}
-                    className="absolute top-0 left-0 w-full"
-                    style={{ transform: `translateY(${v.start}px)` }}
+                    // top, not a transform: a transformed ancestor breaks position: sticky (code Copy)
+                    className="absolute left-0 w-full"
+                    style={{ top: v.start }}
                   >
                     <div className={COLUMN}>
                       <BlockView sessionId={sessionId} block={block} liveItemId={liveItemId} view={view} />
@@ -222,7 +304,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
               })}
             </div>
           )}
-          <div className={COLUMN}>
+          <div className={COLUMN} style={room ? { minHeight: room } : undefined}>
             {tail.map((block) => (
               <BlockView key={block.key} sessionId={sessionId} block={block} liveItemId={liveItemId} inTail view={view} />
             ))}
@@ -236,6 +318,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
           mask offscreen on every frame), clear of its scrollbar */}
       <div aria-hidden className={cn("sd-fade-top pointer-events-none absolute top-0 right-2.5 left-0 h-8", !(fades & 1) && "opacity-0")} />
       <div aria-hidden className={cn("sd-fade-bottom pointer-events-none absolute right-2.5 bottom-0 left-0 h-12", !(fades & 2) && "opacity-0")} />
+      {pinned && <PinnedPrompt key={pinned} sessionId={sessionId} itemId={pinned} onClick={toPinned} />}
       <ViewNotice view={view} />
       <FindBar sessionId={sessionId} />
       <JumpToLatest sessionId={sessionId} show={farFromBottom} onClick={() => scrollToBottom("smooth")} />
@@ -265,6 +348,27 @@ function JumpToLatest({ sessionId, show, onClick }: { sessionId: ID; show: boole
       )}
       <ChevronDown size={16} aria-hidden />
     </button>
+  )
+}
+
+/** "Scroll to your message": the end of the prompt whose reply you are reading; 4 more lines under the pointer. */
+function PinnedPrompt({ sessionId, itemId, onClick }: { sessionId: ID; itemId: ID; onClick: () => void }) {
+  const text = useApp((s) => {
+    const it = s.transcripts[sessionId]?.items[itemId]
+    return it?.type === "user_message" ? it.text.slice(-800) : ""
+  })
+  if (!text) return null
+  return (
+    <div className={cn(COLUMN, "pointer-events-none absolute inset-x-0 top-0 z-10")}>
+      <button
+        type="button"
+        aria-label="Scroll to your message"
+        onClick={onClick}
+        className="sd-pinned pointer-events-auto flex max-h-8 max-w-[85%] flex-col justify-end overflow-hidden rounded-b-xl px-4 pb-3 text-left text-sm leading-5 text-foreground shadow-[var(--cc-shadow-medium)] outline-none hover:max-h-28 focus-visible:max-h-28 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent"
+      >
+        <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</span>
+      </button>
+    </div>
   )
 }
 

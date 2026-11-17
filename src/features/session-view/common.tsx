@@ -52,9 +52,12 @@ export function ToolIcon({ family, name, className }: { family: ToolFamily; name
 
 /** After a step that did not simply work: a word in its tone (danger for failed and denied). */
 export const ToolStatus = memo(function ToolStatus({ display, asks }: { display: ToolCall["display"]; asks?: boolean }) {
-  const word = { awaiting_permission: asks ? "Waiting for you" : "Needs approval", failed: "Failed", rejected: "Denied", cancelled: "Stopped" }[display as string]
+  // a question you skipped or left is not a failure (Claude Code desktop: "Skipped", "Not answered")
+  const word = asks
+    ? { awaiting_permission: "Waiting for you", rejected: "Skipped", cancelled: "Not answered" }[display as string]
+    : { awaiting_permission: "Needs approval", failed: "Failed", rejected: "Denied", cancelled: "Stopped" }[display as string]
   if (!word) return null
-  return <span className={cn("shrink-0", display === "failed" || display === "rejected" ? "text-cc-danger" : "text-cc-fg2")}>{word}</span>
+  return <span className={cn("shrink-0", !asks && (display === "failed" || display === "rejected") ? "text-cc-danger" : "text-cc-fg2")}>{word}</span>
 })
 
 /** The caret after a step's label: right, turning down while open. */

@@ -22,7 +22,7 @@ export type Row =
   | { kind: "compaction"; key: string; itemId: ID }
   | { kind: "notice"; key: string; itemId: ID; turnId: ID }
   | { kind: "receipt"; key: string; turnId: ID; receipt: NonNullable<Turn["receipt"]> }
-  | { kind: "done"; key: string; turnId: ID; durationMs: number; at?: string; tokens?: number }
+  | { kind: "done"; key: string; turnId: ID; promptId?: ID; durationMs: number; at?: string; tokens?: number }
   | { kind: "date"; key: string; turnId: ID; at: string }
 
 /**
@@ -61,7 +61,10 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
     edits = []
     if (t?.receipt) rows.push({ kind: "receipt", key: `r:${turnId}`, turnId, receipt: t.receipt })
     // "✻ Cooked for 26s · done 19:49", as Claude Code ends a turn
-    else if (t?.durationMs !== undefined && t.status !== "in_progress") rows.push({ kind: "done", key: `d:${turnId}`, turnId, durationMs: t.durationMs, at: t.completedAt, tokens: t.outputTokens })
+    else if (t?.durationMs !== undefined && t.status !== "in_progress") {
+      const promptId = items[t.itemIds[0]]?.type === "user_message" ? t.itemIds[0] : undefined
+      rows.push({ kind: "done", key: `d:${turnId}`, turnId, promptId, durationMs: t.durationMs, at: t.completedAt, tokens: t.outputTokens })
+    }
   }
 
   for (const id of order) {

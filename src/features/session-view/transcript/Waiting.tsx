@@ -31,7 +31,7 @@ function Waiting({ sessionId, id, text, attachments, held }: { sessionId: ID; id
       <div
         className={cn(
           "max-w-[85%] min-w-0 rounded-xl bg-cc-wash px-4 py-3 transition-opacity duration-200",
-          sending ? "opacity-60" : "opacity-50 group-hover/wait:opacity-80",
+          sending ? "cc-pulse opacity-60" : "opacity-50 group-hover/wait:opacity-80",
         )}
       >
         <div className="line-clamp-6 text-[15px] leading-[21px] whitespace-pre-wrap text-foreground [overflow-wrap:anywhere] select-text">{text}</div>

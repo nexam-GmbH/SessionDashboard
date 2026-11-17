@@ -1,7 +1,7 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-composer.tsx (AgentComposerTextarea; Apache-2.0). Modified for session-dashboard.
 // Changes: our tokens and 13px density; auto-grow without `field-sizing` (not in
 // WebKitGTK); token chips styled as quiet highlights.
-import { forwardRef, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react"
+import { forwardRef, Fragment, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import type { Range } from "./tokens"
 
@@ -10,11 +10,13 @@ const TOKEN_CLASS = "rounded-sm bg-accent shadow-[inset_0_0_0_1px_color-mix(in_s
 export type ComposerTextareaProps = ComponentPropsWithoutRef<"textarea"> & {
   /** Sorted, non-overlapping [start, end) ranges drawn as inline tokens. Backspace at a token's end deletes it whole. */
   highlights?: Range[]
+  /** ranges painted over the text (the rainbow "ultrathink"), on a backing that hides the glyphs under them */
+  rainbow?: Range[]
   maxHeight?: number
 }
 
 export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(function ComposerTextarea(
-  { className, highlights, onKeyDown, onScroll, maxHeight = 220, ...props },
+  { className, highlights, rainbow, onKeyDown, onScroll, maxHeight = 220, ...props },
   forwardedRef,
 ) {
   const innerRef = useRef<HTMLTextAreaElement | null>(null)
@@ -39,32 +41,25 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
     el.style.overflowY = h > maxHeight ? "auto" : "hidden"
   }, [value, maxHeight])
 
-  let renderedUpTo = 0
+  /** The text again, transparent, with `ranges` drawn as `paint` spans, scrolled with the textarea. */
+  const layer = (ranges: Range[], paint: (text: string, i: number) => ReactNode) => {
+    let upTo = 0
+    return (
+      <div aria-hidden className={cn("pointer-events-none absolute inset-0 overflow-hidden break-words whitespace-pre-wrap text-transparent", className)}>
+        <div style={{ transform: `translateY(${-scrollTop}px)` }}>
+          {ranges.map(({ start, end }, i) => {
+            const before = value.slice(upTo, start)
+            upTo = end
+            return [before, <Fragment key={i}>{paint(value.slice(start, end), i)}</Fragment>]
+          })}
+        </div>
+      </div>
+    )
+  }
   // The wrapper always renders so toggling highlights never remounts (and blurs) the textarea.
   return (
     <div className="relative flex min-w-0 flex-1">
-      {highlights && highlights.length > 0 && (
-        <div
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-0 overflow-hidden break-words whitespace-pre-wrap text-transparent",
-            className,
-          )}
-        >
-          <div style={{ transform: `translateY(${-scrollTop}px)` }}>
-            {highlights.map(({ start, end }) => {
-              const before = value.slice(renderedUpTo, start)
-              renderedUpTo = end
-              return [
-                before,
-                <span className={TOKEN_CLASS} key={start}>
-                  {value.slice(start, end)}
-                </span>,
-              ]
-            })}
-          </div>
-        </div>
-      )}
+      {highlights && highlights.length > 0 && layer(highlights, (t) => <span className={TOKEN_CLASS}>{t}</span>)}
       <textarea
         {...props}
         ref={(el) => {
@@ -98,6 +93,8 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
           className,
         )}
       />
+      {/* keyed by position in the list, so typing elsewhere doesn't restart the sweep */}
+      {rainbow && rainbow.length > 0 && layer(rainbow, (t) => <span className="bg-cc-raised"><span className="cc-rainbow">{t}</span></span>)}
     </div>
   )
 })

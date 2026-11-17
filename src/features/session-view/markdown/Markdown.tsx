@@ -11,11 +11,12 @@ import { createCodePlugin } from "@streamdown/code"
 import { cn } from "@/lib/utils"
 import { currentSessionId } from "@/store/actions"
 import { terminalCommandFor } from "@/features/terminal/slash"
+import { CLAUDE_DARK, CLAUDE_LIGHT } from "./claudeTheme"
 import "./markdown.css"
 
 /** Copy on code blocks; no downloads, no table/mermaid chrome (Cline agentMarkdownControls). */
 const CONTROLS = { code: { copy: true, download: false }, mermaid: false, table: false } satisfies ControlsConfig
-const PLUGINS = { code: createCodePlugin({ themes: ["github-light", "github-dark-default"] }) }
+const PLUGINS = { code: createCodePlugin({ themes: [CLAUDE_LIGHT, CLAUDE_DARK] }) }
 
 /**
  * Inline code. A `! command` (Claude asking you to run something, Claude Code's bash mode) or a

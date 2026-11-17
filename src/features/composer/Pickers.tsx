@@ -37,6 +37,8 @@ export const GHOST =
   "inline-flex h-7 min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-lg text-cc-fg2 outline-none transition-colors duration-[60ms] hover:bg-cc-ghost hover:text-[var(--cc-fg)] focus-visible:shadow-[0_0_0_1px_var(--cc-accent),0_0_0_6px_var(--cc-focus-glow)] disabled:pointer-events-none disabled:opacity-40 data-[state=open]:bg-cc-ghost-sel data-[state=open]:text-[var(--cc-fg)]"
 /** A menu that opens from the composer: 12 px radius, raised surface, panel shadow, 6 px gutter. */
 export const PANEL = "gap-0 rounded-xl bg-cc-raised p-1.5 text-[var(--cc-fg)] shadow-[var(--cc-shadow-panel)] ring-0 duration-[120ms]"
+/** A row of a dropdown menu opened from the composer (28 px, 12 px side padding, 8 px radius). */
+export const MENU_ITEM = "min-h-7 gap-2 rounded-lg px-3 py-1 focus:bg-cc-ghost-sel focus:text-[var(--cc-fg)] data-open:bg-cc-ghost-sel [&_svg]:text-cc-fg2"
 /** Bypass permissions and Max effort: warning tone. */
 export const WARN = "text-amber-700 dark:text-cc-warn"
 

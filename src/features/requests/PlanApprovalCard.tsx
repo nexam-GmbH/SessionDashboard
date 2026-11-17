@@ -12,7 +12,7 @@ import { MOD } from "@/components/common/bits"
 import { REAL } from "@/backend/mode"
 import { useApp } from "@/store/app"
 import { cn } from "@/lib/utils"
-import { CardFrame, canStealFocus, Decision, FeedbackField, FOCUS, modEnter, OptionButton, plain, Split, useCardKeys, type Pager } from "./cardChrome"
+import { CardFrame, canStealFocus, Decision, FeedbackField, FOCUS, leave, modEnter, OptionButton, plain, shortAt, Split, useCardKeys, type Pager } from "./cardChrome"
 
 /** ExitPlanMode's answers in desktop's words (the mode each one continues in) and short labels. */
 const LABEL: Record<string, [string, string]> = {
@@ -46,18 +46,19 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
   const [skip, setSkip] = useState<Set<string>>(() => new Set())
   const allowBypass = useApp((s) => s.settings.allowBypass || s.caps?.defaultMode === "bypassPermissions")
 
-  const accept = (o: PermissionOption) => {
-    if (!canApprove) return
-    if (REAL)
-      void import("@/backend/real").then((r) => {
-        r.setPlanAllow(request.id, checks.filter((c) => !skip.has(c)))
-        resolveRequest(request, o.id)
-      })
-    else resolveRequest(request, o.id)
+  // every answer folds the card away first (desktop's 200 ms exit), once
+  const leaving = useRef(false)
+  const answer = (id: string, text?: string, first?: () => Promise<void>) => {
+    if (!canApprove || leaving.current) return
+    leaving.current = true
+    leave(ref.current, () => void (first?.() ?? Promise.resolve()).then(() => resolveRequest(request, id, text)))
   }
+  // the plan's checks go to the backend before the approval
+  const accept = (o: PermissionOption) =>
+    answer(o.id, undefined, REAL ? () => import("@/backend/real").then((r) => r.setPlanAllow(request.id, checks.filter((c) => !skip.has(c)))) : undefined)
   const keep = request.options.find((o) => o.kind === "reject_once" || o.kind === "reject_always")
-  const reject = () => keep && canApprove && resolveRequest(request, keep.id, "The user rejected this plan.")
-  const revise = () => keep && resolveRequest(request, keep.id, feedback.trim() || undefined)
+  const reject = () => keep && answer(keep.id, "The user rejected this plan.")
+  const revise = () => keep && answer(keep.id, feedback.trim() || undefined)
   const byId = (id: string) => request.options.find((o) => o.id === id)
   const manual = byId("approve-manual")
   const primary = byId("approve-accept") ?? request.options.find((o) => o !== keep && o !== manual)
@@ -141,7 +142,7 @@ export const PlanApprovalCard = memo(function PlanApprovalCard({
                     disabled={!canApprove}
                     items={menu.map((o) => ({ label: LABEL[o.id]?.[0] ?? o.name, danger: o.id === "approve-bypass", onSelect: () => accept(o) }))}
                   >
-                    <OptionButton variant="primary" disabled={!canApprove} onClick={() => accept(primary)} keys={docked ? [MOD, "⏎"] : undefined} title={primary.name} short={LABEL[primary.id]?.[1]}>
+                    <OptionButton variant="primary" disabled={!canApprove} onClick={() => accept(primary)} keys={docked ? [MOD, "⏎"] : undefined} title={primary.name} short={LABEL[primary.id]?.[1]} at={shortAt(ends.length + (keep ? 2 : 0))}>
                       {LABEL[primary.id]?.[0] ?? primary.name}
                     </OptionButton>
                   </Split>

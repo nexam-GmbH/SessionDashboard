@@ -28,8 +28,8 @@ import { cn } from "@/lib/utils"
 import { caretCoordinates } from "./caret"
 import { ComposerMenu, type MenuItem } from "./ComposerMenu"
 import { ComposerTextarea } from "./ComposerTextarea"
-import { GHOST, PANEL } from "./Pickers"
-import { fuzzy, highlightRanges, SLASH_COMMANDS, triggerAt, type Trigger } from "./tokens"
+import { GHOST, MENU_ITEM, PANEL } from "./Pickers"
+import { fuzzy, highlightRanges, SLASH_COMMANDS, thinkRanges, triggerAt, type Trigger } from "./tokens"
 
 /** What the box holds: the text and the names of the attached files and pictures. */
 export interface PromptValue {
@@ -72,6 +72,13 @@ export interface PromptBoxProps {
   /** ↑ / ↓ through what you sent before (Claude Code's prompt history): the text to show and where
    * it is in the list (`at === total`: back to the box's own text), or null */
   onHistory?: (dir: -1 | 1, current: string) => { text: string; at: number; total: number } | null
+  /** what you sent before, newest first: Ctrl+R searches it */
+  history?: () => string[]
+  /** "!" in an empty box switches to bash mode; the command is sent as "!command" */
+  shell?: boolean
+  /** shown where the box is (a docked request card); `docked`: it stands in for the box, the chin stays */
+  dock?: ReactNode
+  docked?: boolean
   /** while Claude works: Ctrl+Enter (queue for later), with its name for the send button's tooltip */
   onModSend?: (text: string, attachments: string[]) => void
   modSendHint?: string
@@ -101,15 +108,22 @@ const Speech: SpeechCtor | undefined =
   typeof window !== "undefined" ? ((window as unknown as { SpeechRecognition?: SpeechCtor; webkitSpeechRecognition?: SpeechCtor }).SpeechRecognition ?? (window as unknown as { webkitSpeechRecognition?: SpeechCtor }).webkitSpeechRecognition) : undefined
 
 const ICON = cn(GHOST, "w-7")
+/** The actions fade in on first paint (240 ms). */
+const BOOT = "animate-in fade-in duration-[240ms] ease-[var(--cc-ease-out)] in-data-[reduce-motion]:animate-none"
 /** Event-time clock (handlers only). */
 const clock = () => Date.now()
 
 /** The width `text` takes in the textarea's font (does it still fit on the send button's line?). */
 let canvas: CanvasRenderingContext2D | null = null
+// the font is read once per look of the box (chat or bash), not on every key
+let fontOf = ""
 function textWidth(text: string, el: HTMLElement) {
   canvas ??= document.createElement("canvas").getContext("2d")
   if (!canvas) return 0
-  canvas.font = getComputedStyle(el).font
+  if (fontOf !== el.className) {
+    canvas.font = getComputedStyle(el).font
+    fontOf = el.className
+  }
   return canvas.measureText(text).width
 }
 
@@ -133,6 +147,9 @@ export function PromptBox(props: PromptBoxProps) {
   // the text wrapped: send / stop move under it
   const [wrapped, setWrapped] = useState(false)
   const [narrow, setNarrow] = useState(false)
+  const [bash, setBash] = useState(false)
+  // Ctrl+R: searching what you sent before; the box shows the match, Esc puts `draft` back
+  const [search, setSearch] = useState<{ query: string; at: number; total: number; draft: PromptValue } | null>(null)
   const lastPress = useRef(0)
   // Settings → "Send with": Enter (Claude Code) or Ctrl+Enter (Enter adds a line)
   const modSends = useApp((s) => s.settings.sendKey === "mod-enter")
@@ -150,16 +167,17 @@ export function PromptBox(props: PromptBoxProps) {
   // the short placeholder where the long one would not fit
   useEffect(() => {
     const el = boxRef.current
-    if (!el || !props.placeholderShort) return
+    if (!el) return
     const ro = new ResizeObserver(([e]) => setNarrow(e.contentRect.width < 440))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [props.placeholderShort])
+  }, [])
 
   // the installed claude's commands and skills (desktop app); the built-in list in the mock world
   const realCommands = useApp((s) => s.caps?.commands)
   const commands = realCommands?.length ? realCommands : SLASH_COMMANDS
   const highlights = useMemo(() => highlightRanges(text, fileSet), [text, fileSet])
+  const rainbow = useMemo(() => thinkRanges(text), [text])
   const items: MenuItem[] = useMemo(() => {
     if (!trigger) return []
     if (trigger.kind === "slash") {
@@ -223,7 +241,7 @@ export function PromptBox(props: PromptBoxProps) {
     const value = text.trim()
     // an emptied queued message is removed by "saving" it
     if ((!value && !editing) || disabled) return
-    if (onSubmit(value, attachments, how) === false) return
+    if (onSubmit(bash && value ? `!${value}` : value, attachments, how) === false) return
     clear()
   }
   const clear = () => {
@@ -231,6 +249,7 @@ export function PromptBox(props: PromptBoxProps) {
     setTrigger(null)
     setRecall(null)
     setWrapped(false)
+    setBash(false)
   }
   /** Does `value` still fit on one line beside send / stop (measured at event time)? */
   const measure = (value: string) => {
@@ -238,7 +257,17 @@ export function PromptBox(props: PromptBoxProps) {
     const row = ta?.closest<HTMLElement>("[data-editor-row]")
     if (!ta || !row) return
     const cluster = row.querySelector<HTMLElement>("[data-cluster]")?.offsetWidth || 32
-    setWrapped(!!value && (value.includes("\n") || textWidth(value, ta) > row.clientWidth - cluster - 20))
+    // the textarea is the line's width once the buttons sit beside it, else the cluster comes off it
+    setWrapped(!!value && (value.includes("\n") || textWidth(value, ta) > ta.clientWidth - 14 - (wrapped ? cluster + 4 : 0)))
+  }
+  /** Ctrl+R: the `at`-th older match of `query` in the box (none: your own text). */
+  const searchTo = (query: string, at: number) => {
+    const draft = search?.draft ?? { text, attachments }
+    const q = query.toLowerCase()
+    const list = query ? (props.history?.() ?? []).filter((t) => t.toLowerCase().includes(q)) : []
+    const i = Math.max(0, Math.min(at, list.length - 1))
+    setSearch({ query, at: i, total: list.length, draft })
+    update(() => (list.length ? { ...draft, text: list[i] } : draft))
   }
   /** Send and Stop ignore a press within 500 ms of the other, so a double click can't do both. */
   const guarded = (fn: () => void) => () => {
@@ -281,7 +310,7 @@ export function PromptBox(props: PromptBoxProps) {
   const showStop = busy && !text.trim() && !editing && !!onStop
   // "More send options" (Claude Code desktop): queue for later while Claude works, send in a fork
   const later = busy ? props.onModSend : undefined
-  const moreSend = !editing && !disabled && !!text.trim() && !!(later || props.onForkSend)
+  const moreSend = !editing && !bash && !disabled && !!text.trim() && !!(later || props.onForkSend)
   const sendVia = (fn: (text: string, attachments: string[]) => void) => {
     const value = text.trim()
     if (!value || disabled) return
@@ -290,18 +319,20 @@ export function PromptBox(props: PromptBoxProps) {
   }
   const folderChips = folders?.chips !== false && folders ? folders.added : []
   const showSend = !showStop && (!!text.trim() || !!editing)
-  const stacked = size === "lg" || wrapped
+  const stacked = size === "lg" || wrapped || !!search
   const sendLabel = editing ? "Save" : sendHint.split(" · ")[0]
 
   return (
-    <div className="group/composer @container/composer flex flex-col gap-2">
+    <div className="group/composer @container/composer flex flex-col">
+      {props.dock}
       <div
         ref={boxRef}
         data-prompt-box
         className={cn(
-          "relative flex cursor-text flex-col gap-2 rounded-[14px] bg-cc-raised p-2 text-[var(--cc-fg)] shadow-[var(--cc-shadow-composer)] transition-[box-shadow,background-color,opacity] duration-200 focus-within:shadow-[var(--cc-shadow-composer-focus)]",
+          "relative flex cursor-text flex-col gap-2 rounded-[14px] bg-cc-raised p-2 text-[var(--cc-fg)] shadow-[var(--cc-shadow-composer)] transition-[box-shadow,background-color,opacity] duration-200 not-focus-within:hover:shadow-[var(--cc-shadow-composer-hover)] focus-within:shadow-[var(--cc-shadow-composer-focus)]",
           dragging && "shadow-[0_0_0_2px_var(--cc-accent)]",
           disabled && "cursor-default opacity-40",
+          props.docked && "hidden",
         )}
         // a click anywhere on the box puts the caret in the text
         onMouseDown={(e) => {
@@ -346,13 +377,24 @@ export function PromptBox(props: PromptBoxProps) {
           </div>
         )}
         <div data-editor-row className={cn("flex min-w-0 gap-1", stacked ? "flex-col gap-2" : "items-end")}>
+          <div className="flex min-w-0 flex-1 items-start gap-1">
+          {bash && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="mt-[3px] ml-1 inline-flex h-[22px] shrink-0 items-center rounded-md bg-violet-500/12 px-1.5 font-mono text-xs text-violet-700 shadow-[inset_0_0_0_1px_rgb(139_92_246/0.4)] dark:text-violet-300">bash</span>
+              </TooltipTrigger>
+              <TooltipContent side="top">Run as a shell command</TooltipContent>
+            </Tooltip>
+          )}
           <ComposerTextarea
             ref={taRef}
             value={text}
             rows={size === "lg" ? 3 : 1}
             autoFocus={autoFocus}
             disabled={disabled}
-            highlights={highlights}
+            highlights={bash ? undefined : highlights}
+            rainbow={bash ? undefined : rainbow}
+            title={rainbow.length && !bash ? "Sending this word asks for deeper reasoning on this message. Put it in quotes to leave the reasoning level alone." : undefined}
             // 7 lines and a control's height, at most 40 % of the window (then it scrolls)
             maxHeight={size === "lg" ? 320 : Math.min(175, Math.round(window.innerHeight * 0.4))}
             aria-label="Message Claude"
@@ -361,10 +403,15 @@ export function PromptBox(props: PromptBoxProps) {
             aria-autocomplete="list"
             aria-controls={menuOpen ? menuAria.listId : undefined}
             aria-activedescendant={menuOpen ? menuAria.optionId : undefined}
-            placeholder={listening ? "Listening..." : narrow && props.placeholderShort ? props.placeholderShort : placeholder}
-            className={cn("px-1.5 py-[3.5px] text-[15px] leading-[21px]", size === "lg" && "min-h-[70px]", listening && "placeholder:italic")}
+            placeholder={
+              listening ? "Listening..." : bash ? (narrow ? "Shell command" : "Run a shell command in the terminal") : narrow && props.placeholderShort ? props.placeholderShort : placeholder
+            }
+            className={cn("px-1.5 py-[3.5px] leading-[21px]", bash ? "font-mono text-[14px]" : "text-[15px]", size === "lg" && "min-h-[70px]", listening && "placeholder:italic")}
             onChange={(e) => {
+              // "!" in an empty box: bash mode (the "!" itself is the mode, not text)
+              if (props.shell && !bash && !text && e.target.value === "!") return setBash(true)
               setRecall(null)
+              setSearch(null)
               setText(e.target.value)
               syncTrigger(e.target.value, e.target.selectionStart)
               measure(e.target.value)
@@ -384,6 +431,29 @@ export function PromptBox(props: PromptBoxProps) {
             onKeyDown={(e) => {
               // a CJK input method is composing: Enter confirms the word, it never sends (keyCode 229: WebKit's composing key)
               if (e.nativeEvent.isComposing || e.keyCode === 229) return
+              const plain = !e.ctrlKey && !e.metaKey && !e.altKey
+              if (search) {
+                // Ctrl+R / ↑ older, ↓ newer, Esc puts your text back, Enter keeps the match; typing searches
+                const k = e.key
+                if ((k === "r" && e.ctrlKey) || k === "ArrowUp") searchTo(search.query, search.at + 1)
+                else if (k === "ArrowDown") searchTo(search.query, search.at - 1)
+                else if (k === "Backspace") searchTo(search.query.slice(0, -1), 0)
+                else if (k.length === 1 && plain) searchTo(search.query + k, 0)
+                else if (k === "Escape") {
+                  update(() => search.draft)
+                  setSearch(null)
+                } else if (k === "Enter") setSearch(null)
+                else return setSearch(null)
+                return e.preventDefault()
+              }
+              if (e.key === "r" && e.ctrlKey && !e.shiftKey && !e.altKey && props.history) {
+                e.preventDefault()
+                return searchTo("", 0)
+              }
+              if (bash && (e.key === "Escape" || (e.key === "Backspace" && !text))) {
+                e.preventDefault()
+                return setBash(false)
+              }
               if (menuOpen) {
                 const idx = items.findIndex((i) => i.id === effectiveActive)
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -416,11 +486,11 @@ export function PromptBox(props: PromptBoxProps) {
                 setWrapped(false)
                 requestAnimationFrame(() => taRef.current?.setSelectionRange(caret, caret))
               }
-              if (e.key === "Enter" && mod && e.altKey && props.onForkSend) {
+              if (e.key === "Enter" && mod && e.altKey && props.onForkSend && !bash) {
                 // Ctrl+Alt+Enter: send in a forked session (Claude Code desktop)
                 e.preventDefault()
                 if (!editing) sendVia(props.onForkSend)
-              } else if (e.key === "Enter" && mod && !modSends && busy && props.onModSend && !editing) {
+              } else if (e.key === "Enter" && mod && !modSends && busy && props.onModSend && !editing && !bash) {
                 // Ctrl+Enter while Claude works: queued for later (Claude Code desktop)
                 e.preventDefault()
                 sendVia(props.onModSend)
@@ -430,7 +500,7 @@ export function PromptBox(props: PromptBoxProps) {
               } else if (e.key === "Escape") {
                 if (props.onEscape?.(e)) e.preventDefault()
                 else if (!text) props.onEscapeEmpty?.(e)
-              } else if (mod && !e.shiftKey && !e.altKey && (e.key === "u" || (e.key === "d" && Speech))) {
+              } else if (mod && !e.shiftKey && !e.altKey && (e.key === "u" || e.key === "d")) {
                 // Ctrl+U adds files or photos, Ctrl+D dictates (Claude Code desktop)
                 e.preventDefault()
                 if (e.key === "u") fileInput.current?.click()
@@ -462,8 +532,22 @@ export function PromptBox(props: PromptBoxProps) {
               }
             }}
           />
+          </div>
           {/* send / stop: at the end of the line, under the text once it wraps; pressing them never takes focus from the text */}
-          <div data-cluster className={cn("flex shrink-0 items-center justify-end gap-1", stacked && "h-7")} onMouseDown={(e) => e.preventDefault()}>
+          <div data-cluster className={cn("flex shrink-0 items-center justify-end gap-1", BOOT, stacked && "h-7")} onMouseDown={(e) => e.preventDefault()}>
+            {search && (
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 px-1 text-[13px] text-cc-fg3">
+                <span className={cn("shrink-0", search.query && !search.total && "text-cc-danger")}>Search history:</span>
+                <span className="min-w-0 truncate font-mono text-[var(--cc-fg)]">
+                  {search.query}
+                  <span className="motion-safe:animate-pulse in-data-[reduce-motion]:animate-none">▎</span>
+                </span>
+                <span className="ml-auto flex shrink-0 animate-in items-center gap-1 duration-300 fade-in in-data-[reduce-motion]:animate-none">
+                  <Kbd>↑</Kbd>
+                  <Kbd>↓</Kbd> cycle · <Kbd>Esc</Kbd> cancel
+                </span>
+              </span>
+            )}
             {recall && (
               <span className="tabular min-w-0 truncate px-1 text-[13px] text-cc-fg3">
                 History {recall.at + 1}/{recall.total}
@@ -478,15 +562,15 @@ export function PromptBox(props: PromptBoxProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" side="top" className={cn(PANEL, "w-72")}>
                   {later && (
-                    <DropdownMenuItem onSelect={() => sendVia(later)}>
+                    <DropdownMenuItem className={MENU_ITEM} onSelect={() => sendVia(later)}>
                       <ListPlus /> {props.modSendHint ?? "Queue for later"}
-                      {!modSends && <DropdownMenuShortcut>{MOD}+Enter</DropdownMenuShortcut>}
+                      {!modSends && <DropdownMenuShortcut className="text-[13px] tracking-normal text-cc-fg3">{MOD}+Enter</DropdownMenuShortcut>}
                     </DropdownMenuItem>
                   )}
                   {props.onForkSend && (
-                    <DropdownMenuItem onSelect={() => sendVia(props.onForkSend!)}>
+                    <DropdownMenuItem className={MENU_ITEM} onSelect={() => sendVia(props.onForkSend!)}>
                       <GitFork /> Send in a forked session
-                      <DropdownMenuShortcut>{MOD}+Alt+Enter</DropdownMenuShortcut>
+                      <DropdownMenuShortcut className="text-[13px] tracking-normal text-cc-fg3">{MOD}+Alt+Enter</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -531,9 +615,16 @@ export function PromptBox(props: PromptBoxProps) {
         <span id={hintId} className="sr-only">
           {keysHint}
         </span>
+        <span role="status" className="sr-only">
+          {search
+            ? `Search history: ${search.query} — ${search.total ? `match ${search.at + 1} of ${search.total}` : "no match"}`
+            : bash
+              ? "Bash mode. Press Escape to return to chat."
+              : ""}
+        </span>
       </div>
       {/* the chin: + and Dictate, then the caller's settings (mode, model and effort, context) */}
-      <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-1 px-2 text-[13px] text-cc-fg2 @max-[400px]/composer:text-xs">
+      <div className={cn("mt-2 flex min-h-7 min-w-0 flex-wrap items-center gap-1 px-2 text-[13px] text-cc-fg2 @max-[400px]/composer:text-xs", BOOT)}>
         <input
           ref={fileInput}
           type="file"
@@ -558,13 +649,13 @@ export function PromptBox(props: PromptBoxProps) {
             <TooltipContent side="top">Add files, folders, commands</TooltipContent>
           </Tooltip>
           <DropdownMenuContent side="top" align="start" sideOffset={6} className={cn(PANEL, "w-60")}>
-            <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
+            <DropdownMenuItem className={MENU_ITEM} onSelect={() => fileInput.current?.click()}>
               <Paperclip /> Add files or photos
-              <DropdownMenuShortcut>{MOD}+U</DropdownMenuShortcut>
+              <DropdownMenuShortcut className="text-[13px] tracking-normal text-cc-fg3">{MOD}+U</DropdownMenuShortcut>
             </DropdownMenuItem>
             {folders && (
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger className={MENU_ITEM}>
                   <FolderPlus /> Add folder
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className={cn(PANEL, "w-52")}>
@@ -572,41 +663,53 @@ export function PromptBox(props: PromptBoxProps) {
                     folders.candidates.map((f) => {
                       const on = folders.added.includes(f.id)
                       return (
-                        <DropdownMenuItem key={f.id} disabled={on && !folders.onRemove} onSelect={() => (on ? folders.onRemove?.(f.id) : folders.onAdd(f.id))}>
+                        <DropdownMenuItem className={MENU_ITEM} key={f.id} disabled={on && !folders.onRemove} onSelect={() => (on ? folders.onRemove?.(f.id) : folders.onAdd(f.id))}>
                           <span className="flex-1">{f.name}</span>
                           {on && <Check />}
                         </DropdownMenuItem>
                       )
                     })
                   ) : (
-                    <DropdownMenuItem disabled>No other projects</DropdownMenuItem>
+                    <DropdownMenuItem className={MENU_ITEM} disabled>No other projects</DropdownMenuItem>
                   )}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setTimeout(() => insertAtEnd("@"), 0)}>
+            <DropdownMenuSeparator className="mx-0 bg-cc-wash-2" />
+            <DropdownMenuItem className={MENU_ITEM} onSelect={() => setTimeout(() => insertAtEnd("@"), 0)}>
               <AtSign /> Mention a file
-              <DropdownMenuShortcut>@</DropdownMenuShortcut>
+              <DropdownMenuShortcut className="text-[13px] tracking-normal text-cc-fg3">@</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setTimeout(() => insertAtEnd("/"), 0)}>
+            <DropdownMenuItem className={MENU_ITEM} onSelect={() => setTimeout(() => insertAtEnd("/"), 0)}>
               <Slash /> Slash commands
-              <DropdownMenuShortcut>/</DropdownMenuShortcut>
+              <DropdownMenuShortcut className="text-[13px] tracking-normal text-cc-fg3">/</DropdownMenuShortcut>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {Speech && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button type="button" aria-label={listening ? "Stop dictation" : "Dictate"} aria-pressed={listening} disabled={disabled} onClick={toggleDictation} className={cn(ICON, listening && "bg-cc-ghost-sel text-[var(--cc-fg)]")}>
-                <Mic size={16} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              {listening ? "Stop dictation" : "Dictate"} <Kbd>{MOD}+D</Kbd>
-            </TooltipContent>
-          </Tooltip>
-        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={listening ? "Stop dictation" : "Dictate"}
+              aria-pressed={listening}
+              aria-disabled={!Speech || undefined}
+              disabled={disabled}
+              onClick={toggleDictation}
+              className={cn(ICON, listening && "bg-cc-ghost-sel text-[var(--cc-fg)]", !Speech && "opacity-40 hover:bg-transparent")}
+            >
+              <Mic size={16} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {Speech ? (
+              <>
+                {listening ? "Stop dictation" : "Dictate"} <Kbd>{MOD}+D</Kbd>
+              </>
+            ) : (
+              "Dictation isn't available in this window"
+            )}
+          </TooltipContent>
+        </Tooltip>
         {footer}
       </div>
     </div>

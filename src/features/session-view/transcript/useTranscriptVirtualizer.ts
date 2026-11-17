@@ -87,6 +87,8 @@ export function useTranscriptVirtualizer({
   const [farFromBottom, setFarFromBottom] = useState(false)
   // the edge fades show only where there is more to scroll to: 1 above, 2 more than 8 px below
   const [fades, setFades] = useState(0)
+  // the chat's height, for the room under a message just sent
+  const [viewH, setViewH] = useState(0)
   const syncIsAtBottom = useCallback(() => {
     const el = scrollRef.current
     const next = bottomLockedRef.current ? true : el ? isNearBottom(el.scrollTop, el.clientHeight, el.scrollHeight) : true
@@ -183,6 +185,7 @@ export function useTranscriptVirtualizer({
         widthRef.current = w
         estimatesRef.current.clear()
       }
+      setViewH(el.clientHeight)
       if (bottomLockedRef.current) pin()
       else syncIsAtBottom()
     })
@@ -236,5 +239,5 @@ export function useTranscriptVirtualizer({
 
   const measure = useCallback((node: Element | null) => virtualizer.measureElement(node), [virtualizer])
 
-  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom, farFromBottom, fades }
+  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom, farFromBottom, fades, viewH }
 }

@@ -214,7 +214,8 @@
   border-radius: 8px;
   background: var(--sd-well);
   box-shadow: inset 0 0 0 1px var(--cc-ring);
-  overflow: hidden;
+  /* clip, not hidden: hidden would make the block the scroller its sticky Copy sticks to */
+  overflow: clip;
 }
 .sd-markdown [data-streamdown="code-block-header"] {
   position: absolute;
@@ -265,14 +266,16 @@
   display: block;
 }
 /* the actions (Copy): the code block's only child without a data-streamdown name (no :has(), which
-   WebKit re-checks on every change of the chat) */
+   WebKit re-checks on every change of the chat). They stay in sight, 5 px under the top fade, while
+   a long block scrolls by; the -36 px margin keeps them from taking room */
 .sd-markdown [data-streamdown="code-block"] > div:not([data-streamdown]) {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  position: sticky;
+  top: 37px;
   z-index: 1;
-  margin: 0;
-  padding: 0;
+  align-self: flex-end;
+  height: 36px;
+  margin: 0 0 -36px;
+  padding: 4px 4px 0 0;
 }
 .sd-markdown [data-streamdown="code-block-actions"] {
   display: flex;
@@ -387,6 +390,12 @@
     opacity: 1;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .sd-bubble-in,
+  .sd-pinned {
+    animation: none;
+  }
+}
 
 /* a message you just sent pops in once */
 @keyframes sd-bubble-in {
@@ -423,6 +432,17 @@
   transform: scaleY(-1);
 }
 
+/* "Scroll to your message": the bubble's colour, hanging from the top, sliding in once */
+@keyframes sd-pinned-in {
+  from {
+    transform: translateY(-32px);
+  }
+}
+.sd-pinned {
+  background: var(--sd-well);
+  animation: sd-pinned-in 220ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
 /* "Scroll to bottom": the panel colour under the secondary fill */
 .sd-pill {
   background:
@@ -436,7 +456,7 @@
   color: var(--cc-fg);
 }
 
-:root[data-reduce-motion] :is(.sd-bubble-in, .sd-msg-actions, .sd-fade-top, .sd-fade-bottom) {
+:root[data-reduce-motion] :is(.sd-bubble-in, .sd-pinned, .sd-msg-actions, .sd-fade-top, .sd-fade-bottom) {
   animation: none;
   transition: none;
 }

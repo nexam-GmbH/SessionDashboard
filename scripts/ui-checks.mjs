@@ -364,7 +364,9 @@ check("deny with feedback", async () => {
   await go(`#/session/${ids.edit}`)
   const card = visible('[aria-label^="Permission request"]').first()
   await card.waitFor({ timeout: 5000 })
-  await card.getByRole("button", { name: "Deny" }).click()
+  // Deny answers at once (desktop); the feedback path is its caret's menu
+  await card.getByRole("button", { name: "More deny options" }).click()
+  await page.getByRole("menuitem", { name: "Tell Claude what to do instead" }).click()
   const field = card.locator("textarea")
   await field.waitFor({ timeout: 2000 })
   await field.fill("Keep the old alias too")

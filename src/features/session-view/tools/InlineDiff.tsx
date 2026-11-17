@@ -9,7 +9,7 @@ import { parseDiffFromFile } from "@pierre/diffs"
 import { FileDiff, WorkerPoolContextProvider } from "@pierre/diffs/react"
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { DIFF_TOKEN_CSS, HIGHLIGHTER_OPTIONS, POOL_OPTIONS, withTrailingNewline } from "./diffPool"
+import { DIFF_THEME, DIFF_TOKEN_CSS, HIGHLIGHTER_OPTIONS, POOL_OPTIONS, withTrailingNewline } from "./diffPool"
 
 // One shared pool (singleton inside @pierre/diffs, options shared with the Review
 // screen): Shiki tokenizes off the main thread; components fall back to main-thread
@@ -94,6 +94,7 @@ export const InlineDiff = memo(function InlineDiff({
       diffIndicators: "classic" as const,
       disableFileHeader: true,
       disableLineNumbers: fragment,
+      theme: DIFF_THEME,
       themeType: dark ? ("dark" as const) : ("light" as const),
       overflow: "scroll" as const,
       hunkSeparators: "line-info-basic" as const,

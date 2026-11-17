@@ -1,7 +1,7 @@
 // full control of one session, like the Claude Code app.
 // (Its header lives in the window header, app/SiteHeader.) Control banner · virtualized transcript with a live tail · activity bar ·
 // attention dock · queue · composer. Each region subscribes to its own slice.
-import { memo, useEffect } from "react"
+import { memo, useEffect, type ReactNode } from "react"
 import type { ID } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
@@ -42,7 +42,7 @@ const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID
         <div className="@container shrink-0 pt-1.5">
           <ActivityBar sessionId={sessionId} />
           <PromptQueue sessionId={sessionId} />
-          <AttentionDock sessionId={sessionId} composer={<ComposerSlot sessionId={sessionId} />} />
+          <AttentionDock sessionId={sessionId} composer={(dock, docked) => <ComposerSlot sessionId={sessionId} dock={dock} docked={docked} />} />
         </div>
       </div>
       {details && <DetailsPanel sessionId={sessionId} />}
@@ -51,7 +51,7 @@ const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID
 })
 
 /** Rewind sets a new prefill; remounting the composer with it keeps the composer free of sync effects. */
-function ComposerSlot({ sessionId }: { sessionId: ID }) {
+function ComposerSlot({ sessionId, dock, docked }: { sessionId: ID; dock: ReactNode; docked: boolean }) {
   const prefill = useUiValue<{ n: number } | null>(`prefill:${sessionId}`, null)
-  return <Composer key={prefill?.n ?? 0} sessionId={sessionId} />
+  return <Composer key={prefill?.n ?? 0} sessionId={sessionId} dock={dock} docked={docked} />
 }

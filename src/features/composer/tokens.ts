@@ -43,6 +43,11 @@ export function highlightRanges(value: string, files: ReadonlySet<string>): Rang
   return ranges.sort((a, b) => a.start - b.start)
 }
 
+/** "ultrathink" asks for deeper reasoning (a quoted one does not): painted as a rainbow in the box. */
+export function thinkRanges(value: string): Range[] {
+  return [...value.matchAll(/(?<!["'“‘])\bultrathink\b(?!["'”’])/gi)].map((m) => ({ start: m.index, end: m.index + m[0].length }))
+}
+
 export type Trigger = { kind: "slash" | "mention"; query: string; start: number; end: number }
 
 /** The `/` or `@` token under the caret, if any. */

@@ -5,7 +5,7 @@
 // and the same three actions, with Clear all under them. Messages kept from before a restart (or a
 // Stop) are held: they go only with Send now. Editing opens the message in the prompt box (↑ in an
 // empty box does it for the newest); the row stays in its place, marked, until Enter puts it back.
-import { memo, useState, type ReactNode } from "react"
+import { memo, useEffect, useState, type ReactNode } from "react"
 import { ChevronDown, ChevronUp, CornerDownLeft, GripVertical, Paperclip, Pencil, X } from "lucide-react"
 import { REAL } from "@/backend/mode"
 import { plural } from "@/lib/format"
@@ -29,8 +29,20 @@ function focusBox(sessionId: ID) {
 
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim()
 
+const NONE: Queued[] = []
+
 export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId: ID }) {
-  const items = useQueued(sessionId)
+  const queued = useQueued(sessionId)
+  // the last messages stay on screen for the 120 ms the band takes to leave
+  const [last, setLast] = useState(queued)
+  if (queued.length && last !== queued) setLast(queued)
+  const leaving = !queued.length && last.length > 0
+  useEffect(() => {
+    if (!leaving) return
+    const t = setTimeout(() => setLast(NONE), 120)
+    return () => clearTimeout(t)
+  }, [leaving])
+  const items = leaving ? last : queued
   const editId = useQueueEdit(sessionId)?.id
   const [open, setOpen] = useExpanded(`queue-open:${sessionId}`, false)
   const [drag, setDrag] = useState<{ id: ID; over: number } | null>(null)
@@ -49,7 +61,7 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
   if (items.length === 1) {
     const q = items[0]
     return (
-      <Frame>
+      <Frame leaving={leaving}>
         <div className={cn("flex min-h-10 min-w-0 items-center gap-[5px] py-1 pr-2 pl-4", q.id === editId && "bg-cc-wash")}>
           <span className="shrink-0 font-medium">{title}</span>
           <Preview q={q} editing={q.id === editId} />
@@ -62,7 +74,7 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
   // several, folded: "N messages queued · Next: …"
   if (!open) {
     return (
-      <Frame>
+      <Frame leaving={leaving}>
         <button type="button" onClick={() => setOpen(true)} aria-expanded={false} className="flex min-h-11 w-full min-w-0 items-center gap-[5px] pr-2 pl-4 text-left outline-none hover:bg-cc-wash focus-visible:shadow-[inset_0_0_0_1px_var(--cc-accent)]">
           <span className="shrink-0 font-medium">{title}</span>
           <span className="min-w-0 flex-1 truncate text-cc-fg3">Next: {oneLine(items[0].text)}</span>
@@ -75,7 +87,7 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
   }
 
   return (
-    <Frame>
+    <Frame leaving={leaving}>
       <header className="flex min-h-10 items-center gap-2 pr-2 pl-4">
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <button type="button" aria-label={held ? "Collapse held messages" : "Collapse queued messages"} title="Collapse" onClick={() => setOpen(false)} className={ICON}>
@@ -132,12 +144,16 @@ export const PromptQueue = memo(function PromptQueue({ sessionId }: { sessionId:
 })
 
 /** The band: on the box's top edge, inset to clear its rounded corners; fades and rises 6 px in. */
-function Frame({ children }: { children: ReactNode }) {
+function Frame({ children, leaving }: { children: ReactNode; leaving: boolean }) {
   return (
     <div className="mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4">
       <section
         aria-label="Queued messages"
-        className="mx-3.5 animate-in overflow-hidden rounded-t-xl bg-cc-wash text-sm duration-[120ms] ease-[var(--cc-ease-out)] fade-in slide-in-from-bottom-1.5 in-data-[reduce-motion]:animate-none"
+        inert={leaving}
+        className={cn(
+          "mx-3.5 overflow-hidden rounded-t-xl bg-cc-wash text-sm duration-[120ms] ease-[var(--cc-ease-out)] in-data-[reduce-motion]:animate-none",
+          leaving ? "animate-out fill-mode-forwards fade-out slide-out-to-bottom-1.5" : "animate-in fade-in slide-in-from-bottom-1.5",
+        )}
       >
         {children}
       </section>

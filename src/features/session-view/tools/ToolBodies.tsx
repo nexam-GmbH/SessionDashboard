@@ -112,10 +112,16 @@ export const EditBody = memo(function EditBody({ call }: { call: ToolCall }) {
   )
 })
 
-/** The feedback Claude got with a denial (resolveRequest stores it as `Rejected: …`); the row already says Denied. */
+/**
+ * Why a call did not run: the feedback you gave (resolveRequest stores it as `Rejected: …`), or the
+ * reason a permission rule or hook gave ("Blocked by permissions: …"); the row already says Denied.
+ */
 function Denied({ call }: { call: ToolCall }) {
-  const feedback = call.output?.startsWith("Rejected: ") ? call.output.slice("Rejected: ".length) : undefined
-  if (!feedback) return <Quiet>You denied this, so it did not run.</Quiet>
+  const out = call.output?.trim()
+  const feedback = out?.startsWith("Rejected: ") ? out.slice("Rejected: ".length) : undefined
+  if (!feedback && out && /permission|not allowed|blocked|hook/i.test(out) && !/doesn't want to proceed/i.test(out))
+    return <div className="text-sm text-cc-fg2 select-text">Blocked by permissions: {out.split("\n")[0]}</div>
+  if (!feedback) return <Quiet>You declined, so it did not run.</Quiet>
   return (
     <div className="text-sm text-cc-fg3">
       You said: <span className="text-cc-fg2 select-text">“{feedback}”</span>
@@ -246,11 +252,16 @@ export const TodoBody = memo(function TodoBody({ call }: { call: ToolCall }) {
   return <TodoList todos={todos} />
 })
 
+/** Claude's question, once over: "Your answer" and what you picked, "Skipped" or "Not answered". */
 export const QuestionBody = memo(function QuestionBody({ call }: { call: ToolCall }) {
-  return call.display === "awaiting_permission" ? (
-    <Quiet>Waiting for your answer</Quiet>
-  ) : (
-    <div className="whitespace-pre-wrap">{call.output ?? "Answered"}</div>
+  if (call.display === "awaiting_permission") return <Quiet>Waiting for your answer</Quiet>
+  if (call.display === "rejected") return <Quiet>Skipped</Quiet>
+  if (call.display !== "done" || !call.output) return <Quiet>Not answered</Quiet>
+  return (
+    <div>
+      <MicroLabel>Your answer</MicroLabel>
+      <div className="whitespace-pre-wrap text-foreground select-text">{call.output}</div>
+    </div>
   )
 })
 

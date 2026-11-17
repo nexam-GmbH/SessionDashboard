@@ -12,7 +12,7 @@ import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { Brain, Check, Copy, Ellipsis, FileDiff, GitFork, History, Info, OctagonX, Paperclip, RotateCcw, TriangleAlert } from "lucide-react"
 import { REAL } from "@/backend/mode"
 import type { ID, ToolCall, Turn } from "@/lib/model"
-import { useApp } from "@/store/app"
+import { getApp, useApp } from "@/store/app"
 import { forkSession, openReview, openSession, sendMessage } from "@/store/actions"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -112,20 +112,22 @@ function RewindMenu({ sessionId, turnId, busy, onOpenChange }: { sessionId: ID; 
 }
 
 /** Hidden until the message is hovered or focused, under it (Claude Code desktop): Copy, Rewind, Fork, More, when. */
-function MessageActions({ sessionId, itemId, turnId, text, at }: { sessionId: ID; itemId: ID; turnId: ID; text: string; at: string }) {
+/** What you may do with a prompt of yours: rewind your own sessions and past ones (rewinding a past one continues it in the app); fork any but a cloud one. */
+function usePromptRights(sessionId: ID) {
   const control = useApp((s) => s.sessions[sessionId]?.control)
   const busy = useApp((s) => {
     const st = s.sessions[sessionId]?.status
     return st === "working" || st === "starting" || st === "waiting_permission" || st === "waiting_input"
   })
-  // your own sessions and past ones (rewinding a past one continues it in the app)
-  const canRewind = control === "owned" || control === "pty" || (REAL && control === "history")
-  const canFork = control !== "cloud"
-  const [menu, setMenu] = useState(false)
+  return { busy, canRewind: control === "owned" || control === "pty" || (REAL && control === "history"), canFork: control !== "cloud" }
+}
+
+/** Rewind and Fork for a prompt: under your message, and again at the end of its reply. */
+function PromptActions({ sessionId, itemId, turnId, onOpenChange }: { sessionId: ID; itemId: ID; turnId: ID; onOpenChange?: (open: boolean) => void }) {
+  const { busy, canRewind, canFork } = usePromptRights(sessionId)
   return (
-    <div className="sd-msg-actions -mt-1 flex items-center" data-open={menu || undefined}>
-      <CopyButton text={text} />
-      {canRewind && <RewindMenu sessionId={sessionId} turnId={turnId} busy={busy} onOpenChange={setMenu} />}
+    <>
+      {canRewind && <RewindMenu sessionId={sessionId} turnId={turnId} busy={busy} onOpenChange={onOpenChange ?? (() => {})} />}
       {canFork && (
         <Tip title="Fork from here" detail="Starts a new session from this point. This one stays as it is.">
           <button type="button" aria-label="Fork from here" className={ACTION_BTN} onClick={() => forkFromHere(sessionId, itemId)}>
@@ -133,6 +135,18 @@ function MessageActions({ sessionId, itemId, turnId, text, at }: { sessionId: ID
           </button>
         </Tip>
       )}
+    </>
+  )
+}
+
+/** Hidden until the message is hovered or focused, under it (Claude Code desktop): Copy, Rewind, Fork, More, when. */
+function MessageActions({ sessionId, itemId, turnId, text, at }: { sessionId: ID; itemId: ID; turnId: ID; text: string; at: string }) {
+  const { busy, canRewind, canFork } = usePromptRights(sessionId)
+  const [menu, setMenu] = useState(false)
+  return (
+    <div className="sd-msg-actions -mt-1 flex items-center" data-open={menu || undefined}>
+      <CopyButton text={text} />
+      <PromptActions sessionId={sessionId} itemId={itemId} turnId={turnId} onOpenChange={setMenu} />
       <DropdownMenu onOpenChange={setMenu}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label="More" title="More" className={ACTION_BTN}>
@@ -281,6 +295,24 @@ export const LiveAgentRow = memo(function LiveAgentRow({ sessionId, itemId }: { 
 })
 
 // ---------- thought ----------
+/** "Copy as quote": the thought as a Markdown quote headed "Thinking (~N tok)". */
+function QuoteButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false)
+  return (
+    <button
+      type="button"
+      className="sd-msg-actions h-7 rounded-lg px-2 text-sm text-cc-fg2 outline-none hover:bg-cc-ghost hover:text-foreground focus-visible:ring-1 focus-visible:ring-cc-accent"
+      onClick={() => {
+        const quote = `Thinking (~${compact(Math.ceil(text.length / 4))} tok)\n\n${text}`.replace(/^/gm, "> ")
+        void navigator.clipboard?.writeText(quote)
+        setDone(true)
+        setTimeout(() => setDone(false), 1200)
+      }}
+    >
+      {done ? "Copied" : "Copy as quote"}
+    </button>
+  )
+}
 function thoughtLabel(ms: number | undefined, live: boolean) {
   if (live) return "Thinking…"
   if (ms === undefined) return "Thought"
@@ -310,12 +342,15 @@ export const ThoughtRow = memo(function ThoughtRow({
       <div className={cn(STEP_ROW, "w-fit pr-1")}>
         <button type="button" aria-expanded={open} aria-label={label} onClick={() => setOpen(!open)} className={STEP_TOGGLE} />
         <span className={cn(STEP_MARK, live ? "text-cc-clay" : "text-cc-fg3")}>{live ? <WorkingMark /> : <Brain size={16} strokeWidth={1.75} />}</span>
-        <span className={STEP_LABEL}>{label}</span>
+        <span className={cn(STEP_LABEL, live && "cc-breathe")}>{label}</span>
         <Chevron open={open} />
       </div>
       {open && (
-        <div className={STEP_BODY}>
-          <div className="mb-1 text-cc-fg3">Thought process</div>
+        <div className={cn(STEP_BODY, "sd-msg")}>
+          <div className="flex h-7 items-center justify-between text-cc-fg3">
+            Thought process
+            <QuoteButton text={item.text} />
+          </div>
           <div className="whitespace-pre-wrap select-text">{item.text}</div>
         </div>
       )}
@@ -327,6 +362,8 @@ export const ThoughtRow = memo(function ThoughtRow({
 function groupStats(calls: (ToolCall | undefined)[]) {
   let failed = 0
   let finished = 0
+  let agents = 0
+  let agentsDone = 0
   let denied = 0
   let added = 0
   let removed = 0
@@ -336,6 +373,10 @@ function groupStats(calls: (ToolCall | undefined)[]) {
     if (c.display === "running" || c.display === "awaiting_permission") current = c
     if (c.display === "failed") failed++
     if (c.display === "failed" || c.display === "done") finished++
+    if (classifyTool(c.name) === "agent") {
+      agents++
+      if (c.display === "done") agentsDone++
+    }
     if (c.display === "rejected") denied++
     if (c.display === "done" || c.display === "awaiting_permission")
       for (const d of c.diff ?? []) {
@@ -343,7 +384,7 @@ function groupStats(calls: (ToolCall | undefined)[]) {
         removed += d.removed
       }
   }
-  return { failed, finished, denied, added, removed, current }
+  return { failed, finished, agents, agentsDone, denied, added, removed, current }
 }
 
 /**
@@ -391,6 +432,7 @@ export const ToolGroupRow = memo(function ToolGroupRow({
         {st.denied > 0 && <span className="pointer-events-none shrink-0 text-cc-danger">{st.denied} denied</span>}
         <Chevron open={open} />
         <span className="tabular pointer-events-none ml-auto flex shrink-0 items-center gap-2 pl-2 text-cc-fg2">
+          {st.agents > 1 && st.agentsDone < st.agents && <span>{`${st.agentsDone} of ${st.agents} agents done`}</span>}
           {now && <span>{plural(itemIds.length, "step")}</span>}
           <DiffCount added={st.added} removed={st.removed} />
         </span>
@@ -419,8 +461,13 @@ interface EditedFile {
 }
 
 /** "Edited 3 files +12 −3" at the end of a finished turn (Claude Code desktop): up to 3 files, then "Show N more". */
-export const EditsCard = memo(function EditsCard({ sessionId, itemIds }: { sessionId: ID; itemIds: ID[] }) {
+export const EditsCard = memo(function EditsCard({ sessionId, itemIds, turnId }: { sessionId: ID; itemIds: ID[]; turnId: ID }) {
   const items = useItems(sessionId, itemIds)
+  // Undo asks Claude, so only on the last turn of a session you can write to that is not busy
+  const canUndo = useApp((s) => {
+    const ses = s.sessions[sessionId]
+    return !!ses && capabilities(ses.control).send && (ses.status === "idle" || ses.status === "done_unseen") && s.transcripts[sessionId]?.turns.at(-1)?.id === turnId
+  })
   const cwd = useSessionCwd(sessionId)
   const [all, setAll] = useExpanded(`edits:${itemIds[0]}`, false)
   const byPath = new Map<string, EditedFile>()
@@ -444,19 +491,29 @@ export const EditsCard = memo(function EditsCard({ sessionId, itemIds }: { sessi
   const shown = all ? files : files.slice(0, 3)
   return (
     <div className="overflow-hidden rounded-xl bg-cc-card ring-1 ring-cc-wash ring-inset">
-      <Tip title="View this turn’s changes">
-        <button
-          type="button"
-          onClick={() => openReview(sessionId)}
-          className="group/row flex h-10 w-full items-center gap-2 px-3 text-left text-sm outline-none hover:bg-cc-card-hover focus-visible:ring-1 focus-visible:ring-cc-accent focus-visible:ring-inset"
-        >
-          <span className="text-foreground">
-            {verb} {files.length === 1 ? "a file" : `${files.length} files`}
-          </span>
-          <DiffCount added={added} removed={removed} />
-          <Chevron open={false} className="ml-auto" />
-        </button>
-      </Tip>
+      <div className="flex h-10 items-center gap-2 pr-1.5 pl-3 text-sm">
+        <span className="text-foreground">
+          {verb} {files.length === 1 ? "a file" : `${files.length} files`}
+        </span>
+        <DiffCount added={added} removed={removed} />
+        <span className="ml-auto" />
+        {canUndo && (
+          <Tip title="Ask Claude to undo this turn’s file changes">
+            <button
+              type="button"
+              onClick={() => sendMessage(sessionId, "Undo the file changes you made in your last turn.", "now")}
+              className="h-7 rounded-lg px-2 text-cc-fg2 outline-none hover:bg-cc-ghost hover:text-foreground focus-visible:ring-1 focus-visible:ring-cc-accent"
+            >
+              Undo
+            </button>
+          </Tip>
+        )}
+        <Tip title="View this turn’s changes">
+          <button type="button" aria-label="View this turn’s changes" onClick={() => openReview(sessionId)} className={ACTION_BTN}>
+            <Chevron open={false} />
+          </button>
+        </Tip>
+      </div>
       <ul>
         {shown.map((f) => {
           const rel = relPath(f.path, cwd)
@@ -489,6 +546,80 @@ export const EditsCard = memo(function EditsCard({ sessionId, itemIds }: { sessi
           {all ? "Show less" : `Show ${files.length - 3} more`}
         </button>
       )}
+    </div>
+  )
+})
+
+// ---------- end of a turn ----------
+/** Everything Claude wrote in one turn, its messages one after another (Copy all). */
+function turnText(sessionId: ID, turnId: ID): string {
+  const t = getApp().transcripts[sessionId]
+  const turn = t?.turns.find((x) => x.id === turnId)
+  if (!t || !turn) return ""
+  return turn.itemIds
+    .map((id) => t.items[id])
+    .filter((it) => it?.type === "agent_message")
+    .map((it) => (it as { text: string }).text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+}
+
+/**
+ * Under a finished turn: how long it worked, what it wrote, when ("26s · 1.2k tokens · 19:49"), then
+ * the reply's actions (Claude Code desktop): Rewind and Fork for its prompt, and Copy all (Claude's
+ * whole answer of that turn).
+ */
+export const DoneLine = memo(function DoneLine({
+  sessionId,
+  turnId,
+  promptId,
+  durationMs,
+  at,
+  tokens,
+}: {
+  sessionId: ID
+  turnId: ID
+  promptId?: ID
+  durationMs: number
+  at?: string
+  tokens?: number
+}) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex h-7 items-center gap-1.5 text-[13px] leading-[17px] text-cc-fg3" title={at ? `Finished ${DATE_FULL.format(new Date(at))}` : undefined}>
+      <span className="tabular">{formatWorkDuration(durationMs)}</span>
+      {!!tokens && (
+        <>
+          <span aria-hidden>·</span>
+          <span className="tabular">{compact(tokens)} tokens</span>
+        </>
+      )}
+      {at && (
+        <>
+          <span aria-hidden>·</span>
+          <time dateTime={at} className="tabular">
+            {TIME.format(new Date(at))}
+          </time>
+        </>
+      )}
+      <span className="ml-auto" />
+      {promptId && <PromptActions sessionId={sessionId} itemId={promptId} turnId={turnId} />}
+      <button
+        type="button"
+        title="Copy all of Claude's answer in this turn"
+        aria-label={copied ? "Copied" : "Copy all"}
+        onClick={() => {
+          const text = turnText(sessionId, turnId)
+          if (!text) return
+          void navigator.clipboard?.writeText(text)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1200)
+        }}
+        className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 outline-none hover:bg-cc-ghost hover:text-foreground focus-visible:ring-1 focus-visible:ring-cc-accent"
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+        {copied ? "Copied" : "Copy all"}
+      </button>
     </div>
   )
 })
