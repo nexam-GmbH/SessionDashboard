@@ -16,13 +16,19 @@ export function Pictures({ pictures, className }: { pictures: Picture[]; classNa
   const [open, setOpen] = useState<Picture | null>(null)
   return (
     <>
-      <div className={cn("flex flex-wrap gap-1.5", className)}>
+      <div className={cn("flex flex-wrap gap-2", className)}>
         {pictures.slice(0, 24).map((p, i) => (
-          <button key={i} type="button" onClick={() => setOpen(p)} className="overflow-hidden rounded-md border border-border outline-none hover:border-border focus-visible:ring-1 focus-visible:ring-ring" aria-label={`Open picture ${i + 1}`}>
-            <img src={p.src} alt="" loading="lazy" decoding="async" className="block h-[92px] w-auto max-w-[180px] object-cover" />
+          <button
+            key={i}
+            type="button"
+            onClick={() => setOpen(p)}
+            className="relative overflow-hidden rounded-xl outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:ring-1 after:ring-cc-wash-2 after:ring-inset focus-visible:ring-1 focus-visible:ring-cc-accent"
+            aria-label={pictures.length === 1 ? "View image" : `View image ${i + 1} of ${pictures.length}`}
+          >
+            <img src={p.src} alt="" loading="lazy" decoding="async" className="block h-[120px] w-auto max-w-[288px] min-w-20 object-cover" />
           </button>
         ))}
-        {pictures.length > 24 && <span className="self-center text-xs text-muted-foreground/70">{pictures.length - 24} more</span>}
+        {pictures.length > 24 && <span className="self-center text-[13px] text-cc-fg3">{pictures.length - 24} more images</span>}
       </div>
       <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         <DialogContent className="max-h-[92vh] w-fit max-w-[92vw] place-items-center border-0 bg-transparent p-0 shadow-none ring-0 sm:max-w-[92vw]">
@@ -48,21 +54,21 @@ export function SharedFiles({ sessionId, files, caption }: { sessionId: ID; file
   const url = useApp((s) => s.sessions[sessionId]?.url)
   const local = !machine && IN_TAURI
   return (
-    <div className="flex flex-col gap-2 py-1.5">
-      {caption && <p className="text-sm leading-[20px] text-foreground">{caption}</p>}
+    <div className="flex flex-col gap-2">
+      {caption && <p className="pl-1 text-[15px] leading-[21px] text-foreground">{caption}</p>}
       {files.map((f) => {
         const kind = kindOf(f)
         const Icon = kind === "video" ? Film : kind === "image" ? ImageIcon : FileText
         const src = local ? convertFileSrc(f.path) : undefined
         return (
-          <div key={`${f.path}:${f.fileUuid ?? ""}`} className="overflow-hidden rounded-lg border border-border bg-card">
+          <div key={`${f.path}:${f.fileUuid ?? ""}`} className="overflow-hidden rounded-xl bg-cc-card ring-1 ring-cc-wash ring-inset">
             {src && kind === "video" && <video src={src} controls preload="metadata" className="block max-h-[420px] w-full bg-black" />}
             {src && kind === "image" && <img src={src} alt={f.name} className="block max-h-[420px] w-full bg-black object-contain" />}
             <div className="flex min-w-0 items-center gap-2.5 px-3 py-2">
-              <Icon size={15} className="shrink-0 text-muted-foreground" />
+              <Icon size={16} className="shrink-0 text-cc-fg3" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-foreground">{f.name}</span>
-                <span className="block text-xs text-muted-foreground/70">{[mb(f.size), f.mediaType].filter(Boolean).join(" · ") || "file"}</span>
+                <span className="block text-[13px] text-cc-fg3">{[mb(f.size), f.mediaType].filter(Boolean).join(" · ") || "file"}</span>
               </span>
               {local ? (
                 <Button size="xs" variant="ghost" onClick={() => void import("@tauri-apps/plugin-opener").then((o) => o.openPath(f.path)).catch(() => undefined)}>

@@ -33,16 +33,16 @@ export default function SessionView({ sessionId }: { sessionId: string }) {
 const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID }) {
   const details = useApp((s) => s.settings.detailsOpen)
   return (
-    <div data-session-view={sessionId} className="flex h-full min-h-0 bg-background [contain:strict]">
+    <div data-session-view={sessionId} data-chat className="flex h-full min-h-0 bg-background [contain:strict]">
       <div className="flex min-w-0 flex-1 flex-col">
         <StatusAnnouncer sessionId={sessionId} />
         <ControlBanner sessionId={sessionId} />
-        {/* permission, question and plan cards sit in the conversation, at its end (Claude Code desktop) */}
+        {/* the active request takes the composer's place (Claude Code desktop); a terminal session's sits at the conversation's end */}
         <Transcript sessionId={sessionId} requests={<AttentionDock sessionId={sessionId} />} />
-        <div className="shrink-0 pt-1.5">
+        <div className="@container shrink-0 pt-1.5">
           <ActivityBar sessionId={sessionId} />
           <PromptQueue sessionId={sessionId} />
-          <ComposerSlot sessionId={sessionId} />
+          <AttentionDock sessionId={sessionId} composer={<ComposerSlot sessionId={sessionId} />} />
         </div>
       </div>
       {details && <DetailsPanel sessionId={sessionId} />}

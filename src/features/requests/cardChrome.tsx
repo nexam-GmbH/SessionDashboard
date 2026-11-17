@@ -1,52 +1,65 @@
 // Adapted from agent-of-empires/agent-of-empires@d134cfd:web/src/components/acp/ApprovalCard.tsx (MIT). Modified for session-dashboard.
-// Shared chrome for attention cards (permission, question, plan): one bordered block with
-// a tinted title line (icon · title · meta · aside · pager), an optional body and the
-// action row. Changes: status tokens (perm orange / input amber), a compact "1/2" pager,
-// calm copy: short option labels with the full ACP name as tooltip, keyboard
-// hints only while the card has focus.
-import { forwardRef, useId, type KeyboardEvent, type ReactNode } from "react"
+// Shared chrome of the request cards, shaped after Claude Code desktop's approval card: docked in
+// place of the prompt box while it is the active request, or a plain card in the conversation.
+import { forwardRef, useEffect, useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react"
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { PermissionOption } from "@/lib/model"
-import { MOD } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
 
-/** Keyboard focus ring for the cards' own buttons (the shadcn Button's ring: 1px `ring`). */
-export const FOCUS = "outline-none focus-visible:ring-1 focus-visible:ring-ring"
+/** Desktop's focus ring (1 px accent in a soft glow, from index.css). */
+export const FOCUS = "outline-none cc-focus"
+/** The one-shot "promote" animation: from 75 % opacity, 6 px up and 97 % scale, 220 ms. */
+export const ENTER =
+  "origin-top animate-in fade-in-75 zoom-in-97 slide-in-from-top-1.5 duration-220 ease-[cubic-bezier(0.215,0.61,0.355,1)] motion-reduce:animate-none [:root[data-reduce-motion]_&]:animate-none"
 
 export interface Pager {
   index: number
   total: number
-  onPrev: () => void
-  onNext: () => void
+  /** undefined: no way back (first question) */
+  onPrev?: () => void
+  onNext?: () => void
+}
+
+const GHOST_ICON = cn("inline-flex size-6 items-center justify-center rounded-lg text-cc-fg2 hover:bg-cc-ghost hover:text-foreground disabled:opacity-40", FOCUS)
+
+/** "‹ 2 of 3 ›" */
+export function PagerNav({ pager, noun }: { pager: Pager; noun: string }) {
+  return (
+    <span className="flex h-6 shrink-0 items-center gap-0.5 text-sm text-cc-fg3">
+      <button type="button" aria-label={`Previous ${noun}`} disabled={!pager.onPrev} onClick={pager.onPrev} className={GHOST_ICON}>
+        <ChevronLeft size={16} />
+      </button>
+      <span className="px-0.5 tabular-nums">
+        {pager.index + 1} of {pager.total}
+      </span>
+      <button type="button" aria-label={`Next ${noun}`} disabled={!pager.onNext} onClick={pager.onNext} className={GHOST_ICON}>
+        <ChevronRight size={16} />
+      </button>
+    </span>
+  )
 }
 
 export const CardFrame = forwardRef<
   HTMLElement,
   {
-    tone: "perm" | "input"
-    icon?: ReactNode
+    /** in the composer dock (the active request) rather than in the conversation */
+    docked: boolean
+    label: string
+    /** keyboard model for screen readers */
+    keyHint?: string
     title: ReactNode
     meta?: ReactNode
-    /** right side of the title line, before the pager (e.g. a details toggle) */
-    aside?: ReactNode
     pager?: Pager
     children?: ReactNode
     footer?: ReactNode
-    /** left of the buttons (a note: "Approve in your terminal") */
-    footerNote?: ReactNode
     onKeyDown?: (e: KeyboardEvent<HTMLElement>) => void
     className?: string
-    label: string
-    /** keyboard model for screen readers (the visible key hints only show while focused) */
-    keyHint?: string
   }
->(function CardFrame({ title, meta, aside, pager, children, footer, footerNote, onKeyDown, className, label, keyHint }, ref) {
+>(function CardFrame({ docked, label, keyHint, title, meta, pager, children, footer, onKeyDown, className }, ref) {
   const hintId = useId()
   return (
-    // Claude Code desktop's request card, in the conversation: a plain bordered block, the question
-    // in bold, what it is about under it, the answers bottom right. A labelled region: focus lands
-    // here when a request arrives, and screen reader users can jump to it
+    // a labelled region: focus lands here when a request arrives, screen readers can jump to it
     <section
       ref={ref}
       role="region"
@@ -54,57 +67,52 @@ export const CardFrame = forwardRef<
       aria-describedby={keyHint ? hintId : undefined}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      className={cn("group/card my-2 rounded-xl border border-foreground/12 bg-background px-4 pt-3.5 pb-3 outline-none focus-visible:border-foreground/25", className)}
+      className={cn(
+        // the card takes focus when it arrives: a quiet inset accent line, not the glowing ring
+        "@container flex min-h-0 flex-col gap-3 rounded-xl p-3 text-sm text-foreground outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--cc-accent)]",
+        ENTER,
+        // the dock keeps the conversation in view: at most max(60vh, 16rem), the body scrolls
+        docked ? "max-h-[max(60vh,16rem)] bg-cc-panel shadow-[var(--cc-shadow-panel)]" : "my-3 max-w-[480px] bg-cc-card ring-1 ring-cc-wash-2",
+        className,
+      )}
     >
       <header className="flex min-w-0 items-start gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 text-[15px] leading-6 font-semibold text-foreground">{title}</div>
-        {meta && <div className="flex h-6 shrink-0 items-center gap-2">{meta}</div>}
-        {aside}
-        {pager && pager.total > 1 && (
-          <span className="flex h-6 shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
-            <button type="button" aria-label="Previous request" onClick={pager.onPrev} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground", FOCUS)}>
-              <ChevronLeft size={14} />
-            </button>
-            <span className="tabular">
-              <span aria-hidden>
-                {pager.index + 1} of {pager.total}
-              </span>
-              <span className="sr-only">
-                Request {pager.index + 1} of {pager.total}
-              </span>
-            </span>
-            <button type="button" aria-label="Next request" onClick={pager.onNext} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground", FOCUS)}>
-              <ChevronRight size={14} />
-            </button>
-          </span>
-        )}
+        <div className="min-w-0 flex-1 py-0.5 leading-5">{title}</div>
+        {meta}
+        {pager && pager.total > 1 && <PagerNav pager={pager} noun="request" />}
         {keyHint && (
           <span id={hintId} className="sr-only">
             {keyHint}
           </span>
         )}
       </header>
-      {children && <div className="mt-1.5 flex flex-col gap-2 text-sm text-muted-foreground">{children}</div>}
-      {footer && (
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-          {footerNote && <span className="mr-auto text-xs text-muted-foreground/70">{footerNote}</span>}
-          {footer}
-        </div>
-      )}
+      {children && <div className="-mx-3 flex min-h-0 flex-col gap-3 overflow-y-auto px-3">{children}</div>}
+      {footer}
     </section>
   )
 })
 
-/** Key chips inside a button ("⇧ Ctrl ↵"), the way Claude Code desktop labels its card buttons. */
-export function KeyChips({ keys, dark }: { keys: string[]; dark?: boolean }) {
+/** The decision row: deny-ish answers at the start, the allow group at the end (primary last); stacked at ≤ 420 px. */
+export function Decision({ start, end }: { start?: ReactNode; end?: ReactNode }) {
+  const stack = "@max-[420px]:flex-col @max-[420px]:items-stretch"
   return (
-    <span aria-hidden className="ml-1 hidden items-center gap-0.5 sm:inline-flex">
+    <div className={cn("flex shrink-0 flex-wrap items-center gap-x-4 gap-y-3", stack)}>
+      <div className={cn("flex flex-wrap items-center gap-2", stack)}>{start}</div>
+      <div className={cn("ms-auto flex flex-wrap items-center justify-end gap-3 @max-[420px]:ms-0", stack)}>{end}</div>
+    </div>
+  )
+}
+
+/** Keycaps after a button's label ("Ctrl ⏎"); dock only, hidden at ≤ 520 px. */
+function KeyCaps({ keys, onPrimary }: { keys: string[]; onPrimary: boolean }) {
+  return (
+    <span aria-hidden className="inline-flex gap-0.5 @max-[520px]:hidden">
       {keys.map((k) => (
         <kbd
           key={k}
           className={cn(
-            "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border px-1 font-sans text-[11px] leading-none",
-            dark ? "border-background/25 text-background/70" : "border-foreground/15 text-muted-foreground",
+            "inline-flex h-4 min-w-4 items-center justify-center rounded px-1 font-sans text-[11px] leading-none",
+            onPrimary ? "bg-cc-on-primary/15 text-cc-on-primary/70" : "bg-cc-wash text-cc-fg3",
           )}
         >
           {k}
@@ -114,98 +122,32 @@ export function KeyChips({ keys, dark }: { keys: string[]; dark?: boolean }) {
   )
 }
 
-/** Small chevron that reveals a card's secondary details (cwd, description). */
-export function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-expanded={open}
-      aria-label={open ? "Hide details" : "Show details"}
-      title={open ? "Hide details" : "Details"}
-      onClick={onToggle}
-      className={cn("inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70 hover:bg-accent hover:text-foreground", FOCUS)}
-    >
-      <ChevronRight size={12} className={cn("transition-transform duration-150", open && "rotate-90")} />
-    </button>
-  )
+const VARIANT = {
+  primary: "bg-cc-primary font-medium text-cc-on-primary hover:bg-cc-primary-hover",
+  secondary: "bg-secondary text-foreground hover:bg-[var(--cc-secondary-hover)]",
+  ghost: "text-cc-fg2 hover:bg-cc-ghost hover:text-foreground",
 }
 
-/** Inline "tell Claude what to do differently" field; Cmd/Ctrl+Enter submits. */
-export function FeedbackField({
-  placeholder,
-  value,
-  onChange,
-  onSubmit,
-  onCancel,
-  submitLabel,
-}: {
-  placeholder: string
-  value: string
-  onChange: (v: string) => void
-  onSubmit: () => void
-  onCancel: () => void
-  submitLabel: string
-}) {
-  return (
-    <div className="flex w-full flex-col gap-1.5">
-      <textarea
-        autoFocus
-        rows={2}
-        value={value}
-        placeholder={placeholder}
-        aria-label={placeholder.replace(/\s*\(optional\)$/, "")}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            onSubmit()
-          } else if (e.key === "Escape") {
-            e.preventDefault()
-            onCancel()
-          }
-        }}
-        className="min-h-[52px] w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs leading-[18px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-input"
-      />
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onSubmit}
-          title={`${MOD}+Enter`}
-          className={cn("inline-flex h-6 items-center rounded-md border border-border bg-muted px-2 text-xs text-foreground hover:border-input hover:bg-accent", FOCUS)}
-        >
-          {submitLabel}
-        </button>
-        <button type="button" onClick={onCancel} title="Esc" className={cn("h-6 rounded-md px-2 text-xs text-muted-foreground/70 hover:bg-accent hover:text-muted-foreground", FOCUS)}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/** A card's answer button: Deny gray, the main answer white, key chips inside (Claude Code desktop). */
+/** Desktop's button: 28 px, radius 8, 14 px text; a short label at tight widths. */
 export function OptionButton({
-  n,
   children,
+  short,
   variant,
   onClick,
   disabled,
-  enter,
   keys,
   title,
+  className,
 }: {
-  /** its number key (1–9) while the card has focus; none when 0 */
-  n?: number
   children: ReactNode
-  variant: "primary" | "secondary" | "quiet"
+  /** label at card widths ≤ 500 px */
+  short?: ReactNode
+  variant: keyof typeof VARIANT
   onClick: () => void
   disabled?: boolean
-  /** this option is taken by Enter while the card has focus */
-  enter?: boolean
-  /** a shortcut that works anywhere in the session ("Ctrl ↵") */
   keys?: string[]
   title?: string
+  className?: string
 }) {
   return (
     <button
@@ -214,28 +156,133 @@ export function OptionButton({
       disabled={disabled}
       title={title}
       className={cn(
-        "inline-flex h-8 max-w-full min-w-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-45",
+        "inline-flex h-7 max-w-full min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm whitespace-nowrap transition-colors duration-[60ms] disabled:pointer-events-none disabled:opacity-40",
         FOCUS,
-        // on the light primary the ring needs an offset to stay visible
-        variant === "primary" && "bg-foreground text-background hover:bg-foreground/88 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-        variant === "secondary" && "bg-secondary text-foreground hover:bg-accent",
-        variant === "quiet" && "bg-secondary text-foreground hover:bg-accent",
+        VARIANT[variant],
+        className,
       )}
     >
-      {!!n && <span aria-hidden className={cn("tabular hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/55" : "text-muted-foreground/70")}>{n}</span>}
-      <span className="min-w-0 truncate">{children}</span>
-      {keys ? <KeyChips keys={keys} dark={variant === "primary"} /> : enter && <span aria-hidden className={cn("hidden text-xs group-focus-within/card:inline", variant === "primary" ? "text-background/55" : "text-muted-foreground/70")}>⏎</span>}
+      {short ? (
+        <>
+          <span className="min-w-0 truncate @max-[500px]:hidden">{children}</span>
+          <span className="hidden min-w-0 truncate @max-[500px]:inline">{short}</span>
+        </>
+      ) : (
+        <span className="min-w-0 truncate">{children}</span>
+      )}
+      {keys && <KeyCaps keys={keys} onPrimary={variant === "primary"} />}
     </button>
+  )
+}
+
+/** A primary split button: `children` is the main button, the caret opens its other answers ("More allow options"). */
+export function Split({
+  children,
+  label,
+  items,
+  disabled,
+}: {
+  children: ReactNode
+  label: string
+  items: { label: string; hint?: string; danger?: boolean; onSelect: () => void }[]
+  disabled?: boolean
+}) {
+  if (!items.length) return children
+  return (
+    <span className="inline-flex min-w-0 [&>button:first-child]:flex-1 [&>button:first-child]:rounded-e-none">
+      {children}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={label}
+            title={label}
+            className={cn(
+              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-e-lg border-s border-cc-on-primary/20 bg-cc-primary text-cc-on-primary hover:bg-cc-primary-hover disabled:pointer-events-none disabled:opacity-40",
+              FOCUS,
+            )}
+          >
+            <ChevronDown size={14} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-56">
+          {items.map((it) => (
+            <DropdownMenuItem key={it.label} variant={it.danger ? "destructive" : undefined} onSelect={it.onSelect} className="flex-col items-start gap-0">
+              {it.label}
+              {it.hint && <span className="text-xs text-muted-foreground">{it.hint}</span>}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
+  )
+}
+
+/** The footer turned into a short editor (deny with feedback, revise a plan); Enter sends, Esc goes back. */
+export function FeedbackField({
+  label,
+  placeholder,
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  submitLabel,
+}: {
+  label: string
+  placeholder: string
+  value: string
+  onChange: (v: string) => void
+  onSubmit: () => void
+  onCancel: () => void
+  submitLabel: string
+}) {
+  const id = useId()
+  return (
+    <div className="flex shrink-0 flex-col gap-2">
+      <label htmlFor={id} className="text-xs text-cc-fg3">
+        {label}
+      </label>
+      <textarea
+        id={id}
+        autoFocus
+        rows={2}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            onSubmit()
+          } else if (e.key === "Escape") {
+            e.preventDefault()
+            onCancel()
+          }
+        }}
+        className="min-h-[60px] w-full resize-none rounded-lg bg-cc-wash px-3 py-2 text-sm text-foreground outline-none placeholder:text-cc-placeholder focus-visible:ring-1 focus-visible:ring-cc-accent"
+      />
+      <Decision
+        end={
+          <>
+            <OptionButton variant="secondary" onClick={onCancel} title="Esc">
+              Back
+            </OptionButton>
+            <OptionButton variant="primary" onClick={onSubmit} title="Enter">
+              {submitLabel}
+            </OptionButton>
+          </>
+        }
+      />
+    </div>
   )
 }
 
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
 
 /**
- * 1–3 word label for an ACP permission option (the full `name` goes in the tooltip):
- * "Yes" → Allow once (the same label as map cards and the inspector), "Yes, and don't ask again
- * for npm test:* in this project" → Always allow
- * `npm test:*`, "No, keep planning" → Keep planning.
+ * 1–3 word label for an ACP permission option (the full `name` goes in the tooltip): "Yes, and
+ * don't ask again for npm test:* in this project" → Always allow `npm test:*`.
  */
 export function optionLabel(o: PermissionOption): ReactNode {
   if (o.kind === "allow_once" && /^(yes|allow)\.?$/i.test(o.name.trim())) return "Allow once"
@@ -248,6 +295,7 @@ export function optionLabel(o: PermissionOption): ReactNode {
         Always allow <code className="font-mono text-xs">{pattern}</code>
       </>
     )
+  if (o.kind === "allow_always" && /^yes,? and don't ask again\.?$/i.test(o.name.trim())) return "Always allow"
   const rest = o.name
     .replace(/^(yes|no),?\s*(and\s+)?/i, "")
     .replace(/\s+(during this session|in this project)$/i, "")
@@ -262,29 +310,34 @@ export function canStealFocus() {
   return !(a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
 }
 
-/** A ⌄ beside a card's main answer with its other ways (Claude Code desktop: "Allow and switch to Auto"). */
-export function MoreAnswers({ items, disabled, label = "More options" }: { items: { label: string; onSelect: () => void; danger?: boolean }[]; disabled?: boolean; label?: string }) {
-  if (!items.length) return null
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={label}
-          title={label}
-          className={cn("-ml-1 inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-45 data-[state=open]:bg-accent", FOCUS)}
-        >
-          <ChevronDown size={14} />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-52">
-        {items.map((it) => (
-          <DropdownMenuItem key={it.label} variant={it.danger ? "destructive" : undefined} onSelect={it.onSelect}>
-            {it.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
+/**
+ * The active card's keys from anywhere in its session (desktop: 1–9, Esc, Ctrl+Enter), not while
+ * typing in a field or inside a menu or dialog. They arm 400 ms after the card appears so a
+ * keystroke already on its way can't answer it. `handle` returns true when it used the key.
+ */
+export function useCardKeys(ref: RefObject<HTMLElement | null>, handle: false | ((e: globalThis.KeyboardEvent) => boolean)) {
+  const shownAt = useRef(0)
+  useEffect(() => {
+    shownAt.current = performance.now()
+  }, [])
+  useEffect(() => {
+    if (!handle) return
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const card = ref.current
+      if (!card || e.defaultPrevented || e.isComposing || e.repeat || performance.now() - shownAt.current < 400) return
+      const t = e.target as HTMLElement
+      if (t !== card && t.closest("input, textarea, [contenteditable=true], [role=menu], [role=dialog], [role=listbox]")) return
+      if (t !== document.body && !t.closest("[data-session-view]")?.contains(card)) return
+      if (!handle(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    window.addEventListener("keydown", onKey, true)
+    return () => window.removeEventListener("keydown", onKey, true)
+  })
 }
+
+/** No modifier keys held. */
+export const plain = (e: globalThis.KeyboardEvent) => !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+/** Ctrl+Enter (⌘ on macOS), with or without Shift. */
+export const modEnter = (e: globalThis.KeyboardEvent) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey

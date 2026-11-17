@@ -124,6 +124,8 @@ function discover() {
     const question = pend.find((r) => r.type === "question" && canApprove(r.sessionId))
     const plan = pend.find((r) => r.type === "plan" && canApprove(r.sessionId))
     const history = all.find((x) => x.title === "Rate limiting for /v1/chat" && x.control === "history" && !x.archived)
+    // a session with its prompt box shown: a pending request's card takes the box's place
+    const idle = live.find((x) => x.control === "owned" && !pend.some((r) => r.sessionId === x.id))
     return {
       main: s.mainSessionId,
       bash: bash?.sessionId,
@@ -135,6 +137,7 @@ function discover() {
       plan: plan?.sessionId,
       planReq: plan?.id,
       history: history?.id,
+      idle: idle?.id,
       liveCount: live.length,
       order: sel.selectSessionOrder(s),
       needs: sel.selectNeedsYou(s),
@@ -416,7 +419,7 @@ check("approve a plan (permission mode changes)", async () => {
   expect(mode, `mode stayed ${await app((s, id) => s.sessions[id].permissionMode, ids.plan)}`)
   expect((await visible('[aria-label="Plan approval"]').count()) === 0, "plan card still shown")
   expect(!(await awaitingTools(ids.plan)).includes("ExitPlanMode"), "plan row still awaiting approval")
-  const picker = await visible('[data-session-view] button[aria-label^="Permissions:"]').first().innerText()
+  const picker = await visible('[data-session-view] button[aria-label^="Mode:"]').first().innerText()
   expect(/accept edits/i.test(picker), `mode picker shows "${picker}"`)
   return `${before} → acceptEdits`
 })
@@ -577,7 +580,7 @@ check("rewind to here: hovering a message offers it and preselects that prompt",
   const msg = visible("[data-session-view] .group\\/user").filter({ hasText: first.slice(0, 30) }).first()
   await msg.scrollIntoViewIfNeeded()
   await msg.hover()
-  await msg.getByRole("button", { name: "Rewind or fork from here" }).click()
+  await msg.getByRole("button", { name: "Rewind to here" }).click()
   await page.getByRole("menuitem", { name: /Choose another message/ }).click()
   const d = page.getByRole("dialog", { name: "Rewind" })
   await d.waitFor({ timeout: 2000 })
@@ -638,18 +641,20 @@ check("rewind: menu → pick a prompt → transcript truncated, prompt back in c
   const after = await app((s, id) => ({ turns: s.transcripts[id].turns.length, status: s.sessions[id].status }), ids.bash)
   expect(after.turns === turnsBefore - 1, `turns ${turnsBefore} → ${after.turns}`)
   expect(after.status === "idle", `status is ${after.status}`)
-  const composer = await visible("textarea").first().inputValue()
+  const box = visible('textarea[aria-label="Message Claude"]').first()
+  const composer = await box.inputValue()
   expect(composer.length > 0, "prompt not put back into the composer")
-  await page.getByRole("button", { name: /^Undo/ }).first().click()
-  const restored = await until(() => app((s, a) => (s.transcripts[a.id].turns.length === a.n ? s.sessions[a.id].status : null), { id: ids.bash, n: turnsBefore }))
-  expect(restored === "waiting_permission", `after Undo status is ${restored}`)
-  // Esc Esc in an empty composer opens it again
-  await visible("textarea").first().fill("")
-  await visible("textarea").first().focus()
+  // Esc Esc in an empty composer opens it again (before Undo: then the permission card takes the box's place)
+  await box.fill("")
+  await box.focus()
   await page.keyboard.press("Escape")
   await page.keyboard.press("Escape")
   await d.waitFor({ timeout: 2000 })
   await page.keyboard.press("Escape")
+  await d.waitFor({ state: "hidden", timeout: 2000 })
+  await page.getByRole("button", { name: /^Undo/ }).first().click()
+  const restored = await until(() => app((s, a) => (s.transcripts[a.id].turns.length === a.n ? s.sessions[a.id].status : null), { id: ids.bash, n: turnsBefore }))
+  expect(restored === "waiting_permission", `after Undo status is ${restored}`)
 })
 
 check("composer: attachments become chips on the message; a queued message is sent when the turn ends", async () => {
@@ -703,10 +708,12 @@ check("a11y: session view controls are named and the dock is a live region", asy
   expect(live === "polite", `dock live region is ${live}`)
   const logLive = await page.evaluate(() => document.querySelector('[role=log][aria-label="Session transcript"]')?.getAttribute("aria-live"))
   expect(logLive === "off", `transcript log announces every token (aria-live=${logLive})`)
-  const composer = page.getByRole("textbox", { name: "Message Claude" })
-  expect((await composer.count()) > 0, "composer has no accessible name")
   const bad = await unnamedControls("[data-session-view]")
   expect(!bad.length, `unnamed controls:\n    ${bad.join("\n    ")}`)
+  // the card stands in for the prompt box; the box is back on a session with nothing pending
+  await go(`#/session/${ids.idle}`)
+  const composer = page.getByRole("textbox", { name: "Message Claude" })
+  expect((await composer.count()) > 0, "composer has no accessible name")
 })
 
 check("a11y: keyboard reaches every dock option with a visible focus ring", async () => {
@@ -729,17 +736,17 @@ check("a11y: keyboard reaches every dock option with a visible focus ring", asyn
 check("a11y: composer Tab/Shift+Tab move focus (no trap)", async () => {
   await load("#/")
   const ids = await discover()
-  await go(`#/session/${ids.edit}`)
+  await go(`#/session/${ids.idle}`)
   const ta = page.getByRole("textbox", { name: "Message Claude" })
   await ta.click()
   await page.keyboard.press("Tab")
   const after = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))
   expect(after && after !== "Message Claude", "Tab stayed in the composer")
   await ta.click()
-  const mode0 = await app((s, id) => s.sessions[id].permissionMode, ids.edit)
+  const mode0 = await app((s, id) => s.sessions[id].permissionMode, ids.idle)
   await page.keyboard.press("Shift+Tab")
   const back = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))
-  const mode1 = await app((s, id) => s.sessions[id].permissionMode, ids.edit)
+  const mode1 = await app((s, id) => s.sessions[id].permissionMode, ids.idle)
   expect(back !== "Message Claude" || mode0 !== mode1, "Shift+Tab neither moved focus nor changed the mode")
   if (back === "Message Claude") {
     // the mode switch is spoken, and the composer's description tells how to leave it
@@ -754,7 +761,7 @@ check("a11y: composer Tab/Shift+Tab move focus (no trap)", async () => {
 check("a11y: composer / menu is a listbox wired to the textarea; Esc closes it", async () => {
   await load("#/")
   const ids = await discover()
-  await go(`#/session/${ids.edit}`)
+  await go(`#/session/${ids.idle}`)
   const ta = page.getByRole("textbox", { name: "Message Claude" })
   await ta.click()
   await page.keyboard.type("/")
@@ -813,8 +820,8 @@ check("a11y: new session screen and palette label their controls; Esc closes the
 check("a11y: Escape closes the mode menu and returns focus", async () => {
   await load("#/")
   const ids = await discover()
-  await go(`#/session/${ids.edit}`)
-  const trigger = visible('[data-session-view] button[aria-label^="Permissions:"]').first()
+  await go(`#/session/${ids.idle}`)
+  const trigger = visible('[data-session-view] button[aria-label^="Mode:"]').first()
   await trigger.click()
   await visible("[data-slot=popover-content] [cmdk-root]").first().waitFor({ timeout: 2000 })
   await page.keyboard.press("Escape")

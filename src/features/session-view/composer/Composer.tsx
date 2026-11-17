@@ -15,11 +15,12 @@ import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
 import { PromptBox, type PromptValue } from "@/features/composer/PromptBox"
-import { EffortPicker, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
+import { GHOST, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
 import { ContextRing } from "@/features/composer/ContextRing"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { FolderPlus } from "lucide-react"
 import { plural } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import {
   cancelQueueEdit,
   editQueuedInBox,
@@ -93,7 +94,7 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   const lastEsc = useRef(0)
   // ↑ / ↓ through what you sent in this session (newest first), like Claude Code's prompt history
   const hist = useRef<{ list: string[]; at: number; saved: string } | null>(null)
-  const onHistory = (dir: -1 | 1, current: string): string | null => {
+  const onHistory = (dir: -1 | 1, current: string) => {
     if (!hist.current) {
       const t = getApp().transcripts[sessionId]
       const list: string[] = []
@@ -109,10 +110,10 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
     if (at < 0) return null
     if (at >= h.list.length) {
       hist.current = null
-      return dir > 0 ? h.saved : null
+      return dir > 0 ? { text: h.saved, at, total: h.list.length } : null
     }
     h.at = at
-    return h.list[at]
+    return { text: h.list[at], at, total: h.list.length }
   }
   // Rewind puts a prompt back here (the session view remounts the composer for each one)
   useEffect(() => {
@@ -194,16 +195,17 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
   }
 
   return (
-    <div className="mx-auto w-full max-w-[var(--chat-w)] px-5 pb-3">
+    <div className="mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4 pb-3">
       <PromptBox
         files={files}
         value={draft}
         onValueChange={(fn: (v: PromptValue) => PromptValue) => setDraft(sessionId, fn)}
         editing={editing}
         placeholder={placeholder}
+        placeholderShort={working && steers && !modSends && !editing && !takeOver ? `${MOD}+Enter to queue` : undefined}
         hint={hint}
         keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : steers ? `Enter sends a message Claude reads at its next step, ${MOD}+Enter queues it for later, Escape takes your last waiting message back or stops.` : REAL ? "Enter queues, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
-        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working ? (steers ? "Send · Enter — Claude reads it at its next step" : "Queue · Enter") : "Send · Enter"}
+        sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working && !steers ? "Queue · Enter" : "Send · Enter"}
         busy={canStop}
         stopping={stopping}
         onStop={() => interruptSession(sessionId)}
@@ -266,18 +268,20 @@ export const Composer = memo(function Composer({ sessionId }: { sessionId: ID })
 
         footer={
           <>
-            {/* Claude Code desktop: the permission mode on the left under the box; model, effort and context on the right */}
+            {/* Claude Code desktop: the permission mode on the left under the box; model and effort, and context on the right */}
             <ModePicker value={mode} onChange={(permissionMode) => setSessionSettings(sessionId, { permissionMode })} disabled={locked} disabledReason={lockReason} />
             <FoldersNote ids={repoOrder.filter((id) => dirs?.includes(repos[id].rootPath))} names={repos} />
             <span className="flex-1" />
             <ModelPicker
               value={model}
               onChange={(m) => setSessionSettings(sessionId, { model: m })}
+              effort={effort}
+              onEffort={(e) => setSessionSettings(sessionId, { effort: e })}
+              fast={!!fast}
               disabled={locked}
               disabledReason={lockReason}
               extra={<ModelExtras model={model} fast={!!fast} ultra={!!ultra} style={style} onChange={(patch) => setSessionSettings(sessionId, patch)} />}
             />
-            <EffortPicker value={effort} model={model} onChange={(e) => setSessionSettings(sessionId, { effort: e })} disabled={locked} disabledReason={lockReason} />
             <ContextRing sessionId={sessionId} canCompact={!locked} />
           </>
         }
@@ -292,8 +296,8 @@ function FoldersNote({ ids, names }: { ids: ID[]; names: Record<ID, { name: stri
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span tabIndex={0} className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground/70 outline-none focus-visible:ring-1 focus-visible:ring-ring">
-          <FolderPlus size={14} />
+        <span tabIndex={0} className={cn(GHOST, "px-2 text-cc-fg3 hover:bg-transparent hover:text-cc-fg3")}>
+          <FolderPlus size={12} />
           {plural(ids.length, "folder")}
         </span>
       </TooltipTrigger>

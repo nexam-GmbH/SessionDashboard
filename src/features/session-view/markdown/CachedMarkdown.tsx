@@ -43,8 +43,14 @@ function copyFromCachedBlock(e: MouseEvent<HTMLDivElement>) {
   }
   if (!btn.closest('[data-streamdown="code-block-actions"]')) return
   const code = btn.closest('[data-streamdown="code-block"]')?.querySelector("pre")?.textContent
-  if (code) void navigator.clipboard?.writeText(code)
+  if (!code) return
+  void navigator.clipboard?.writeText(code)
+  // a check for 1.2 s, as the live button does
+  const icon = btn.innerHTML
+  btn.innerHTML = CHECK
+  setTimeout(() => (btn.innerHTML = icon), 1200)
 }
+const CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
 
 // Rows that mount while you scroll fast paint a plain placeholder first; rows that mount at rest
 // (opening a chat) render the markdown at once, so nothing flips from plain to formatted on screen.

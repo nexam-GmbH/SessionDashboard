@@ -246,61 +246,72 @@ export function formatWorkDuration(ms: number): string {
   return `${s}s`
 }
 
-// ---------- work summaries (Claude Code desktop: "Read 3 files, edited 2 files, ran a command") ----------
-type Part = { key: string; one: string; many: (n: number) => string; n: Set<string> | number }
+// ---------- work summaries (Claude Code desktop: "Read retry.ts and ran 2 commands") ----------
+type Part = { one: (name: string) => string; many: (n: number) => string; names: Set<string>; calls: number; unique: boolean }
 
 /**
- * One line for a run of tool calls, in the past tense and in the order the work happened:
- * "Ran 4 commands", "Read 3 files, edited 2 files, ran a command", "Ran 2 commands, used 2 tools".
+ * One line for a run of tool calls, in the past tense and in the order the work happened, worded as
+ * Claude Code desktop: "Ran 4 commands", "Read retry.ts and ran a command", "Read 3 files, edited
+ * 2 files and ran a command", "Read 3 files, edited a file, ran 2 commands, and 3 more steps".
  */
 export function summarizeWork(calls: readonly ToolCall[]): string {
   const parts = new Map<string, Part>()
   let todo = false
-  const count = (key: string, one: string, many: (n: number) => string, unique?: string) => {
+  const count = (key: string, one: (name: string) => string, many: (n: number) => string, unique?: string) => {
     let p = parts.get(key)
-    if (!p) parts.set(key, (p = { key, one, many, n: unique === undefined ? 0 : new Set<string>() }))
-    if (typeof p.n === "number") p.n++
-    else p.n.add(unique ?? "")
+    if (!p) parts.set(key, (p = { one, many, names: new Set(), calls: 0, unique: unique !== undefined }))
+    p.calls++
+    if (unique !== undefined) p.names.add(unique)
   }
   for (const c of calls) {
     const input = inputOf(c)
     const file = String(input.file_path ?? input.notebook_path ?? input.path ?? c.title)
     switch (classifyTool(c.name)) {
       case "edit":
-        if (c.name === "Write" && (c.diff?.[0]?.op ?? "add") === "add") count("create", "created a file", (n) => `created ${n} files`, file)
-        else count("edit", "edited a file", (n) => `edited ${n} files`, file)
+        if (c.name === "Write" && (c.diff?.[0]?.op ?? "add") === "add") count("create", (f) => `created ${f}`, (n) => `created ${n} files`, file)
+        else count("edit", (f) => `edited ${f}`, (n) => `edited ${n} files`, file)
         break
       case "read":
-        count("read", "read a file", (n) => `read ${n} files`, file)
+        count("read", (f) => `read ${f}`, (n) => `read ${n} files`, file)
         break
       case "command":
-        if (c.name === "Bash") count("cmd", "ran a command", (n) => `ran ${n} commands`)
-        else count("tool", "used a tool", (n) => `used ${n} tools`)
+        if (c.name === "Bash") count("cmd", () => "ran a command", (n) => `ran ${n} commands`)
+        else count("tool", () => "used a tool", (n) => `used ${n} tools`)
         break
       case "search":
       case "graph":
-        count("search", "searched for a pattern", (n) => `searched for ${n} patterns`)
+        count("search", () => "searched for a pattern", (n) => `searched for ${n} patterns`)
         break
       case "web":
-        if (c.name === "WebSearch") count("websearch", "searched the web", (n) => `searched the web ${n} times`)
-        else count("fetch", "fetched a page", (n) => `fetched ${n} pages`)
+        if (c.name === "WebSearch") count("websearch", () => "searched the web", (n) => `searched the web ${n} times`)
+        else count("fetch", () => "fetched a page", (n) => `fetched ${n} pages`)
         break
       case "agent":
-        count("agent", "ran an agent", (n) => `ran ${n} agents`)
+        count("agent", () => "ran an agent", (n) => `ran ${n} agents`)
         break
       case "todo":
         // bookkeeping: named only when it is all the run did (the plan itself shows above the prompt box)
         todo = true
         break
       default:
-        count("tool", "used a tool", (n) => `used ${n} tools`)
+        count("tool", () => "used a tool", (n) => `used ${n} tools`)
     }
   }
-  const words = [...parts.values()].map((p) => {
-    const n = typeof p.n === "number" ? p.n : p.n.size
-    return n === 1 ? p.one : p.many(n)
+  const list = [...parts.values()]
+  const words = list.slice(0, 3).map((p) => {
+    const n = p.unique ? p.names.size : p.calls
+    return n === 1 ? p.one(displayFileName([...p.names][0] ?? "")) : p.many(n)
   })
-  const line = words.join(", ") || (todo ? "Updated the todo list" : "Worked")
+  const rest = list.slice(3).reduce((a, p) => a + p.calls, 0)
+  const line = !words.length
+    ? todo
+      ? "Updated the todo list"
+      : "Worked"
+    : rest
+      ? `${words.join(", ")}, and ${rest} more ${rest === 1 ? "step" : "steps"}`
+      : words.length === 1
+        ? words[0]
+        : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`
   return line.charAt(0).toUpperCase() + line.slice(1)
 }
 

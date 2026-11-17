@@ -4,7 +4,7 @@
 // turn blocks as virtual items, memoized rows that select their own item.
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { usePendingRequests } from "@/store/selectors"
-import { ArrowDown } from "lucide-react"
+import { ChevronDown } from "lucide-react"
 import { REAL } from "@/backend/mode"
 import { FindBar } from "../find/FindBar"
 import { paintMatches, useFind, useJump } from "../find/find"
@@ -70,12 +70,13 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
 })
 
 const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail, view }: ViewProps & { block: Block }) {
-  // group/turn: the turn receipt shows only while the pointer is over its turn
+  // group/turn: the turn receipt shows only while the pointer is over its turn; flow-root keeps
+  // the rows' top margins inside the block, so the virtualizer measures them
   return (
-    <div className="group/turn">
-      {block.rows.map((row) => (
+    <div className="group/turn flow-root">
+      {block.rows.map((row, i) => (
         // data-row-key: search hits and Find scroll to a message by its id
-        <div key={row.key} data-row-key={row.key}>
+        <div key={row.key} data-row-key={row.key} style={block.gaps[i] ? { marginTop: block.gaps[i] } : undefined}>
           <RowView sessionId={sessionId} row={row} liveItemId={liveItemId} inTail={inTail} view={view} />
         </div>
       ))}
@@ -83,7 +84,8 @@ const BlockView = memo(function BlockView({ sessionId, block, liveItemId, inTail
   )
 })
 
-const COLUMN = "mx-auto w-full max-w-[var(--chat-w)] px-5"
+/** Claude Code desktop's column: 768 px of content (Settings → Chat width) in 32 px gutters, 16 px when the pane is narrow. */
+const COLUMN = "mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4"
 
 export const Transcript = memo(function Transcript({ sessionId, requests }: { sessionId: ID; requests?: ReactNode }) {
   const { ready, order, turns, liveItemId } = useTranscriptShape(sessionId)
@@ -98,7 +100,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, farFromBottom } = useTranscriptVirtualizer({
+  const { virtualizer, virtualItems, totalSize, measureElement, scrollToBottom, releaseBottomLock, farFromBottom, fades } = useTranscriptVirtualizer({
     sessionId,
     rows: head,
     totalRowCount: rows.length,
@@ -185,7 +187,7 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
 
   // The scroll container always renders so the virtualizer's listeners attach on mount.
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="@container relative min-h-0 flex-1">
       {/* role=log implies aria-live=polite, which would read every streamed token: turned off here;
           StatusAnnouncer speaks state changes instead. Focusable so the keyboard can scroll it. */}
       <div
@@ -194,11 +196,11 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
         aria-label="Session transcript"
         aria-live="off"
         tabIndex={0}
-        className="absolute inset-0 overflow-y-auto outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        className="absolute inset-0 scroll-pt-8 scroll-pb-12 overflow-y-auto outline-none [overflow-anchor:none] focus-visible:ring-1 focus-visible:ring-cc-accent/60 focus-visible:ring-inset"
       >
         {ready && !rows.length && <EmptyState>No messages yet.</EmptyState>}
         {!ready && <TranscriptSkeleton />}
-        <div ref={contentRef} className="pb-8">
+        <div ref={contentRef} className="pt-6 pb-12">
           {head.length > 0 && (
             <div className="relative w-full" style={{ height: totalSize }}>
               {virtualItems.map((v) => {
@@ -230,27 +232,38 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
           </div>
         </div>
       </div>
+      {/* edge fades: strips in the page colour over the scroller (no mask-image: WebKit paints a
+          mask offscreen on every frame), clear of its scrollbar */}
+      <div aria-hidden className={cn("sd-fade-top pointer-events-none absolute top-0 right-2.5 left-0 h-8", !(fades & 1) && "opacity-0")} />
+      <div aria-hidden className={cn("sd-fade-bottom pointer-events-none absolute right-2.5 bottom-0 left-0 h-12", !(fades & 2) && "opacity-0")} />
       <ViewNotice view={view} />
       <FindBar sessionId={sessionId} />
-      {farFromBottom && <JumpToLatest sessionId={sessionId} onClick={() => scrollToBottom("smooth")} />}
+      <JumpToLatest sessionId={sessionId} show={farFromBottom} onClick={() => scrollToBottom("smooth")} />
     </div>
   )
 })
 
-/** Back to the end of the chat (Claude Code desktop): "Scroll to bottom", or "Needs your input" when a card waits there. */
-function JumpToLatest({ sessionId, onClick }: { sessionId: ID; onClick: () => void }) {
+/** Back to the end of the chat (Claude Code desktop): a caret pill, or "Needs your input" when a card waits there. */
+function JumpToLatest({ sessionId, show, onClick }: { sessionId: ID; show: boolean; onClick: () => void }) {
   const waiting = usePendingRequests(sessionId).length > 0
   return (
     <button
       type="button"
       onClick={onClick}
+      inert={!show}
+      aria-label={waiting ? "Needs your input. Scroll to the request" : "Scroll to bottom"}
       className={cn(
-        "absolute bottom-3 left-1/2 z-10 inline-flex h-8 -translate-x-1/2 items-center justify-center gap-1.5 rounded-full border bg-popover px-3 text-sm shadow-lg outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
-        waiting ? "border-st-perm/50 text-st-perm-fg" : "border-border text-muted-foreground hover:text-foreground",
+        "sd-pill absolute bottom-8 left-1/2 z-10 inline-flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-lg px-1.5 text-[13px] text-cc-fg2 outline-none transition-opacity duration-150 focus-visible:ring-1 focus-visible:ring-cc-accent",
+        !show && "opacity-0",
       )}
     >
-      <ArrowDown size={15} aria-hidden />
-      {waiting ? "Needs your input" : "Scroll to bottom"}
+      {waiting && (
+        <>
+          <span aria-hidden className="size-1.5 rounded-full bg-cc-accent" />
+          Needs your input
+        </>
+      )}
+      <ChevronDown size={16} aria-hidden />
     </button>
   )
 }
@@ -269,7 +282,7 @@ function ViewNotice({ view }: { view: TranscriptView }) {
     <div
       key={changed}
       role="status"
-      className="sd-view-notice pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1 text-xs text-muted-foreground shadow-md"
+      className="sd-view-notice pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-cc-raised px-2.5 py-1 text-[13px] text-cc-fg2 shadow-[var(--cc-shadow-panel)]"
     >
       <span className="text-foreground">{v?.label} view</span> · {v?.hint}
     </div>
@@ -282,7 +295,7 @@ function TranscriptSkeleton() {
     <div className={cn(COLUMN, "flex min-h-full flex-col justify-end gap-6 pt-6 pb-6")} aria-busy="true" aria-label="Loading the chat">
       {[0, 1].map((k) => (
         <div key={k} className="flex flex-col gap-3">
-          <Skeleton className="h-9 w-64 self-end rounded-lg" />
+          <Skeleton className="h-11 w-64 self-end rounded-xl" />
           <Skeleton className="h-4 w-40" />
           <div className="flex flex-col gap-2">
             <Skeleton className="h-4 w-[92%]" />

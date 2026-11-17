@@ -1,144 +1,176 @@
 // Adapted from vercel/ai-elements@ca8be60:packages/elements/src/confirmation.tsx (Apache-2.0). Modified for session-dashboard.
-// Changes: AI SDK ToolUIPart approval state replaced by our PlanApproval request;
-// every ExitPlanMode option (several allow_always, one per target mode) is its own
-// button with a short label; "Keep planning" takes optional feedback;
-// calm chrome: "Approve plan?" over the plan, no instruction text.
+// Claude Code desktop's plan card: "Claude proposed a plan", a clamped preview that opens in place,
+// Reject · Revise… at the start, Accept · Accept and allow edits (split: Auto / Bypass) at the end.
+// Revise turns the footer into a feedback editor. Our extra: the plan's checks, allowed with it.
 import { memo, useEffect, useMemo, useRef, useState } from "react"
-import { ListChecks } from "lucide-react"
 import type { PermissionOption, PlanApproval } from "@/lib/model"
 import { Markdown } from "@/features/session-view/markdown/Markdown"
 import { resolveRequest } from "@/features/session-view/sessionStore"
 import { planChecks } from "@/features/session-view/signals"
 import { Checkbox } from "@/components/ui/checkbox"
+import { MOD } from "@/components/common/bits"
 import { REAL } from "@/backend/mode"
 import { useApp } from "@/store/app"
-import { CardFrame, canStealFocus, FeedbackField, MoreAnswers, OptionButton, optionLabel, type Pager } from "./cardChrome"
+import { cn } from "@/lib/utils"
+import { CardFrame, canStealFocus, Decision, FeedbackField, FOCUS, modEnter, OptionButton, plain, Split, useCardKeys, type Pager } from "./cardChrome"
 
-const isReject = (o: PermissionOption) => o.kind === "reject_once" || o.kind === "reject_always"
-/** in the menu beside "Accept and allow edits" (Claude Code desktop), not buttons of their own */
-const IN_MENU = new Set(["approve-auto", "approve-bypass"])
-
-/** ExitPlanMode's answers in Claude Code desktop's words (the mode each one switches to). */
-const PLAN_LABEL: Record<string, string> = {
-  "approve-accept": "Accept and allow edits",
-  "approve-auto": "Accept and use Auto mode",
-  "approve-bypass": "Accept and bypass permissions",
-  "approve-manual": "Accept",
-  "keep-planning": "Revise…",
+/** ExitPlanMode's answers in desktop's words (the mode each one continues in) and short labels. */
+const LABEL: Record<string, [string, string]> = {
+  "approve-accept": ["Accept and allow edits", "Allow edits"],
+  "approve-auto": ["Accept and use auto mode", "Use auto mode"],
+  "approve-bypass": ["Accept and bypass permissions", "Bypass permissions"],
+  "approve-manual": ["Accept", "Accept"],
 }
 
 export const PlanApprovalCard = memo(function PlanApprovalCard({
   request,
   canApprove,
   pager,
-  autoFocus,
+  docked,
 }: {
   request: PlanApproval
   canApprove: boolean
   pager?: Pager
-  autoFocus?: boolean
+  docked: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
-  const [feedbackFor, setFeedbackFor] = useState<PermissionOption | null>(null)
+  const [revising, setRevising] = useState(false)
   const [feedback, setFeedback] = useState("")
+  const [open, setOpen] = useState(false)
   useEffect(() => {
-    if (autoFocus && canStealFocus()) ref.current?.focus({ preventScroll: true })
-  }, [autoFocus, request.id])
+    if (docked && canStealFocus()) ref.current?.focus({ preventScroll: true })
+  }, [docked, request.id])
   // the checks the plan will run: allowed for the rest of the session with the approval, so carrying
   // out an approved plan doesn't stop at every test run
   const checks = useMemo(() => planChecks(request.planMarkdown), [request.planMarkdown])
   const [skip, setSkip] = useState<Set<string>>(() => new Set())
-  const choose = (o: PermissionOption) => {
+  const allowBypass = useApp((s) => s.settings.allowBypass || s.caps?.defaultMode === "bypassPermissions")
+
+  const accept = (o: PermissionOption) => {
     if (!canApprove) return
-    if (isReject(o)) setFeedbackFor(o)
-    else {
-      if (REAL) void import("@/backend/real").then((r) => {
+    if (REAL)
+      void import("@/backend/real").then((r) => {
         r.setPlanAllow(request.id, checks.filter((c) => !skip.has(c)))
         resolveRequest(request, o.id)
       })
-      else resolveRequest(request, o.id)
-    }
+    else resolveRequest(request, o.id)
   }
-  const allowBypass = useApp((s) => s.settings.allowBypass || s.caps?.defaultMode === "bypassPermissions")
-  const menu = request.options.filter((o) => IN_MENU.has(o.id) && (o.id !== "approve-bypass" || allowBypass))
-  const buttons = request.options.filter((o) => !IN_MENU.has(o.id))
-  const primary = buttons.find((o) => !isReject(o))
+  const keep = request.options.find((o) => o.kind === "reject_once" || o.kind === "reject_always")
+  const reject = () => keep && canApprove && resolveRequest(request, keep.id, "The user rejected this plan.")
+  const revise = () => keep && resolveRequest(request, keep.id, feedback.trim() || undefined)
+  const byId = (id: string) => request.options.find((o) => o.id === id)
+  const manual = byId("approve-manual")
+  const primary = byId("approve-accept") ?? request.options.find((o) => o !== keep && o !== manual)
+  const menu = request.options.filter((o) => o !== keep && o !== manual && o !== primary && (o.id !== "approve-bypass" || allowBypass))
+  // desktop shows the plain Accept only beside a different default
+  const second = manual !== primary ? manual : undefined
+  // digits: 1 Reject, 2… the accept buttons in visual order
+  const ends = [second, primary].filter((o): o is PermissionOption => !!o)
+
+  useCardKeys(
+    ref,
+    docked &&
+      canApprove &&
+      !revising &&
+      ((e) => {
+        if (modEnter(e)) {
+          const o = e.shiftKey ? second : primary
+          if (o) accept(o)
+          return !!o
+        }
+        if (!plain(e)) return false
+        const o = /^[2-9]$/.test(e.key) ? ends[Number(e.key) - 2] : undefined
+        if (e.key === "Escape" && keep) setRevising(true)
+        else if (e.key === "1" && keep) reject()
+        else if (o) accept(o)
+        else return false
+        return true
+      }),
+  )
+
+  const plan = request.planMarkdown.trim()
   return (
     <CardFrame
       ref={ref}
-      tone="input"
+      docked={docked}
       label="Plan approval"
-      keyHint={`Enter: approve. 1 to ${Math.min(9, buttons.length)}: pick an option.`}
-      title={
-        <span className="flex min-w-0 items-center gap-2">
-          <ListChecks size={16} className="shrink-0 text-muted-foreground" />
-          <span className="truncate">Ready to start? Here is the plan</span>
-        </span>
-      }
+      keyHint={`Control+Enter: ${primary ? LABEL[primary.id]?.[0] : "accept"}. ${second ? "Control+Shift+Enter: accept and keep approving edits. " : ""}1: reject. Escape: revise.`}
+      title={<span className="font-semibold">{plan ? "Claude proposed a plan" : "Claude wants to leave plan mode"}</span>}
       pager={pager}
-      onKeyDown={(e) => {
-        if (feedbackFor || e.target !== e.currentTarget) return
-        if (e.key === "Enter" && primary) {
-          e.preventDefault()
-          choose(primary)
-        } else if (/^[1-9]$/.test(e.key)) {
-          // the buttons only (the menu's answers are picked from the menu)
-          const o = buttons[Number(e.key) - 1]
-          if (o) {
-            e.preventDefault()
-            choose(o)
-          }
-        }
-      }}
       footer={
-        feedbackFor ? (
+        revising ? (
           <FeedbackField
-            placeholder="What should change?"
+            label="Plan feedback"
+            placeholder="What should change? (optional)"
             value={feedback}
             onChange={setFeedback}
-            onSubmit={() => resolveRequest(request, feedbackFor.id, feedback.trim() || undefined)}
+            onSubmit={revise}
             onCancel={() => {
-              setFeedbackFor(null)
-              setFeedback("")
+              setRevising(false)
               ref.current?.focus()
             }}
             submitLabel="Revise"
           />
         ) : (
-          <>
-            {!canApprove && <span className="mr-auto text-xs text-muted-foreground/70">Approve in your terminal</span>}
-            {/* Revise on the left, the main answer on the right (Claude Code desktop's order) */}
-            {[...buttons.filter(isReject), ...buttons.filter((o) => !isReject(o) && o !== primary), ...(primary ? [primary] : [])].map((o) => (
-              <OptionButton
-                key={o.id}
-                n={buttons.indexOf(o) + 1}
-                disabled={!canApprove}
-                variant={o === primary ? "primary" : isReject(o) ? "quiet" : "secondary"}
-                onClick={() => choose(o)}
-                enter={o === primary}
-                title={o.name}
-              >
-                {PLAN_LABEL[o.id] ?? optionLabel(o)}
-              </OptionButton>
-            ))}
-            <MoreAnswers
-              disabled={!canApprove}
-              label="More ways to accept"
-              items={menu.map((o) => ({ label: PLAN_LABEL[o.id] ?? optionLabel(o), danger: o.id === "approve-bypass", onSelect: () => choose(o) }))}
-            />
-          </>
+          <Decision
+            start={
+              <>
+                {keep && (
+                  <OptionButton variant="secondary" disabled={!canApprove} onClick={reject} keys={docked ? ["1"] : undefined}>
+                    Reject
+                  </OptionButton>
+                )}
+                {keep && (
+                  <OptionButton variant="secondary" disabled={!canApprove} onClick={() => setRevising(true)} keys={docked ? ["Esc"] : undefined}>
+                    Revise…
+                  </OptionButton>
+                )}
+                {!canApprove && <span className="text-xs text-cc-fg3">Approve in your terminal</span>}
+              </>
+            }
+            end={
+              <>
+                {second && (
+                  <OptionButton variant="secondary" disabled={!canApprove} onClick={() => accept(second)} keys={docked ? [MOD, "Shift", "⏎"] : undefined} title={second.name}>
+                    Accept
+                  </OptionButton>
+                )}
+                {primary && (
+                  <Split
+                    label="More accept options"
+                    disabled={!canApprove}
+                    items={menu.map((o) => ({ label: LABEL[o.id]?.[0] ?? o.name, danger: o.id === "approve-bypass", onSelect: () => accept(o) }))}
+                  >
+                    <OptionButton variant="primary" disabled={!canApprove} onClick={() => accept(primary)} keys={docked ? [MOD, "⏎"] : undefined} title={primary.name} short={LABEL[primary.id]?.[1]}>
+                      {LABEL[primary.id]?.[0] ?? primary.name}
+                    </OptionButton>
+                  </Split>
+                )}
+              </>
+            }
+          />
         )
       }
     >
-      <div className="max-h-[min(460px,50vh)] overflow-auto rounded-lg bg-muted/50 px-4 py-3 text-foreground">
-        <Markdown content={request.planMarkdown} />
-      </div>
+      {plan ? (
+        <div className="flex flex-col items-start gap-1">
+          {/* a clamped preview; "Open plan" shows it all here (we have no side document view) */}
+          <div className={cn("w-full text-cc-fg2", !open && (docked ? "max-h-32 overflow-hidden" : "max-h-10 overflow-hidden"))}>
+            <Markdown content={request.planMarkdown} />
+          </div>
+          <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={cn("-ms-2 h-6 rounded-lg px-2 text-sm text-cc-fg2 hover:bg-cc-ghost hover:text-foreground", FOCUS)}>
+            {open ? "Close plan" : "Open plan"}
+          </button>
+        </div>
+      ) : (
+        <p className="text-cc-fg2">Claude hasn't written a plan, so there's nothing to review.</p>
+      )}
       {checks.length > 0 && canApprove && (
-        <div className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2 text-xs">
-          <span className="text-muted-foreground">With the approval, run these without asking for the rest of this session:</span>
+        <div className="flex shrink-0 flex-col gap-1.5 rounded-lg bg-cc-wash px-3 py-2 text-[13px] leading-[17px] text-cc-fg2">
+          <span>With the approval, run these without asking for the rest of this session:</span>
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {checks.map((c) => (
-              <label key={c} className="flex cursor-pointer items-center gap-1.5">
+              <label key={c} className="flex cursor-pointer items-center gap-1.5 text-foreground">
                 <Checkbox
                   checked={!skip.has(c)}
                   onCheckedChange={(v) =>

@@ -131,7 +131,7 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
 }
 
 /**
- * The height an answer will take, by what it is made of: wrapped prose at 23 px a line, code at
+ * The height an answer will take, by what it is made of: wrapped prose at 21 px a line, code at
  * 19 px a line plus the box, table rows at ~30 px, headings and lists a little taller. Close
  * enough that a row barely changes size when it is measured (each change moves the chat under the
  * wheel).
@@ -149,14 +149,15 @@ function markdownHeight(text: string, cpl: number): number {
     else if (line.startsWith("|")) h += /^\|[\s:|-]+\|?\s*$/.test(line) ? 0 : 30
     else if (/^#{1,6}\s/.test(line)) h += 34
     else if (!line.trim()) h += 10
-    else h += Math.max(1, Math.ceil(line.length / cpl)) * 23 + (/^\s*([-*]|\d+\.)\s/.test(line) ? 4 : 0)
+    else h += Math.max(1, Math.ceil(line.length / cpl)) * 21 + (/^\s*([-*]|\d+\.)\s/.test(line) ? 4 : 0)
   }
   return Math.max(23, h)
 }
 
 /** Coarse first-paint height per row; ResizeObserver measurement corrects it. */
 export function estimateRow(row: Row, items: Record<ID, Item>, width: number): number {
-  const charsPerLine = Math.max(40, Math.floor((Math.min(width, 1140) - 40) / 7.6))
+  // 15 px prose in a column of at most 768 px (32 px gutters)
+  const charsPerLine = Math.max(40, Math.floor(Math.min(width - 64, 768) / 7.8))
   const textLines = (text: string, cpl = charsPerLine) => {
     let n = 0
     for (const para of text.split("\n")) n += Math.max(1, Math.ceil(para.length / cpl))
@@ -166,17 +167,17 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
     case "user": {
       const it = items[row.itemId]
       // right-aligned bubble, at most 85% of the column
-      return 56 + (it?.type === "user_message" ? textLines(it.text, Math.floor(charsPerLine * 0.85)) : 1) * 23
+      return 60 + Math.min(it?.type === "user_message" ? textLines(it.text, Math.floor(charsPerLine * 0.85)) : 1, 12) * 21
     }
     case "agent": {
       const it = items[row.itemId]
-      return it?.type === "agent_message" ? 16 + markdownHeight(it.text, charsPerLine) : 62
+      return it?.type === "agent_message" ? markdownHeight(it.text, charsPerLine) : 42
     }
     case "tools":
     case "tool":
       return 28
     case "edits":
-      return 44 + row.itemIds.length * 30
+      return 44 + Math.min(row.itemIds.length, 4) * 32
     case "files":
       return 80
     case "thought":
@@ -184,9 +185,9 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
     case "receipt":
       return 26
     case "done":
-      return 28
+      return 24
     case "date":
-      return 40
+      return 20
     case "compaction":
       return 36
     case "notice":
@@ -204,18 +205,37 @@ export interface Block {
   key: string
   turnId: ID | null
   rows: Row[]
+  /** space above each row, in px */
+  gaps: number[]
+}
+
+const STEP = new Set<Row["kind"]>(["tool", "tools", "thought"])
+
+/**
+ * Claude Code desktop's rhythm: 24 px before a new turn, 8 px from your message to the reply,
+ * 20 px between the items of a reply; one-line steps stack with no gap (each is 28 px tall).
+ */
+function gapBefore(prev: Row | undefined, row: Row): number {
+  if (!prev) return 0
+  if (row.kind === "user") return prev.kind === "date" ? 8 : 24
+  if (row.kind === "date" || row.kind === "compaction") return 24
+  if (row.kind === "done" || row.kind === "receipt" || prev.kind === "user") return 8
+  return STEP.has(prev.kind) && STEP.has(row.kind) ? 0 : 20
 }
 
 export function groupBlocks(rows: Row[]): Block[] {
   const blocks: Block[] = []
   let cur: Block | null = null
+  let prev: Row | undefined
   for (const r of rows) {
     const t = r.kind === "compaction" ? null : r.turnId
     if (r.kind === "compaction" || !cur || cur.turnId !== t) {
-      cur = { key: `b:${r.key}`, turnId: t, rows: [] }
+      cur = { key: `b:${r.key}`, turnId: t, rows: [], gaps: [] }
       blocks.push(cur)
     }
     cur.rows.push(r)
+    cur.gaps.push(gapBefore(prev, r))
+    prev = r
     if (r.kind === "compaction") cur = null
   }
   return blocks
@@ -223,7 +243,7 @@ export function groupBlocks(rows: Row[]): Block[] {
 
 export function estimateBlock(block: Block, items: Record<ID, Item>, width: number) {
   let h = 0
-  for (const r of block.rows) h += estimateRow(r, items, width)
+  block.rows.forEach((r, i) => (h += estimateRow(r, items, width) + block.gaps[i]))
   return h
 }
 

@@ -214,7 +214,7 @@ export const ActivityBar = memo(function ActivityBar({ sessionId }: { sessionId:
   const away = useAway(sessionId) !== null
   if (!showPlan && !hasLiveSubs && !child.length && !isStuck && !away) return <SinceCard sessionId={sessionId} />
   return (
-    <div className="mx-auto w-full max-w-[var(--chat-w)] min-w-0 px-5 pb-1.5">
+    <div className="mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 @max-[560px]:px-4 min-w-0 pb-1.5">
       <SinceCard sessionId={sessionId} />
       <StuckCard sessionId={sessionId} canSend={control ? capabilities(control).send : false} />
       <PlanCard sessionId={sessionId} />

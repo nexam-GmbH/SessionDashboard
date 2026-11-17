@@ -1,6 +1,7 @@
 // Adapted from cline/cline@72b3d71:apps/examples/desktop-app/webview/components/ui/markdown.tsx (Apache-2.0). Modified for session-dashboard.
 // Also adapted from cline/cline@72b3d71:sdk/packages/ui/components/markdown.ts (Apache-2.0): controls config and Shiki policy.
-// Changes: streamdown `streaming` mode only for the live item, `static` otherwise;
+// Changes: streamdown `streaming` mode only for the live item, `static` otherwise, no caret (text
+// streams in as in Claude Code desktop);
 // code highlighting through @streamdown/code (Shiki, languages loaded lazily on
 // first use, LRU-cached); no mermaid; quiet single-box code blocks via markdown.css.
 import { memo, type ComponentProps } from "react"
@@ -40,7 +41,7 @@ function InlineCode(all: ComponentProps<"code"> & { node?: unknown }) {
             if (cmd) void t.runInTerminal(cmd)
             else t.runSlashInTerminal(slash!, currentSessionId() ?? undefined)
           })}
-        className="inline-flex translate-y-[2px] items-center gap-1 rounded-md bg-muted px-1.5 text-xs font-medium text-foreground hover:bg-accent"
+        className="inline-flex h-6 translate-y-[2px] items-center gap-1 rounded-md bg-cc-secondary px-1.5 text-[13px] text-foreground hover:bg-cc-secondary-hover"
         title={`Run in the terminal: ${cmd ?? slash}`}
       >
         <Play className="size-3" /> Run
@@ -67,7 +68,6 @@ export const Markdown = memo(function Markdown({
       plugins={PLUGINS}
       mode={streaming ? "streaming" : "static"}
       isAnimating={streaming}
-      caret={streaming ? "block" : undefined}
       parseIncompleteMarkdown={streaming}
       lineNumbers={false}
       // no box with its own scrollbar inside the chat (streamdown caps tables at 300 px and code at

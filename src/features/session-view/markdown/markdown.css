@@ -1,127 +1,254 @@
 /*
  * Adapted from cline/cline@72b3d71:sdk/packages/ui/components/markdown.css (Apache-2.0).
- * Modified for session-dashboard: our tokens, 14px chat prose with relaxed leading,
- * 4px radii, bordered single-box code blocks, no mermaid block styles.
+ * Modified for session-dashboard: Claude Code desktop's reply prose (15/21, 0.75em flow, quiet
+ * inline code, wash code wells), no mermaid block styles, and the chat's own small pieces.
  * Unlayered on purpose so it wins over streamdown's Tailwind utilities.
  */
+/* the code wash and the user bubble, made opaque so a fade can end in it */
+:root {
+  --sd-well: color-mix(in srgb, var(--cc-surface), #0b0b0b 5%);
+}
+.dark {
+  --sd-well: color-mix(in srgb, var(--cc-surface), #fff 5%);
+}
+
 .sd-markdown {
+  --flow: 0.75em;
   min-width: 0;
   max-width: 100%;
-  font-size: 14px;
-  line-height: 1.65;
-  color: var(--foreground);
+  font-size: 15px;
+  line-height: 21px;
+  color: var(--cc-fg);
   overflow-wrap: anywhere;
   user-select: text;
 }
 
-.sd-markdown > :not(:last-child) {
-  margin-block-end: 0.75rem;
+/* Claude Code desktop's flow: 0.75em above every block, none below, none above the first */
+.sd-markdown > *,
+.sd-markdown :is(li, blockquote) > :is(p, ul, ol, pre, blockquote, table) {
+  margin-block: var(--flow) 0 !important;
 }
-
+.sd-markdown > :first-child,
+.sd-markdown :is(li, blockquote) > :first-child {
+  margin-block-start: 0 !important;
+}
 .sd-markdown p {
   margin: 0;
 }
 
 .sd-markdown :is(h1, h2, h3, h4, h5, h6) {
-  margin-block: 0.9rem 0.35rem;
-  line-height: 1.35;
   font-weight: 600;
-  color: var(--foreground);
-}
-.sd-markdown > :first-child {
-  margin-block-start: 0;
+  color: var(--cc-fg);
 }
 .sd-markdown h1 {
-  font-size: 17px;
+  font-size: 1.75em;
+  line-height: 1.25;
+  margin-block-start: calc(var(--flow) * 3) !important;
 }
 .sd-markdown h2 {
-  font-size: 15.5px;
+  font-size: 1.375em;
+  line-height: 1.25;
+  margin-block-start: calc(var(--flow) * 2.5) !important;
 }
-.sd-markdown :is(h3, h4, h5, h6) {
-  font-size: 14px;
+.sd-markdown h3 {
+  font-size: 1.125em;
+  line-height: 1.3;
+  margin-block-start: calc(var(--flow) * 2) !important;
+}
+.sd-markdown h4 {
+  font-size: 1em;
+  line-height: 1.3;
+  margin-block-start: calc(var(--flow) * 1.667) !important;
+}
+.sd-markdown :is(h5, h6) {
+  font-size: 0.875em;
+  line-height: 1.3;
+  margin-block-start: calc(var(--flow) * 1.667) !important;
+}
+.sd-markdown h6 {
+  color: var(--cc-fg2);
+}
+.sd-markdown > :is(h1, h2, h3, h4, h5, h6) + * {
+  margin-block-start: calc(var(--flow) * 0.667) !important;
+}
+.sd-markdown > :is(ul, ol, [data-streamdown="table-wrapper"]) + * {
+  margin-block-start: calc(var(--flow) * 2) !important;
+}
+.sd-markdown > :first-child {
+  margin-block-start: 0 !important;
 }
 
 .sd-markdown strong {
   font-weight: 600;
-  color: var(--foreground);
+  color: var(--cc-fg);
+}
+.sd-markdown del {
+  text-decoration-color: color-mix(in srgb, currentcolor 60%, transparent);
 }
 
 .sd-markdown hr {
-  margin-block: 0.75rem;
-  border-color: var(--border);
+  margin-block-start: calc(var(--flow) * 2) !important;
+  margin-inline: 0.375em;
+  border: 0;
+  border-top: 0.5px solid var(--cc-wash-3);
 }
 
-/* Outside markers so wrapped list lines align with their first line. */
+/* outside markers so wrapped list lines align with their first line */
 .sd-markdown :is(ul, ol) {
   list-style-position: outside;
-  padding-inline-start: 1.25rem;
+  padding-inline-start: 2em;
   margin: 0;
 }
 .sd-markdown ul {
   list-style-type: disc;
 }
+.sd-markdown ul ul {
+  list-style-type: circle;
+}
+.sd-markdown ul ul ul {
+  list-style-type: square;
+}
 .sd-markdown ol {
   list-style-type: decimal;
 }
+.sd-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+.sd-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
 .sd-markdown li {
-  padding-block: 0.05rem;
+  padding-block: 0;
+  padding-inline-start: 0.5em;
+}
+.sd-markdown li + li {
+  margin-block-start: calc(var(--flow) * 0.333);
 }
 .sd-markdown li::marker {
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  color: var(--cc-fg);
+}
+.sd-markdown input[type="checkbox"] {
+  accent-color: var(--cc-accent);
+  pointer-events: none;
 }
 
 .sd-markdown [data-streamdown="link"],
 .sd-markdown a {
-  color: var(--link);
+  color: var(--cc-accent-text);
   cursor: pointer;
+  border-radius: 2px;
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentcolor 35%, transparent);
-  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, currentcolor 40%, transparent);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 60ms ease-out;
+}
+.sd-markdown :is([data-streamdown="link"], a):is(:hover, :focus-visible) {
+  text-decoration-color: currentcolor;
 }
 
-.sd-markdown [data-streamdown="inline-code"] {
-  padding: 0.1em 0.3em;
-  border-radius: 3px;
-  border: 0;
-  background: var(--accent);
+/* inline code, the quiet look: the text's own colour on the ghost wash */
+.sd-markdown :not(pre) > code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--cc-ghost);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--foreground);
+  font-size: 0.9em;
+  line-height: 1;
+  color: inherit;
 }
 
-/* Code blocks as in Claude's apps: one bordered box, a header line with the language on the left
-   and Copy on the right, the code under it. Nothing lies over the code, and long lines wrap (no
-   scrollbar under a one-line block). */
+.sd-markdown blockquote {
+  margin-inline-start: 0.5em;
+  padding-inline-start: 1em;
+  border-inline-start: 4px solid var(--cc-wash-2);
+  color: var(--cc-fg2);
+  font-style: normal;
+}
+
+.sd-markdown kbd {
+  padding: 0.0625em 0.375em;
+  border: 1px solid var(--cc-wash-2);
+  border-bottom-width: 2px;
+  border-radius: 8px;
+  background: var(--cc-wash);
+  font-family: var(--font-mono);
+  font-size: 0.8125em;
+}
+.sd-markdown mark {
+  padding-inline: 0.125em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--cc-warn) 33%, transparent);
+  color: inherit;
+}
+.sd-markdown img {
+  max-width: 100%;
+}
+.sd-markdown details {
+  padding: 0.5em 0.875em;
+  border: 0.5px solid var(--cc-wash-3);
+  border-radius: 8px;
+}
+
+/* An assistant reply: prose 4 px in from the start and stopping early at the end on a wide column;
+   code, tables and cards take the full width */
+.sd-reply > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) {
+  padding-inline: 4px clamp(0px, (100% - 384px) * 0.175, 56px);
+}
+.sd-reply > :is(ul, ol) {
+  padding-inline-start: calc(2em + 4px);
+}
+.sd-reply > blockquote {
+  padding-inline-start: calc(1em + 4px);
+}
+
+/* Code blocks (Claude Code desktop): one quiet well on the wash, no header bar, no line numbers,
+   wrapping lines, an inset hairline; Copy over the top right and the language beside it on hover */
 .sd-markdown [data-streamdown="code-block"] {
   position: relative;
-  margin-block: 0.6rem;
+  width: fit-content;
+  min-width: 8rem;
+  max-width: 100%;
   padding: 0;
   gap: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
-  background: var(--card);
-  max-width: 100%;
+  background: var(--sd-well);
+  box-shadow: inset 0 0 0 1px var(--cc-ring);
   overflow: hidden;
 }
 .sd-markdown [data-streamdown="code-block-header"] {
-  display: flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 72px 0 12px;
-  border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-  background: transparent;
+  position: absolute;
+  top: 4px;
+  right: 36px;
+  z-index: 1;
+  height: 28px;
+  max-width: 20ch;
+  padding-inline: 0.75rem 4px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--cc-fg3);
+  background: linear-gradient(to right, transparent, var(--sd-well) 0.75rem);
+  opacity: 0;
+  transition: opacity 120ms var(--cc-ease-snap);
+}
+.sd-markdown [data-streamdown="code-block"]:is(:hover, :focus-within) [data-streamdown="code-block-header"] {
+  opacity: 1;
+}
+.sd-markdown [data-streamdown="code-block-header"] span {
+  margin: 0;
+  font-family: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sd-markdown [data-streamdown="code-block-body"] {
   border: 0;
   border-radius: 0;
   background: transparent;
-  padding: 0.625rem 0.875rem;
+  padding: 12px calc(1ch + 32px) 12px calc(10px + 1ch);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 19px;
   overflow: visible;
 }
 .sd-markdown [data-streamdown="code-block-body"] pre {
@@ -137,46 +264,48 @@
 .sd-markdown [data-streamdown="code-block-body"] code > span {
   display: block;
 }
-/* the actions (Copy) sit in the header line, top right (the code block's only child without a
-   data-streamdown name; no :has(), which WebKit re-checks on every change of the chat) */
+/* the actions (Copy): the code block's only child without a data-streamdown name (no :has(), which
+   WebKit re-checks on every change of the chat) */
 .sd-markdown [data-streamdown="code-block"] > div:not([data-streamdown]) {
   position: absolute;
-  top: 0;
-  right: 0;
-  height: 32px;
-  display: flex;
-  align-items: center;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
   margin: 0;
-  padding: 0 4px 0 0;
+  padding: 0;
 }
 .sd-markdown [data-streamdown="code-block-actions"] {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  gap: 3px;
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
   padding: 0 !important;
+  backdrop-filter: none !important;
 }
 .sd-markdown [data-streamdown="code-block-actions"] button {
-  height: 24px;
-  min-width: 24px;
-  padding: 0 6px;
-  border-radius: 6px;
-  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--cc-fg2);
 }
 .sd-markdown [data-streamdown="code-block-actions"] button:hover {
-  background: var(--accent);
-  color: var(--foreground);
+  background: var(--cc-ghost);
+  color: var(--cc-fg);
 }
 
+/* tables: full width, a 1 px frame with 8 px corners, a washed header row */
 .sd-markdown [data-streamdown="table-wrapper"] {
-  margin-block: 0.6rem;
   padding: 0;
   gap: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--cc-wash-2);
   border-radius: 8px;
   background: transparent;
+  overflow: hidden;
 }
 /* one horizontal scroller for a wide table, never a vertical one: the wheel keeps scrolling the
    chat; no sticky header (a sticky element in a nested scroller repaints on every scroll step) */
@@ -185,53 +314,38 @@
   overflow-y: hidden;
   max-height: none !important;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
+  background: transparent;
 }
 .sd-markdown [data-streamdown="table-wrapper"] thead {
   position: static !important;
+  background: var(--cc-wash);
 }
 .sd-markdown [data-streamdown="table"] {
-  min-width: 100%;
-  font-size: 13px;
+  width: 100%;
+  font-size: 1em;
+  border-collapse: collapse;
 }
 .sd-markdown [data-streamdown="table"] :is(th, td) {
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 0.4375em 0.75em;
+  font-size: 1em;
   text-align: left;
+  white-space: normal;
+}
+.sd-markdown [data-streamdown="table"] tr + tr,
+.sd-markdown [data-streamdown="table"] tbody tr {
+  border-top: 1px solid var(--cc-wash-2);
 }
 .sd-markdown [data-streamdown="table"] th {
-  font-weight: 600;
-  color: var(--muted-foreground);
-  background: var(--card);
+  font-weight: 500;
+  color: var(--cc-fg);
 }
 
-.sd-markdown blockquote {
-  margin: 0;
-  padding-inline-start: 0.75rem;
-  border-inline-start: 2px solid var(--border);
-  color: var(--muted-foreground);
-}
-
-/* Muted variant for thoughts and secondary prose. */
+/* Muted variant for subagent reports and other secondary prose. */
 .sd-markdown.sd-markdown-muted {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-/*
- * Streaming caret inline at the end of the text. Streamdown puts it on the last
- * block wrapper, which is `display: contents` around a <p>, so it would wrap to
- * its own line; move it onto the last paragraph / heading / list item instead.
- */
-.sd-markdown[style*="--streamdown-caret"] > :last-child::after {
-  content: none !important;
-}
-.sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.sd-markdown[style*="--streamdown-caret"] > :last-child:not([data-sd-caret-hidden]) > :is(ul, ol):last-child > li:last-child::after {
-  content: var(--streamdown-caret);
-  color: var(--muted-foreground);
-  margin-left: 1px;
+  color: var(--cc-fg2);
+  font-size: 14px;
+  line-height: 20px;
 }
 
 /* "Thinking view · …" after Ctrl+O: shows, then fades away by itself (no timers). */
@@ -255,4 +369,74 @@
 .sd-markdown [data-streamdown="code-block"] {
   content-visibility: visible !important;
   contain-intrinsic-size: none !important;
+}
+
+/* ---------- transcript chrome ---------- */
+/* a message's action bar: shows 100 ms after the pointer comes, goes at once (Claude Code desktop) */
+.sd-msg-actions {
+  opacity: 0;
+  transition: opacity 60ms ease-out;
+}
+.sd-msg:is(:hover, :focus-within) .sd-msg-actions,
+.sd-msg-actions[data-open] {
+  opacity: 1;
+  transition: opacity 120ms var(--cc-ease-snap) 100ms;
+}
+@media (hover: none) {
+  .sd-msg-actions {
+    opacity: 1;
+  }
+}
+
+/* a message you just sent pops in once */
+@keyframes sd-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+}
+.sd-bubble-in {
+  transform-origin: right center;
+  animation: sd-bubble-in 450ms var(--cc-ease-overshoot);
+}
+
+/* the end of a folded message fades into the bubble */
+.sd-fold {
+  background: linear-gradient(transparent, var(--sd-well));
+}
+
+/* scroll fades: the page colour easing out over 32 px at the top, 48 px at the bottom */
+.sd-fade-top,
+.sd-fade-bottom {
+  --c: var(--background);
+  background: linear-gradient(
+    to bottom,
+    var(--c),
+    color-mix(in srgb, var(--c) 85%, transparent) 13%,
+    color-mix(in srgb, var(--c) 50%, transparent) 40%,
+    color-mix(in srgb, var(--c) 15%, transparent) 70%,
+    transparent
+  );
+  transition: opacity 150ms ease-out;
+}
+.sd-fade-bottom {
+  transform: scaleY(-1);
+}
+
+/* "Scroll to bottom": the panel colour under the secondary fill */
+.sd-pill {
+  background:
+    linear-gradient(var(--cc-secondary), var(--cc-secondary)),
+    var(--cc-panel);
+}
+.sd-pill:hover {
+  background:
+    linear-gradient(var(--cc-secondary-hover), var(--cc-secondary-hover)),
+    var(--cc-panel);
+  color: var(--cc-fg);
+}
+
+:root[data-reduce-motion] :is(.sd-bubble-in, .sd-msg-actions, .sd-fade-top, .sd-fade-bottom) {
+  animation: none;
+  transition: none;
 }

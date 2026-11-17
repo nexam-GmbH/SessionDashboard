@@ -1,16 +1,15 @@
 // Adapted from agent-of-empires/agent-of-empires@d134cfd:web/src/components/acp/AskUserQuestionCard.tsx (MIT). Modified for session-dashboard.
-// Also adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-ask-question.tsx (Apache-2.0): letter keys, options.
-// Changes: AskUserQuestion shape: one tab per question header, 2–4
-// options with descriptions and optional preview, multi-select, "Other…" free text;
-// answers go to answerQuestion. Calm chrome: the question is the title, tabs
-// sit in the title line, one line per option, key hints in tooltips.
-import { memo, useEffect, useRef, useState } from "react"
-import { Check, ChevronLeft, ChevronRight } from "lucide-react"
+// Also adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-ask-question.tsx (Apache-2.0).
+// Claude Code desktop's AskUserQuestion card: the question with a "‹ 1 of 3 ›" pager, numbered
+// 44 px option rows, a "Something else" field, then "{n} selected" · Skip · Next / Submit. In
+// single-select a pick answers at once (Submit once every question has an answer).
+import { memo, useEffect, useId, useRef, useState } from "react"
+import { Check } from "lucide-react"
 import type { QuestionRequest } from "@/lib/model"
 import { answerRequest, skipQuestion } from "@/features/session-view/sessionStore"
 import { MOD } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
-import { CardFrame, canStealFocus, FOCUS, OptionButton, type Pager } from "./cardChrome"
+import { canStealFocus, ENTER, modEnter, OptionButton, PagerNav, plain, useCardKeys, type Pager } from "./cardChrome"
 
 type Answer = { picked: string[]; other: string; otherOn: boolean }
 const EMPTY: Answer = { picked: [], other: "", otherOn: false }
@@ -21,205 +20,213 @@ function answerValue(a: Answer, multi: boolean): string | string[] | undefined {
   return multi ? vals : vals[0]
 }
 
+// rows: a hairline between them, inset 12 px, gone beside a hovered row
+const ROW = "relative flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-start hover:bg-cc-wash"
+const SEP = "before:absolute before:inset-x-3 before:top-0 before:h-px before:scale-y-50 before:bg-cc-wash-2 before:transition-opacity before:duration-150 hover:before:opacity-0"
+const TILE = "inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-sm tabular-nums"
+
 export const QuestionCard = memo(function QuestionCard({
   request,
   canAnswer,
   pager,
-  autoFocus,
+  docked,
 }: {
   request: QuestionRequest
   canAnswer: boolean
   pager?: Pager
-  autoFocus?: boolean
+  docked: boolean
 }) {
   const ref = useRef<HTMLElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const otherRef = useRef<HTMLInputElement>(null)
+  const hintId = useId()
   const [tab, setTab] = useState(0)
   const [answers, setAnswers] = useState<Answer[]>(() => request.questions.map(() => EMPTY))
   useEffect(() => {
-    if (autoFocus && canStealFocus()) ref.current?.focus({ preventScroll: true })
-  }, [autoFocus, request.id])
+    if (docked && canStealFocus()) ref.current?.focus({ preventScroll: true })
+  }, [docked, request.id])
 
+  const n = request.questions.length
   const q = request.questions[tab]
   const a = answers[tab] ?? EMPTY
-  const answered = answers.map((x, i) => answerValue(x, request.questions[i].multiSelect) !== undefined)
-  const allAnswered = answered.every(Boolean)
-  // Claude Code desktop sends as soon as one question has an answer (the rest go unanswered)
-  const anyAnswered = answered.some(Boolean)
-  const last = tab === request.questions.length - 1
+  const valueOf = (list: Answer[], i: number) => answerValue(list[i] ?? EMPTY, request.questions[i].multiSelect)
+  const anyAnswered = answers.some((_, i) => valueOf(answers, i) !== undefined)
+  const last = tab === n - 1
 
-  const patch = (i: number, p: Partial<Answer>) => setAnswers((prev) => prev.map((x, j) => (j === i ? { ...x, ...p } : x)))
-  const pick = (label: string) => {
+  const submit = (list = answers) => {
     if (!canAnswer) return
-    if (q.multiSelect) {
-      patch(tab, { picked: a.picked.includes(label) ? a.picked.filter((x) => x !== label) : [...a.picked, label] })
-    } else {
-      patch(tab, { picked: [label], otherOn: false })
-      if (!last) setTimeout(() => setTab((t) => Math.min(t + 1, request.questions.length - 1)), 120)
-    }
-  }
-  const submit = () => {
-    if (!anyAnswered || !canAnswer) return
     const out: Record<string, string | string[]> = {}
     request.questions.forEach((qq, i) => {
-      const v = answerValue(answers[i], qq.multiSelect)
+      const v = valueOf(list, i)
       if (v !== undefined) out[qq.question] = v
     })
-    answerRequest(request, out)
+    if (Object.keys(out).length) answerRequest(request, out)
+  }
+  const patch = (p: Partial<Answer>) => setAnswers((prev) => prev.map((x, j) => (j === tab ? { ...x, ...p } : x)))
+  /** After a question is answered: the next unanswered one, or send when none is left. */
+  const advance = (list: Answer[]) => {
+    const open = list.findIndex((_, i) => i !== tab && valueOf(list, i) === undefined)
+    if (open < 0) submit(list)
+    else setTab(open)
+  }
+  const pick = (label: string) => {
+    if (!canAnswer) return
+    if (q.multiSelect) return patch({ picked: a.picked.includes(label) ? a.picked.filter((x) => x !== label) : [...a.picked, label] })
+    const next = answers.map((x, j) => (j === tab ? { ...x, picked: [label], otherOn: false } : x))
+    setAnswers(next)
+    advance(next)
+  }
+  const focusRow = (d: 1 | -1) => {
+    const rows = [...(listRef.current?.querySelectorAll<HTMLElement>("[data-opt]") ?? [])]
+    const i = rows.indexOf(document.activeElement as HTMLElement)
+    rows[i < 0 ? (d > 0 ? 0 : rows.length - 1) : (i + d + rows.length) % rows.length]?.focus()
   }
 
-  // Ctrl+Enter submits from anywhere in the session (Claude Code desktop), unless you are typing
-  useEffect(() => {
-    if (!canAnswer) return
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.isComposing) return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT") && !ref.current?.contains(t) && (t as HTMLTextAreaElement).value.trim()) return
-      if (!anyAnswered) return
-      e.preventDefault()
-      e.stopPropagation()
-      submit()
-    }
-    window.addEventListener("keydown", onKey, true)
-    return () => window.removeEventListener("keydown", onKey, true)
-  })
-
-  // several questions: "‹ 2 of 3 ›" beside the question, as Claude Code desktop pages them
-  const tabs =
-    request.questions.length > 1 ? (
-      <span className="flex h-6 shrink-0 items-center gap-0.5 text-xs font-normal text-muted-foreground" aria-label={`Question ${tab + 1} of ${request.questions.length}`}>
-        <button type="button" aria-label="Previous question" disabled={tab === 0} onClick={() => setTab(tab - 1)} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground disabled:opacity-40", FOCUS)}>
-          <ChevronLeft size={14} />
-        </button>
-        <span className="tabular flex items-center gap-1">
-          {answered[tab] && <Check size={11} aria-label="answered" />}
-          {tab + 1} of {request.questions.length}
-        </span>
-        <button type="button" aria-label="Next question" disabled={last} onClick={() => setTab(tab + 1)} className={cn("inline-flex size-6 items-center justify-center rounded-md hover:bg-accent hover:text-foreground disabled:opacity-40", FOCUS)}>
-          <ChevronRight size={14} />
-        </button>
-      </span>
-    ) : undefined
-
-  return (
-    <CardFrame
-      ref={ref}
-      tone="input"
-      label="Question from Claude"
-      keyHint={`1 to ${Math.min(9, q.options.length)} or A to ${String.fromCharCode(64 + Math.min(26, q.options.length))}: pick an answer. Enter: ${request.questions.length > 1 ? "next question or submit" : "submit"}.${request.questions.length > 1 ? " Left and Right arrows: switch question." : ""}`}
-      title={<span className="min-w-0">{q.question}</span>}
-      aside={tabs}
-      pager={pager}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return
-        const idx = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : /^[a-z]$/i.test(e.key) && !e.metaKey && !e.ctrlKey ? e.key.toLowerCase().charCodeAt(0) - 97 : -1
-        if (idx >= 0 && q.options[idx]) {
-          e.preventDefault()
-          pick(q.options[idx].label)
-        } else if (e.key === "ArrowRight" || (e.key === "Tab" && !e.shiftKey)) {
-          if (tab < request.questions.length - 1) {
-            e.preventDefault()
-            setTab(tab + 1)
-          }
-        } else if (e.key === "ArrowLeft") {
-          e.preventDefault()
-          setTab(Math.max(0, tab - 1))
-        } else if (e.key === "Enter") {
-          e.preventDefault()
-          if (last || allAnswered) submit()
-          else setTab(tab + 1)
+  useCardKeys(
+    ref,
+    docked &&
+      canAnswer &&
+      ((e) => {
+        if (modEnter(e) && !e.shiftKey) {
+          submit()
+          return true
         }
-      }}
-      footerNote={!canAnswer ? "Answer in your terminal" : request.questions[0]?.header && request.questions.length === 1 ? request.questions[0].header : undefined}
-      footer={
-        <>
-          <OptionButton variant="quiet" disabled={!canAnswer} onClick={() => skipQuestion(request)} title="Skip: Claude goes on with its best judgement">
-            Skip
-          </OptionButton>
-          {!last && (
-            <OptionButton variant="secondary" onClick={() => setTab(tab + 1)}>
-              Next
-            </OptionButton>
-          )}
-          <OptionButton variant="primary" disabled={!anyAnswered || !canAnswer} onClick={submit} keys={[MOD, "↵"]} title={anyAnswered ? "Submit" : "Answer a question to send"}>
-            Submit
-          </OptionButton>
-        </>
-      }
+        if (!plain(e) && !(e.shiftKey && e.key.length === 1)) return false
+        const inCard = !!ref.current?.contains(e.target as Node)
+        const i = /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : -1
+        if (i >= 0 && q.options[i]) pick(q.options[i].label)
+        else if (e.key === "Escape") skipQuestion(request)
+        else if (!inCard) return false
+        else if (e.key === "ArrowDown" || e.key === "ArrowUp") focusRow(e.key === "ArrowDown" ? 1 : -1)
+        else if (e.key === "ArrowLeft" && tab > 0) setTab(tab - 1)
+        else if (e.key === "ArrowRight" && !last) setTab(tab + 1)
+        else if (e.key === "Enter" && e.target === ref.current) advance(answers)
+        else {
+          // typing jumps into "Something else" (the key itself lands there)
+          if (e.key.length === 1 && e.key !== " ") otherRef.current?.focus()
+          return false
+        }
+        return true
+      }),
+  )
+
+  const count = a.picked.length + (a.otherOn && a.other.trim() ? 1 : 0)
+  const role = q.multiSelect ? "checkbox" : "radio"
+  return (
+    <section
+      ref={ref}
+      role="region"
+      aria-label="Question from Claude"
+      aria-describedby={hintId}
+      tabIndex={0}
+      className={cn(
+        "@container flex min-h-0 flex-col overflow-hidden pt-3 text-sm text-foreground outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--cc-accent)]",
+        ENTER,
+        docked ? "max-h-[max(60vh,16rem)] rounded-[14px] bg-cc-raised shadow-[var(--cc-shadow-composer)]" : "my-3 max-w-[480px] rounded-xl bg-cc-card ring-1 ring-cc-wash-2",
+      )}
     >
-      <div role={q.multiSelect ? "group" : "radiogroup"} aria-label={q.question} className="-mx-1 flex flex-col">
+      <span id={hintId} className="sr-only">
+        {n > 1 ? `Claude is asking ${n} questions. First question: ${request.questions[0].question}` : `Claude is asking: ${q.question}`} Choose an option to respond. 1 to{" "}
+        {Math.min(9, q.options.length)}: pick. Up and Down: move. {n > 1 ? "Left and Right: switch question. " : ""}Control+Enter: submit. Escape: skip.
+      </span>
+      <header className="flex min-w-0 shrink-0 items-start gap-2 ps-4 pe-3 pb-1.5">
+        <p className="min-w-0 flex-1 py-0.5 leading-5">{q.question}</p>
+        {n > 1 && <PagerNav noun="question" pager={{ index: tab, total: n, onPrev: tab > 0 ? () => setTab(tab - 1) : undefined, onNext: last ? undefined : () => setTab(tab + 1) }} />}
+      </header>
+      <div
+        ref={listRef}
+        role={q.multiSelect ? "group" : "radiogroup"}
+        aria-label={q.question}
+        className="flex max-h-[min(45vh,420px)] min-h-0 flex-col overflow-y-auto p-1.5 [&>:hover+*]:before:opacity-0"
+      >
         {q.options.map((o, i) => {
           const on = a.picked.includes(o.label)
           return (
             <button
               key={o.label}
               type="button"
-              role={q.multiSelect ? "checkbox" : "radio"}
+              data-opt
+              role={role}
               aria-checked={on}
               disabled={!canAnswer}
               onClick={() => pick(o.label)}
-              title={`${o.description ? `${o.description} · ` : ""}${i + 1} or ${String.fromCharCode(65 + i)}`}
               className={cn(
-                "flex min-w-0 flex-col rounded-md px-1.5 py-1.5 text-left disabled:opacity-60",
-                FOCUS,
-                on ? "bg-accent" : "hover:bg-accent/60",
+                ROW,
+                i > 0 && SEP,
+                "group/opt transition-transform duration-100 outline-none focus-visible:bg-cc-wash focus-visible:shadow-[inset_0_0_0_1px_var(--cc-accent)] active:scale-[0.99] disabled:opacity-40 motion-reduce:active:scale-100",
               )}
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <Mark on={on} multi={q.multiSelect} />
-                <span className="shrink-0 text-sm leading-5 font-medium text-foreground">{o.label}</span>
-                {o.description && <span className="min-w-0 truncate text-sm text-muted-foreground/80">{o.description}</span>}
+              <span className={cn(TILE, on ? "bg-cc-primary text-cc-on-primary" : "bg-cc-wash text-cc-fg3 group-hover/opt:bg-cc-wash-2 group-hover/opt:text-foreground")}>
+                {on ? <Check size={14} strokeWidth={2.5} /> : i + 1}
               </span>
-              {o.preview && on && (
-                <pre className="mt-1 ml-[22px] max-h-32 overflow-auto rounded-sm border border-border bg-background p-1.5 font-mono text-xs whitespace-pre-wrap text-muted-foreground">{o.preview}</pre>
-              )}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn("truncate", on ? "text-foreground" : "text-cc-fg2 group-hover/opt:text-foreground")}>{o.label}</span>
+                {o.description && <span className="text-[13px] leading-[17px] whitespace-pre-wrap text-cc-fg3">{o.description}</span>}
+                {o.preview && on && <pre className="mt-1 max-h-32 overflow-auto rounded-lg bg-cc-wash p-2 font-mono text-xs whitespace-pre-wrap text-cc-fg2">{o.preview}</pre>}
+              </span>
             </button>
           )
         })}
-        <div className={cn("flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5", a.otherOn ? "bg-accent" : "hover:bg-accent/60")}>
+        <div className={cn(ROW, SEP, "focus-within:bg-cc-wash")}>
           <button
             type="button"
-            role={q.multiSelect ? "checkbox" : "radio"}
+            role={role}
             aria-checked={a.otherOn}
             aria-label="Other"
             disabled={!canAnswer}
-            onClick={() => patch(tab, { otherOn: !a.otherOn, picked: q.multiSelect ? a.picked : [] })}
-            className={cn("inline-flex rounded-sm", FOCUS)}
+            onClick={() => (a.otherOn ? patch({ otherOn: false }) : otherRef.current?.focus())}
+            className={cn(TILE, "outline-none focus-visible:ring-1 focus-visible:ring-cc-accent", a.otherOn ? "bg-cc-primary text-cc-on-primary" : "bg-cc-wash text-cc-fg3")}
           >
-            <Mark on={a.otherOn} multi={q.multiSelect} />
+            {a.otherOn ? <Check size={14} strokeWidth={2.5} /> : q.options.length + 1}
           </button>
           <input
+            ref={otherRef}
+            data-opt
             value={a.other}
             disabled={!canAnswer}
-            placeholder="Other…"
+            placeholder="Something else"
             aria-label="Other answer"
-            onFocus={() => patch(tab, { otherOn: true, picked: q.multiSelect ? a.picked : [] })}
-            onChange={(e) => patch(tab, { other: e.target.value, otherOn: true })}
+            onFocus={() => patch({ otherOn: true, picked: q.multiSelect ? a.picked : [] })}
+            onChange={(e) => patch({ other: e.target.value, otherOn: true })}
             onKeyDown={(e) => {
               e.stopPropagation()
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                 e.preventDefault()
-                if (last || allAnswered) submit()
-                else setTab(tab + 1)
-              }
+                if (e.ctrlKey || e.metaKey) submit()
+                else advance(answers)
+              } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault()
+                focusRow(e.key === "ArrowDown" ? 1 : -1)
+              } else if (e.key === "Escape") ref.current?.focus()
             }}
-            className="h-5 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
+            className="h-7 min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-cc-placeholder"
           />
         </div>
       </div>
-    </CardFrame>
+      <div className="flex min-h-12 shrink-0 items-center gap-3 border-t-[0.5px] border-cc-wash-2 py-1.5 ps-5 pe-4 text-xs text-cc-fg3">
+        <span className="me-auto flex min-w-0 items-center gap-3">
+          {pager && pager.total > 1 && <PagerNav pager={pager} noun="request" />}
+          {!canAnswer ? "Answer in your terminal" : q.multiSelect && `${count} selected`}
+        </span>
+        <OptionButton variant="secondary" className="h-6 px-2" disabled={!canAnswer} onClick={() => skipQuestion(request)} title="Claude goes on with its best judgement">
+          Skip
+        </OptionButton>
+        {last ? (
+          <OptionButton
+            variant="primary"
+            disabled={!anyAnswered || !canAnswer}
+            onClick={() => submit()}
+            keys={docked ? [MOD, "⏎"] : undefined}
+            title={anyAnswered ? "Submit" : a.otherOn ? "Type an answer to send" : "Select an option to send"}
+          >
+            Submit
+          </OptionButton>
+        ) : (
+          <OptionButton variant="primary" disabled={!canAnswer} onClick={() => setTab(tab + 1)}>
+            Next
+          </OptionButton>
+        )}
+      </div>
+    </section>
   )
 })
-
-function Mark({ on, multi }: { on: boolean; multi: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex size-3.5 shrink-0 items-center justify-center border",
-        multi ? "rounded-sm" : "rounded-full",
-        on ? "border-foreground bg-foreground text-background" : "border-input",
-      )}
-    >
-      {on && (multi ? <Check size={10} strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />)}
-    </span>
-  )
-}

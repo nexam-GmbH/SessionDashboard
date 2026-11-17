@@ -94,7 +94,7 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
           onScroll?.(event)
         }}
         className={cn(
-          "relative block w-full flex-1 resize-none overflow-x-hidden overflow-y-hidden bg-transparent text-foreground outline-none placeholder:text-muted-foreground/70",
+          "relative block w-full flex-1 resize-none overflow-x-hidden overflow-y-hidden bg-transparent text-[var(--cc-fg)] outline-none placeholder:text-cc-placeholder",
           className,
         )}
       />

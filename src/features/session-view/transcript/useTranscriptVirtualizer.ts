@@ -85,12 +85,17 @@ export function useTranscriptVirtualizer({
   const [isAtBottom, setIsAtBottom] = useState(true)
   // more than 200 px up: Claude Code desktop's "Scroll to bottom" shows
   const [farFromBottom, setFarFromBottom] = useState(false)
+  // the edge fades show only where there is more to scroll to: 1 above, 2 more than 8 px below
+  const [fades, setFades] = useState(0)
   const syncIsAtBottom = useCallback(() => {
     const el = scrollRef.current
     const next = bottomLockedRef.current ? true : el ? isNearBottom(el.scrollTop, el.clientHeight, el.scrollHeight) : true
     setIsAtBottom((cur) => (cur === next ? cur : next))
-    const far = !next && !!el && el.scrollHeight - el.scrollTop - el.clientHeight > 200
+    const below = el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0
+    const far = !next && below > 200
     setFarFromBottom((cur) => (cur === far ? cur : far))
+    const f = (el && el.scrollTop > 1 ? 1 : 0) | (below > 8 ? 2 : 0)
+    setFades((cur) => (cur === f ? cur : f))
   }, [scrollRef])
 
   const pin = useCallback(() => {
@@ -231,5 +236,5 @@ export function useTranscriptVirtualizer({
 
   const measure = useCallback((node: Element | null) => virtualizer.measureElement(node), [virtualizer])
 
-  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom, farFromBottom }
+  return { virtualizer, virtualItems, totalSize, measureElement: measure, scrollToBottom, releaseBottomLock, isAtBottom, farFromBottom, fades }
 }

@@ -51,10 +51,10 @@ export const SubagentCard = memo(function SubagentCard({ sessionId, call, itemId
         )
       }
     >
-      <div className="flex flex-col gap-2 text-xs">
-        {prompt && <div className="line-clamp-4 whitespace-pre-wrap text-muted-foreground/70 select-text">{prompt}</div>}
+      <div className="flex flex-col gap-2">
+        {prompt && <div className="line-clamp-4 whitespace-pre-wrap text-cc-fg3 select-text">{prompt}</div>}
         {report && (
-          <div className="max-h-[320px] overflow-auto rounded-md border border-border bg-card px-3 py-2">
+          <div className="max-h-[320px] overflow-auto rounded-xl bg-cc-card px-3 py-2">
             <Markdown content={report} className="sd-markdown-muted" />
           </div>
         )}
@@ -79,7 +79,7 @@ export const PlanCard = memo(function PlanCard({ sessionId, call, itemId }: { se
       onToggle={plan ? () => setOpen(!open) : undefined}
     >
       {plan && (
-        <div className="max-h-[360px] overflow-auto rounded-md border border-border bg-card px-3 py-2">
+        <div className="max-h-[360px] overflow-auto rounded-xl bg-cc-card px-3 py-2 text-foreground">
           <Markdown content={plan} />
         </div>
       )}

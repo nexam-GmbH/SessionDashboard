@@ -1,6 +1,8 @@
 // one pending request at a time with a "1/2"
 // pager. Main-session requests come first, then requests from subagents (their
 // card is labelled with the subagent type). Cards live in src/features/requests.
+// As in Claude Code desktop, a session the app can answer for shows the card in place of the prompt
+// box (the dock); a terminal session's card sits in the conversation and the box stays.
 import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react"
 import type { ID, PendingRequest } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
@@ -71,8 +73,11 @@ function DockSlot({
  */
 export const AttentionDock = memo(function AttentionDock({
   sessionId,
+  composer,
 }: {
   sessionId: ID
+  /** given: this is the dock under the conversation, the card replaces the composer; else the in-conversation slot */
+  composer?: ReactNode
 }) {
   const pending = usePendingRequests(sessionId)
   const control = useApp((s) => s.sessions[sessionId]?.control)
@@ -81,6 +86,10 @@ export const AttentionDock = memo(function AttentionDock({
   const transcriptReady = useApp((s) => !!s.transcripts[sessionId])
   const reqs = useMemo(() => dockRequests(pending, focusId), [pending, focusId])
   if (!control) return null
+  const caps = capabilities(control)
+  const docked = !!composer
+  // the other place holds this session's cards
+  if (docked !== caps.approve) return composer ?? null
   // a subagent's request is shown in the activity bar, not here: announce it from this region too
   const child = pending.find((r) => isChild(r) && !reqs.includes(r))
   const childNote = child?.type === "permission" && (
@@ -90,11 +99,13 @@ export const AttentionDock = memo(function AttentionDock({
   )
   if (!reqs.length)
     return (
-      <div aria-live="polite" aria-relevant="additions">
-        {childNote}
-      </div>
+      <>
+        <div aria-live="polite" aria-relevant="additions">
+          {childNote}
+        </div>
+        {composer}
+      </>
     )
-  const caps = capabilities(control)
   const found = focusId ? reqs.findIndex((r) => r.id === focusId) : -1
   const index = found >= 0 ? found : 0
   const req = reqs[index]
@@ -114,7 +125,7 @@ export const AttentionDock = memo(function AttentionDock({
       ? (getApp().subagents[req.subagentId]?.agentType ?? "subagent")
       : undefined
   return (
-    <div aria-live="polite" aria-relevant="additions" data-find-skip>
+    <div aria-live="polite" aria-relevant="additions" data-find-skip className={docked ? "mx-auto w-full max-w-[calc(var(--chat-w)+64px)] px-8 pb-3 @max-[560px]:px-4" : undefined}>
       {childNote}
       <DockSlot key={req.id} sessionId={sessionId}>
         {req.type === "permission" ? (
@@ -129,7 +140,7 @@ export const AttentionDock = memo(function AttentionDock({
                 : undefined
             }
             subagentLabel={subLabel}
-            autoFocus
+            docked={docked}
           />
         ) : req.type === "question" ? (
           <QuestionCard
@@ -137,7 +148,7 @@ export const AttentionDock = memo(function AttentionDock({
             request={req}
             canAnswer={caps.approve}
             pager={pager}
-            autoFocus
+            docked={docked}
           />
         ) : (
           <PlanApprovalCard
@@ -145,7 +156,7 @@ export const AttentionDock = memo(function AttentionDock({
             request={req}
             canApprove={caps.approve}
             pager={pager}
-            autoFocus
+            docked={docked}
           />
         )}
       </DockSlot>

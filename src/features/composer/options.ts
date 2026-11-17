@@ -1,7 +1,7 @@
 // Session settings as the Claude Code desktop app names them: permission modes
 // Manual / Accept edits / Plan / Auto (+ Bypass permissions only when allowed in Settings), a
 // model picker and an effort picker under the prompt box.
-import { Ban, Hand, ListChecks, PencilLine, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { CodeXml, Hand, ScrollText, TriangleAlert, Zap, type LucideIcon } from "lucide-react"
 import type { Effort, PermissionMode } from "@/lib/model"
 
 export const MODELS = [
@@ -31,14 +31,15 @@ export function effortLabel(e: Effort) {
   return EFFORTS.find((x) => x.value === e)?.label ?? e
 }
 
+// Claude Code desktop's mode menu: its order, wording and icons
 export const MODES: { value: PermissionMode; label: string; note: string; icon: LucideIcon }[] = [
-  { value: "default", label: "Manual", note: "Asks before edits and commands", icon: Hand },
-  { value: "acceptEdits", label: "Accept edits", note: "Edits files without asking; asks for commands", icon: PencilLine },
-  { value: "plan", label: "Plan", note: "Reads and plans, changes nothing", icon: ListChecks },
-  { value: "auto", label: "Auto", note: "Runs safe actions, asks for risky ones", icon: ShieldCheck },
-  { value: "bypassPermissions", label: "Bypass permissions", note: "Never asks. Use only in a sandbox", icon: ShieldOff },
+  { value: "default", label: "Manual", note: "Always ask before making changes", icon: Hand },
+  { value: "acceptEdits", label: "Accept edits", note: "Automatically accept all file edits", icon: CodeXml },
+  { value: "plan", label: "Plan", note: "Create a plan before making changes", icon: ScrollText },
   // set from the CLI (--permission-mode dontAsk): listed only while a session runs in it
-  { value: "dontAsk", label: "Don't ask", note: "Denies anything not allowed in advance", icon: Ban },
+  { value: "dontAsk", label: "Don't ask", note: "Deny actions that aren't pre-approved, without prompting", icon: Hand },
+  { value: "auto", label: "Auto", note: "Claude handles permission decisions", icon: Zap },
+  { value: "bypassPermissions", label: "Bypass permissions", note: "Accepts all permissions", icon: TriangleAlert },
 ]
 
 export function modeOption(mode: PermissionMode) {

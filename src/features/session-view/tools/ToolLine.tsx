@@ -3,32 +3,46 @@
 // its own button (stretched-button pattern: the toggle covers the line, the path sits above it).
 import { memo, type ReactNode } from "react"
 import type { ID, ToolCall } from "@/lib/model"
-import { DiffStat } from "@/components/common/bits"
 import { cn } from "@/lib/utils"
 import { Chevron, PathLink, ToolIcon, ToolStatus } from "../common"
+import { WorkingMark } from "../transcript/Spinner"
 import type { ToolSummary } from "./toolSummary"
 
-/** Shown only while the line is hovered or focused; it keeps its space, so nothing reflows. */
-const ON_HOVER = "opacity-0 transition-opacity duration-100 group-hover/tool:opacity-100 group-focus-within/tool:opacity-100"
+/**
+ * A step row as Claude Code desktop draws it (thinking, a tool call, a run of them): at least 28 px
+ * tall, a 20 px mark, the label muted (secondary on hover), the subject in the text colour, a caret,
+ * and counts or time at the end. The whole row toggles; links on it sit above the toggle.
+ */
+export const STEP_ROW = "group/row relative flex min-h-7 min-w-0 items-center gap-2 text-sm leading-5"
+export const STEP_MARK = "pointer-events-none inline-flex size-5 shrink-0 items-center justify-center"
+export const STEP_LABEL = "pointer-events-none text-cc-fg3 transition-colors duration-200 group-hover/row:text-cc-fg2 group-focus-within/row:text-cc-fg2"
+export const STEP_TOGGLE = "absolute inset-0 rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-cc-accent focus-visible:ring-inset"
+/** Expanded content lines up with the label (20 px mark + 8 px gap). */
+export const STEP_BODY = "min-w-0 pt-1 pb-2 pl-7 text-sm text-cc-fg2"
+
+/** "+12 −3": added in the diff green, removed in the diff red. */
+export function DiffCount({ added, removed, className }: { added: number; removed: number; className?: string }) {
+  if (!added && !removed) return null
+  return (
+    <span className={cn("tabular pointer-events-none inline-flex shrink-0 gap-2 font-medium", className)}>
+      <span className="text-cc-add">+{added}</span>
+      <span className="text-cc-del">−{removed}</span>
+    </span>
+  )
+}
 
 /** "Ran `npm test`", "Edited src/auth/retry.ts" (the path a link), "Searched the web for rate limits". */
-export function ToolLabel({ sessionId, summary, className }: { sessionId: ID; summary: ToolSummary; className?: string }) {
+export function ToolLabel({ sessionId, summary }: { sessionId: ID; summary: ToolSummary }) {
   const t = summary.target
-  const verb = cn("pointer-events-none shrink-0", className)
-  if (!t || t.kind === "text")
-    return (
-      <span className={cn("pointer-events-none min-w-0 truncate", className)}>
-        {summary.verb}
-        {t && ` ${t.text}`}
-      </span>
-    )
   return (
     <>
-      <span className={verb}>{summary.verb}</span>
-      {t.kind === "path" && t.path ? (
-        <PathLink sessionId={sessionId} path={t.path} className="text-muted-foreground" />
+      <span className={cn(STEP_LABEL, "shrink-0")}>{summary.verb}</span>
+      {t?.kind === "path" && t.path ? (
+        <PathLink sessionId={sessionId} path={t.path} className="text-foreground" />
+      ) : t?.kind === "code" ? (
+        <code className="pointer-events-none min-w-0 truncate font-mono text-[13px] text-foreground">{t.text}</code>
       ) : (
-        <code className="pointer-events-none min-w-0 truncate font-mono text-xs text-muted-foreground">{t.text}</code>
+        t && <span className="pointer-events-none min-w-0 truncate text-foreground">{t.text}</span>
       )}
     </>
   )
@@ -53,39 +67,30 @@ export const ToolLine = memo(function ToolLine({
   asks?: boolean
   open: boolean
   onToggle?: () => void
-  /** extra muted detail on the right, shown on hover (duration, counts) */
+  /** muted detail at the end (duration, counts) */
   trailing?: ReactNode
   /** the call's details, shown while open */
   children?: ReactNode
 }) {
   const label = [summary.verb, summary.target?.text, summary.detail].filter(Boolean).join(" ")
-  const errorMeta = summary.metaTone === "error"
   return (
     <div className="min-w-0">
-      <div className="group/tool relative -mx-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5 text-sm hover:bg-accent/40">
-        {onToggle && (
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-label={label}
-            onClick={onToggle}
-            className="absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        )}
-        <ToolIcon family={summary.family} name={name} className="pointer-events-none group-hover/tool:text-muted-foreground" />
-        <ToolLabel sessionId={sessionId} summary={summary} className="text-muted-foreground group-hover/tool:text-foreground" />
-        {summary.detail && <span className="pointer-events-none max-w-[40%] shrink-0 truncate text-muted-foreground/60">{summary.detail}</span>}
-        <span className="pointer-events-none ml-auto flex shrink-0 items-center gap-2 pl-2">
-          {summary.meta && (
-            <span className={cn("tabular text-xs", errorMeta ? "text-st-error-fg" : cn("text-muted-foreground/70", ON_HOVER))}>{summary.meta}</span>
-          )}
-          {trailing && <span className={cn("tabular text-xs whitespace-nowrap text-muted-foreground/70", ON_HOVER)}>{trailing}</span>}
-          {summary.diff && <DiffStat added={summary.diff.added} removed={summary.diff.removed} />}
+      <div className={STEP_ROW}>
+        {onToggle && <button type="button" aria-expanded={open} aria-label={label} onClick={onToggle} className={STEP_TOGGLE} />}
+        <span className={cn(STEP_MARK, display === "running" && "text-cc-clay")}>{display === "running" ? <WorkingMark /> : <ToolIcon family={summary.family} name={name} />}</span>
+        <ToolLabel sessionId={sessionId} summary={summary} />
+        {summary.detail && <span className={cn(STEP_LABEL, "max-w-[40%] shrink-0 truncate")}>{summary.detail}</span>}
+        <span className="pointer-events-none flex shrink-0 items-center gap-2">
           <ToolStatus display={display} asks={asks} />
-          {onToggle && <Chevron open={open} className={open ? undefined : "opacity-0 group-hover/tool:opacity-100"} />}
+          {onToggle && <Chevron open={open} />}
+        </span>
+        <span className="tabular pointer-events-none ml-auto flex shrink-0 items-center gap-2 pl-2 text-cc-fg2">
+          {summary.meta && <span className={summary.metaTone === "error" ? "text-cc-danger" : undefined}>{summary.meta}</span>}
+          {trailing && <span className="whitespace-nowrap">{trailing}</span>}
+          {summary.diff && <DiffCount added={summary.diff.added} removed={summary.diff.removed} />}
         </span>
       </div>
-      {open && children && <div className="min-w-0 pt-0.5 pr-1 pb-2 pl-[22px]">{children}</div>}
+      {open && children && <div className={STEP_BODY}>{children}</div>}
     </div>
   )
 })
