@@ -81,9 +81,24 @@ fn mode_flag(m: &str) -> Option<&str> {
     if m == "default" { None } else { Some(m) }
 }
 
-pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
+pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), String> {
     if procs.0.lock().unwrap().contains_key(&o.key) {
         return Err("already running".into());
+    }
+    if o.host.is_none() {
+        // a worktree needs git: in a plain folder the session simply starts there
+        if o.worktree.is_some() && !in_git(&o.cwd) {
+            o.worktree = None;
+        }
+        // "resume" a session that never got going (claude failed before writing anything): start
+        // it fresh under the same id instead of failing with "No conversation found"
+        if !o.fork {
+            if let Some(id) = o.resume.clone().filter(|id| !transcript_exists(id, o.config_dir.as_deref())) {
+                o.resume = None;
+                o.resume_session_at = None;
+                o.session_id = Some(id);
+            }
+        }
     }
     // pictures the API takes (anything else would fail this turn and every one after it)
     let images: Vec<String> = o.images.iter().filter(|u| image_ok(u)).cloned().collect();
@@ -247,13 +262,33 @@ pub fn start(app: AppHandle, procs: Procs, o: StartOpts) -> Result<(), String> {
     let first = o.prompt.as_ref().filter(|p| !p.trim().is_empty()).map(|p| user_message_full(p, &images, o.prompt_uuid.as_deref()));
     let mut guard = stdin.lock().unwrap();
     if let Some(w) = guard.as_mut() {
-        writeln!(w, "{init}").map_err(|e| e.to_string())?;
+        // a claude that exited at once closed its stdin: its own error comes with the exit, which
+        // says more than "Broken pipe"
+        let quiet = |e: std::io::Error| if e.kind() == std::io::ErrorKind::BrokenPipe { Ok(()) } else { Err(e.to_string()) };
+        writeln!(w, "{init}").or_else(quiet)?;
         if let Some(m) = first {
-            writeln!(w, "{m}").map_err(|e| e.to_string())?;
+            writeln!(w, "{m}").or_else(quiet)?;
         }
         w.flush().ok();
     }
     Ok(())
+}
+
+/// Whether `cwd` is inside a git work tree.
+fn in_git(cwd: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["-C", &crate::sys::expand(cwd), "rev-parse", "--is-inside-work-tree"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Whether a session's transcript exists in any project folder of its Claude config.
+fn transcript_exists(id: &str, config_dir: Option<&str>) -> bool {
+    let base = config_dir.filter(|d| !d.is_empty()).map(|d| std::path::PathBuf::from(crate::sys::expand(d))).unwrap_or_else(|| crate::sys::home().join(".claude"));
+    let file = format!("{id}.jsonl");
+    std::fs::read_dir(base.join("projects")).map(|dirs| dirs.flatten().any(|d| d.path().join(&file).is_file())).unwrap_or(true)
 }
 
 /// A picture the API accepts: png, jpeg, gif or webp, at most 5 MB.
