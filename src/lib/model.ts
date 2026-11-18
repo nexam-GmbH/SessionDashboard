@@ -165,6 +165,8 @@ export interface Session {
   errorMessage?: string
   model: string
   effort: Effort
+  /** the effort was chosen in the app (passed to claude); else it is what your settings give it */
+  effortSet?: boolean
   permissionMode: PermissionMode
   /** Claude Code fast mode (same model, faster output) */
   fastMode?: boolean

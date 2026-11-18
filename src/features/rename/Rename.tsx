@@ -2,12 +2,13 @@
 // the pencil on a card, a double-click in the list, or F2 on a focused row. Enter keeps the name,
 // Esc leaves it; an empty name goes back to Claude's own title.
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { Archive, Pencil, SquareArrowOutUpRight } from "lucide-react"
+import { Archive, Crown, Pencil, SquareArrowOutUpRight } from "lucide-react"
 import { create } from "zustand"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { openSession, renameSession } from "@/store/actions"
 import { archiveWithUndo } from "@/features/notifications/undo"
-import { useApp } from "@/store/app"
+import { setApp, useApp } from "@/store/app"
+import { REAL } from "@/backend/mode"
 import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
 
@@ -91,9 +92,28 @@ export function SessionMenu({ id, where, children }: { id: ID; where: string; ch
           <Pencil size={13} /> Rename
           <span className="ml-auto text-xs text-muted-foreground/70">F2</span>
         </ContextMenuItem>
+        <LeadItem id={id} />
         <ArchiveItem id={id} />
       </ContextMenuContent>
     </ContextMenu>
+  )
+}
+
+/**
+ * "Lead of Work": this session leads its workspace (kept in workspaces.json by its id, so it stays
+ * on top after a restart and while it runs in a terminal). Again: it no longer does.
+ */
+function LeadItem({ id }: { id: ID }) {
+  const ws = useApp((s) => s.repos[s.sessions[id]?.repoId ?? ""]?.workspace ?? s.settings.workspace)
+  const w = useApp((s) => s.settings.workspaces.find((x) => x.id === ws))
+  if (!REAL || !w) return null
+  const on = w.lead === id
+  const toggle = () =>
+    setApp((s) => ({ settings: { ...s.settings, workspaces: s.settings.workspaces.map((x) => (x.id === w.id ? { ...x, lead: on ? undefined : id } : x)) } }))
+  return (
+    <ContextMenuItem className="text-sm" onSelect={toggle}>
+      <Crown size={13} /> {on ? `Not the lead of ${w.name}` : `Lead of ${w.name}`}
+    </ContextMenuItem>
   )
 }
 

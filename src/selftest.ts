@@ -174,6 +174,23 @@ export async function runSelftest() {
     log("done")
     return
   }
+  await step("lead: a workspace's lead session sits on top of it, wherever it started", async () => {
+    await until(() => getApp().ready, 30000)
+    const w = getApp().settings.workspaces.find((x) => x.lead)
+    if (!w) return "no lead set"
+    const s = await until(() => getApp().sessions[w.lead!], 20000)
+    if (s.repoId !== `home:${w.id}`) throw new Error(`placed in ${s.repoId}, not home:${w.id}`)
+    return `"${s.title}" (cwd ${s.cwd}) leads ${w.name}`
+  })
+  await step("effort: what your settings give each model is shown, not a guess", async () => {
+    const { claudeEffort } = await import("@/lib/effort")
+    const caps = await until(() => getApp().caps, 30000)
+    const models = [...new Set(caps.models.map((m) => m.resolvedModel ?? m.value))].slice(0, 4)
+    const got = models.map((m) => `${m.replace("claude-", "")}=${claudeEffort(caps, m) ?? "claude's default"}`)
+    const wrong = Object.values(getApp().sessions).filter((x) => !x.effortSet && claudeEffort(caps, x.model) && x.effort !== claudeEffort(caps, x.model))
+    if (wrong.length) throw new Error(`${wrong.length} sessions show an effort their settings do not give them`)
+    return got.join(", ")
+  })
   await step("discovery", async () => {
     const n = await until(() => {
       const s = getApp()
@@ -286,8 +303,9 @@ export async function runSelftest() {
     const files = await invoke<{ path: string; allow: string[] }[]>("claude_permission_rules", { projects })
     // a scratch project of its own: the real settings files are only read
     const dir = `/tmp/sd-selftest-${Date.now()}`
-    const read = () => invoke<{ allow: string[] }[]>("claude_permission_rules", { projects: [dir] }).then((f) => f[0]?.allow ?? [])
     const path = `${dir}/.claude/settings.local.json`
+    // that project's own file (your global settings come in the list too)
+    const read = () => invoke<{ path: string; allow: string[] }[]>("claude_permission_rules", { projects: [dir] }).then((f) => f.find((x) => x.path === path)?.allow ?? [])
     await invoke("claude_permission_rule", { path, list: "allow", rule: "Bash(ls:*)", add: true })
     await invoke("claude_permission_rule", { path, list: "allow", rule: "Bash(rm:*)", add: true })
     const added = await read()

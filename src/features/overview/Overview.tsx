@@ -152,7 +152,14 @@ function Origin({ s }: { s: Session }) {
 const HomeTier = memo(function HomeTier({ repoId }: { repoId: ID }) {
   const name = useApp((s) => s.repos[repoId]?.name)
   const path = useApp((s) => s.repos[repoId]?.rootPath)
-  const ids = useApp(useShallow((s) => selectOverviewSessionIds(s, repoId)))
+  const all = useApp(useShallow((s) => selectOverviewSessionIds(s, repoId)))
+  // the workspace's lead: first, on its own, marked
+  const lead = useApp((s) => {
+    const ws = s.repos[repoId]?.workspace
+    const l = s.settings.workspaces.find((w) => w.id === ws)?.lead
+    return l && all.includes(l) ? l : undefined
+  })
+  const ids = lead ? all.filter((id) => id !== lead) : all
   return (
     <section className="flex max-w-[calc(100vw-64px)] flex-col items-center gap-2.5" aria-label={`${name}: all repos`}>
         <div className="flex h-9 items-center gap-2 rounded-xl bg-card pr-1 pl-2.5 ring-1 ring-foreground/10 transition-shadow hover:ring-foreground/20">
@@ -169,6 +176,14 @@ const HomeTier = memo(function HomeTier({ repoId }: { repoId: ID }) {
             <Plus size={14} />
           </button>
         </div>
+      {lead && (
+        <div className="flex flex-col items-center gap-1" aria-label="Lead">
+          <span className="text-xs text-muted-foreground/70">lead</span>
+          <div className="w-[300px]">
+            <SessionCardById id={lead} origin />
+          </div>
+        </div>
+      )}
       {ids.length > 0 && (
         <div className="flex flex-wrap justify-center gap-2.5">
           {ids.map((id) => (

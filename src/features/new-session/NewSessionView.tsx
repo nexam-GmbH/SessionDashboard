@@ -22,6 +22,7 @@ import { EffortPicker, ModePicker, ModelExtras, ModelPicker } from "@/features/c
 import { FolderPicker } from "@/features/composer/FolderPicker"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import { REAL } from "@/backend/mode"
+import { claudeEffort } from "@/lib/effort"
 
 const MOCK_AGENTS = ["none", "code-reviewer", "test-runner", "migration-writer"]
 const MCP = [
@@ -66,7 +67,10 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
   const [repoId, setRepoId] = useState<ID>(() => startRepo(asked))
   const [worktree, setWorktree] = useState(defaults.worktree)
   const [model, setModel] = useState(defaults.model)
-  const [effort, setEffort] = useState<Effort>(defaults.effort)
+  // until you pick one, the effort is what your claude's settings give the model (then the app's)
+  const caps = useApp((s) => s.caps)
+  const [pickedEffort, setEffort] = useState<Effort | null>(null)
+  const effort = pickedEffort ?? claudeEffort(caps, model) ?? defaults.effort
   // your claude's default permission mode wins over the app's (Settings → New sessions)
   const capsMode = useApp((s) => s.caps?.defaultMode)
   const fromCaps = (m?: string) => (m === "manual" ? "default" : (m as PermissionMode | undefined))

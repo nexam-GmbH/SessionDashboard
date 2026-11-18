@@ -96,8 +96,24 @@ pub fn clean_env(cmd: &mut Command) {
 /// and skills, the default permission mode, the account) plus the user's cloud sessions.
 pub fn capabilities() -> Result<Value, String> {
     host_requests(vec![("cloud", serde_json::json!({"subtype": "list_cloud_sessions"}))], Duration::from_secs(20)).map(|mut m| {
-        serde_json::json!({"init": m.remove("initialize").unwrap_or(Value::Null), "cloud": m.remove("cloud").unwrap_or(Value::Null)})
+        serde_json::json!({"init": m.remove("initialize").unwrap_or(Value::Null), "cloud": m.remove("cloud").unwrap_or(Value::Null), "effort": effort_settings()})
     })
+}
+
+/// The effort a session gets when none is chosen, from your Claude Code settings: `effortLevel`
+/// and `modelSettings.<model>.effortLevel` (claude itself does not report it). Null: not set.
+fn effort_settings() -> Value {
+    let dir = std::env::var("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| crate::sys::home().join(".claude"));
+    let v: Value = std::fs::read_to_string(dir.join("settings.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+    let mut by_model = serde_json::Map::new();
+    if let Some(ms) = v.get("modelSettings").and_then(Value::as_object) {
+        for (model, s) in ms {
+            if let Some(e) = s.get("effortLevel").and_then(Value::as_str) {
+                by_model.insert(model.clone(), Value::String(e.to_string()));
+            }
+        }
+    }
+    serde_json::json!({"default": v.get("effortLevel").cloned().unwrap_or(Value::Null), "byModel": by_model})
 }
 
 /// pids of the short-lived helper claudes below: they write a pid file like any session, so the

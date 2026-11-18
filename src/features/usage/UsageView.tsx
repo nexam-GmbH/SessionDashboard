@@ -331,17 +331,57 @@ function RecentSessions() {
   )
 }
 
+type LimitPoint = { t: number; s: number | null; w: number | null }
+const pct = (v?: number | null) => (typeof v === "number" ? Math.max(0, Math.min(100, v)) : null)
+const top = (a: number | null, b: number | null) => (a === null ? b : b === null ? a : Math.max(a, b))
+
+/**
+ * The samples of a span as points to draw: every sample over 5 h and 24 h, the highest of each hour
+ * (7 days) or 6 hours (30 days) over longer spans (a 5-minute saw tooth over a month is noise).
+ * Where the app was not running the line breaks instead of bridging the gap; percentages stay in 0–100.
+ */
+function limitPoints(samples: LimitSample[], from: number, bucket: number): LimitPoint[] {
+  const raw = samples.filter((x) => x.t >= from)
+  const out: LimitPoint[] = []
+  if (!bucket) {
+    for (const x of raw) {
+      const prev = out.at(-1)
+      if (prev && x.t - prev.t > 15 * 60e3) out.push({ t: prev.t + 5 * 60e3, s: null, w: null })
+      out.push({ t: x.t, s: pct(x.s), w: pct(x.w) })
+    }
+    return out
+  }
+  const by = new Map<number, LimitPoint>()
+  for (const x of raw) {
+    const k = Math.floor(x.t / bucket) * bucket
+    const b = by.get(k) ?? { t: k, s: null, w: null }
+    by.set(k, { t: k, s: top(b.s, pct(x.s)), w: top(b.w, pct(x.w)) })
+  }
+  const keys = [...by.keys()]
+  if (!keys.length) return out
+  for (let k = Math.min(...keys); k <= Math.max(...keys); k += bucket) out.push(by.get(k) ?? { t: k, s: null, w: null })
+  return out
+}
+
 function LimitsChart({ samples }: { samples: LimitSample[] }) {
   const [span, setSpan] = useState("24")
   const now = useNow()
   const from = now - Number(span) * 3600e3
-  const data = samples.filter((s) => s.t >= from).map((s) => ({ t: s.t, s: s.s ?? null, w: s.w ?? null }))
+  const bucket = span === "720" ? 6 * 3600e3 : span === "168" ? 3600e3 : 0
+  const data = limitPoints(samples, from, bucket)
+  // the axis starts where the samples do (the app records only while it runs)
+  const start = Math.max(from, data[0]?.t ?? from)
+  // over days: one tick per midnight (else two ticks can read the same day)
+  const ticks: number[] | undefined = Number(span) > 24 ? [] : undefined
+  if (ticks) for (let d = new Date(start); d.getTime() <= now; d.setDate(d.getDate() + 1)) if (d.setHours(0, 0, 0, 0) >= start) ticks.push(d.getTime())
   const fmt = (t: number) => new Date(t).toLocaleString(undefined, Number(span) > 24 ? { day: "numeric", month: "short" } : { hour: "2-digit", minute: "2-digit" })
   return (
     <Card className="@container/card">
       <CardHeader>
         <CardTitle>Plan limits over time</CardTitle>
-        <CardDescription>Sampled every 5 minutes while the app runs (claude.ai and Claude Code together)</CardDescription>
+        <CardDescription>
+          {bucket ? `Highest of each ${bucket === 3600e3 ? "hour" : "6 hours"}, sampled` : "Sampled"} every 5 minutes while the app runs (claude.ai and Claude Code together)
+        </CardDescription>
         <CardAction>
           <ToggleGroup type="single" variant="outline" value={span} onValueChange={(v) => v && setSpan(v)} className="hidden @[640px]/card:flex">
             {SPANS.map((s) => (
@@ -369,8 +409,8 @@ function LimitsChart({ samples }: { samples: LimitSample[] }) {
                 </linearGradient>
               </defs>
               <CartesianGrid vertical={false} />
-              <XAxis dataKey="t" type="number" scale="time" domain={[from, now]} tickLine={false} axisLine={false} tickMargin={8} minTickGap={40} tickFormatter={fmt} />
-              <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => `${v}%`} />
+              <XAxis dataKey="t" type="number" scale="time" domain={[start, now]} ticks={ticks} tickLine={false} axisLine={false} tickMargin={8} minTickGap={40} tickFormatter={fmt} />
+              <YAxis domain={[0, 100]} allowDataOverflow ticks={[0, 25, 50, 75, 100]} tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => `${v}%`} />
               <ChartTooltip
                 cursor={false}
                 content={

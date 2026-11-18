@@ -226,7 +226,8 @@ export function renameSession(id: ID, title: string) {
 }
 
 export function setSessionSettings(id: ID, patch: { model?: string; effort?: Effort; permissionMode?: PermissionMode; fastMode?: boolean; ultracode?: boolean; outputStyle?: string }) {
-  patchSession(id, patch)
+  // an effort picked here is the session's from now on (passed again when it resumes)
+  patchSession(id, patch.effort ? { ...patch, effortSet: true } : patch)
   if (REAL) realSettings(id, patch)
 }
 

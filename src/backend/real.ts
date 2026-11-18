@@ -9,6 +9,7 @@ import { getApp, setApp, useApp } from "@/store/app"
 import { selectNeedsYou } from "@/store/selectors"
 import { POPOUT, REAL } from "./mode"
 import { setHomeDir } from "@/lib/format"
+import { claudeEffort } from "@/lib/effort"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
@@ -226,6 +227,9 @@ function askGit(path: string) {
  *   → that workspace's main folder (an agent for all its repos); none → by the folder it is in.
  */
 function placeSession(s: Session, prev?: Session): ID {
+  // the workspace's lead (bound by id): its main folder, wherever the session started
+  const led = getApp().settings.workspaces.find((w) => w.lead === s.id)
+  if (led && workspaceHomes().some((h) => h.ws === led.id)) return `home:${led.id}`
   if (s.machine) return `repo:${repoOf(s.cwd, s.machine).key}`
   const start = s.startCwd ?? s.cwd
   const exact = homeOf(start)
@@ -344,6 +348,9 @@ function repoName(cwd: string) {
   return cwd.split("/").filter(Boolean).pop() ?? cwd
 }
 
+/** A session's effort: the one chosen in the app, else what your settings give its model. */
+const effortOf = (prev: Session | undefined, model: string): Session["effort"] => (prev?.effortSet ? prev.effort : (claudeEffort(getApp().caps, model) ?? prev?.effort ?? "high"))
+
 function mapMode(m?: string): PermissionMode {
   if (!m || m === "manual" || m === "default") return "default"
   return (["acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"] as const).includes(m as never) ? (m as PermissionMode) : "default"
@@ -432,7 +439,8 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     activity: own && prev?.activity ? prev.activity : e.activity,
     errorMessage: e.errorMessage,
     model: prev?.model ?? e.model ?? "claude-opus-5-5",
-    effort: prev?.effort ?? "high",
+    effort: effortOf(prev, prev?.model ?? e.model ?? "claude-opus-5-5"),
+    effortSet: prev?.effortSet,
     permissionMode: prev?.permissionMode ?? "default",
     usage: prev?.usage ?? { contextPct: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
     diff: prev?.diff ?? { filesChanged: 0, linesAdded: 0, linesRemoved: 0, unpushed: 0 },
@@ -527,7 +535,8 @@ function buildSession(id: ID, prev?: Session): Session | null {
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
     model: own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5"),
-    effort: prev?.effort ?? "high",
+    effort: effortOf(prev, own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5")),
+    effortSet: prev?.effortSet,
     permissionMode: own ? (prev?.permissionMode ?? mapMode(meta?.permissionMode)) : meta?.permissionMode ? mapMode(meta.permissionMode) : (prev?.permissionMode ?? "default"),
     fastMode: prev?.fastMode,
     ultracode: prev?.ultracode,
@@ -1186,6 +1195,9 @@ export function realStart(opts: StartOpts): ID {
     if (opts.prompt) realSend(opts.resume, opts.prompt)
     return opts.resume
   }
+  // an effort is passed only when it was chosen (a new session's picker, or picked in the app for
+  // this one); a resumed session the app never set runs at what your settings give its model
+  if (opts.resume && !getApp().sessions[opts.resume]?.effortSet) opts = { ...opts, effort: undefined }
   const id = opts.resume && !opts.fork ? opts.resume : crypto.randomUUID()
   const host = opts.machine && opts.machine !== CLOUD ? opts.machine : undefined
   failed.delete(id)
@@ -1210,7 +1222,8 @@ export function realStart(opts: StartOpts): ID {
         statusObservedAt: iso(),
         activity: opts.prompt ? "Starting" : undefined,
         model: opts.model ?? prev?.model ?? "claude-opus-5-5",
-        effort: (opts.effort as Session["effort"]) ?? prev?.effort ?? "high",
+        effort: (opts.effort as Session["effort"]) ?? effortOf(prev, opts.model ?? prev?.model ?? "claude-opus-5-5"),
+        effortSet: opts.effort ? true : prev?.effortSet,
         permissionMode: mapMode(opts.permissionMode ?? prev?.permissionMode),
         fastMode: opts.fastMode ?? prev?.fastMode,
         ultracode: opts.ultracode ?? prev?.ultracode,
@@ -2326,6 +2339,7 @@ type RawCaps = {
     account?: ClaudeCaps["account"]
   }
   cloud?: ClaudeCaps["cloud"]
+  effort?: { default?: string | null; byModel?: Record<string, string> }
 }
 
 /** What the installed claude offers: models, efforts, styles, agents, commands, cloud sessions. */
@@ -2341,6 +2355,7 @@ async function loadCaps() {
         agents: i.agents ?? [],
         commands: (i.commands ?? []).map((c) => ({ name: c.name, description: c.description ?? "" })),
         defaultMode: i.current_permission_mode,
+        effort: { default: raw.effort?.default ?? undefined, byModel: raw.effort?.byModel ?? {} },
         fastModeDisabledReason: i.fast_mode_disabled_reason,
         account: i.account,
         cloud: raw.cloud,

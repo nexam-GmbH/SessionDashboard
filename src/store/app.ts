@@ -28,6 +28,8 @@ export interface ClaudeCaps {
   agents: { name: string; description?: string }[]
   commands: { name: string; description: string }[]
   defaultMode?: string
+  /** the effort your Claude Code settings give a session (all models, or per model) */
+  effort?: { default?: string; byModel: Record<string, string> }
   fastModeDisabledReason?: string
   account?: { email?: string; organization?: string; subscriptionType?: string }
   cloud?: { status: string; sessions: Record<string, unknown>[]; message?: string }
@@ -88,6 +90,11 @@ export interface Workspace {
   home?: string
   /** the Claude Code config folder (account) its new sessions use; unset: the main one */
   configDir?: string
+  /**
+   * The session that leads the workspace (by id, wherever it runs: started in ~, in the app or in
+   * a terminal through sd-wrap): shown first in the workspace's main folder, marked "lead".
+   */
+  lead?: string
 }
 
 export interface DataState {
