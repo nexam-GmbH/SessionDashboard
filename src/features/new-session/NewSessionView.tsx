@@ -189,17 +189,15 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
                   <ModelExtras
                     model={model}
                     fast={fast}
-                    ultra={ultra}
                     style={style}
                     onChange={(p) => {
                       if (p.fastMode !== undefined) setFast(p.fastMode)
-                      if (p.ultracode !== undefined) setUltra(p.ultracode)
                       if (p.outputStyle !== undefined) setStyle(p.outputStyle)
                     }}
                   />
                 }
               />
-              <EffortPicker value={effort} model={model} onChange={setEffort} />
+              <EffortPicker value={effort} model={model} onChange={setEffort} ultra={ultra} onUltra={setUltra} />
               <ModePicker value={mode} onChange={setMode} />
             </>
           }

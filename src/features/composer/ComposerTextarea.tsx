@@ -1,22 +1,21 @@
 // Adapted from cline/cline@72b3d71:sdk/packages/ui/components/agent-composer.tsx (AgentComposerTextarea; Apache-2.0). Modified for session-dashboard.
-// Changes: our tokens and 13px density; auto-grow without `field-sizing` (not in
-// WebKitGTK); token chips styled as quiet highlights.
-import { forwardRef, Fragment, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react"
+// Changes: auto-grow without `field-sizing` (not in WebKitGTK); one layer over the text paints what
+// Claude Code desktop shows there: picked commands and files as blue chips, the rainbow
+// "ultrathink", and a greyed hint after the text ("Type to filter", a command's arguments).
+import { forwardRef, Fragment, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react"
 import { cn } from "@/lib/utils"
-import type { Range } from "./tokens"
-
-const TOKEN_CLASS = "rounded-sm bg-accent shadow-[inset_0_0_0_1px_color-mix(in_srgb,color-mix(in oklab, var(--muted-foreground) 70%, transparent)_55%,transparent)]"
+import type { Mark } from "./tokens"
 
 export type ComposerTextareaProps = ComponentPropsWithoutRef<"textarea"> & {
-  /** Sorted, non-overlapping [start, end) ranges drawn as inline tokens. Backspace at a token's end deletes it whole. */
-  highlights?: Range[]
-  /** ranges painted over the text (the rainbow "ultrathink"), on a backing that hides the glyphs under them */
-  rainbow?: Range[]
+  /** Sorted, non-overlapping ranges painted over the text. Backspace after a chip selects it, a second one deletes it. */
+  marks?: Mark[]
+  /** greyed text after the end of the text (the caret is there) */
+  ghost?: string
   maxHeight?: number
 }
 
 export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(function ComposerTextarea(
-  { className, highlights, rainbow, onKeyDown, onScroll, maxHeight = 220, ...props },
+  { className, marks, ghost, onKeyDown, onScroll, maxHeight = 220, ...props },
   forwardedRef,
 ) {
   const innerRef = useRef<HTMLTextAreaElement | null>(null)
@@ -41,25 +40,10 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
     el.style.overflowY = h > maxHeight ? "auto" : "hidden"
   }, [value, maxHeight])
 
-  /** The text again, transparent, with `ranges` drawn as `paint` spans, scrolled with the textarea. */
-  const layer = (ranges: Range[], paint: (text: string, i: number) => ReactNode) => {
-    let upTo = 0
-    return (
-      <div aria-hidden className={cn("pointer-events-none absolute inset-0 overflow-hidden break-words whitespace-pre-wrap text-transparent", className)}>
-        <div style={{ transform: `translateY(${-scrollTop}px)` }}>
-          {ranges.map(({ start, end }, i) => {
-            const before = value.slice(upTo, start)
-            upTo = end
-            return [before, <Fragment key={i}>{paint(value.slice(start, end), i)}</Fragment>]
-          })}
-        </div>
-      </div>
-    )
-  }
-  // The wrapper always renders so toggling highlights never remounts (and blurs) the textarea.
+  // The wrapper always renders so toggling the layer never remounts (and blurs) the textarea.
+  let upTo = 0
   return (
     <div className="relative flex min-w-0 flex-1">
-      {highlights && highlights.length > 0 && layer(highlights, (t) => <span className={TOKEN_CLASS}>{t}</span>)}
       <textarea
         {...props}
         ref={(el) => {
@@ -80,9 +64,12 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
           )
             return
           const caret = ta.selectionStart
-          const token = highlights?.find((r) => (event.key === "Backspace" ? r.end === caret : event.key === "Delete" && r.start === caret))
-          // Selecting the token lets the native delete remove it, keeping undo intact.
-          if (token) ta.setSelectionRange(token.start, token.end)
+          const chip = marks?.find((r) => r.kind === "chip" && (event.key === "Backspace" ? r.end === caret : event.key === "Delete" && r.start === caret))
+          // the first key selects the chip, the next one deletes it (natively: undo keeps working)
+          if (chip) {
+            event.preventDefault()
+            ta.setSelectionRange(chip.start, chip.end)
+          }
         }}
         onScroll={(event) => {
           setScrollTop(event.currentTarget.scrollTop)
@@ -93,8 +80,41 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
           className,
         )}
       />
-      {/* keyed by position in the list, so typing elsewhere doesn't restart the sweep */}
-      {rainbow && rainbow.length > 0 && layer(rainbow, (t) => <span className="bg-cc-raised"><span className="cc-rainbow">{t}</span></span>)}
+      {/* the same text, transparent, over the textarea (its metrics: same classes), scrolled with it;
+          each mark has the box's colour behind it, hiding the plain glyphs under it */}
+      {(!!marks?.length || !!ghost) && (
+        <div aria-hidden className={cn("pointer-events-none absolute inset-0 z-[1] overflow-hidden break-words whitespace-pre-wrap text-transparent select-none", className)}>
+          <div style={{ transform: `translateY(${-scrollTop}px)` }}>
+            {marks?.map((m, i) => {
+              const before = value.slice(upTo, m.start)
+              const word = value.slice(m.start, m.end)
+              upTo = m.end
+              return (
+                // keyed by place in the list, so typing elsewhere doesn't restart the rainbow's sweep
+                <Fragment key={i}>
+                  {before}
+                  {m.kind === "chip" ? (
+                    <span className="bg-cc-raised text-cc-accent-text">
+                      <span className="opacity-50">{word[0]}</span>
+                      {word.slice(1)}
+                    </span>
+                  ) : (
+                    <span className="bg-cc-raised">
+                      <span className="cc-rainbow [-webkit-text-fill-color:transparent]">{word}</span>
+                    </span>
+                  )}
+                </Fragment>
+              )
+            })}
+            {ghost && (
+              <>
+                {value.slice(upTo)}
+                <span className="ml-0.5 text-cc-placeholder">{ghost}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 })

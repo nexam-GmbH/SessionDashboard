@@ -29,7 +29,7 @@ import { caretCoordinates } from "./caret"
 import { ComposerMenu, type MenuItem } from "./ComposerMenu"
 import { ComposerTextarea } from "./ComposerTextarea"
 import { GHOST, MENU_ITEM, PANEL } from "./Pickers"
-import { fuzzy, highlightRanges, SLASH_COMMANDS, thinkRanges, triggerAt, type Trigger } from "./tokens"
+import { ARG_HINTS, chipRanges, fuzzy, SLASH_COMMANDS, thinkRanges, triggerAt, type Trigger } from "./tokens"
 
 /** What the box holds: the text and the names of the attached files and pictures. */
 export interface PromptValue {
@@ -176,15 +176,21 @@ export function PromptBox(props: PromptBoxProps) {
   // the installed claude's commands and skills (desktop app); the built-in list in the mock world
   const realCommands = useApp((s) => s.caps?.commands)
   const commands = realCommands?.length ? realCommands : SLASH_COMMANDS
-  const highlights = useMemo(() => highlightRanges(text, fileSet), [text, fileSet])
-  const rainbow = useMemo(() => thinkRanges(text), [text])
+  const commandSet = useMemo(() => new Set(commands.map((c) => c.name)), [commands])
+  // picked commands and files as chips, "ultrathink" as a rainbow (none of it in bash mode)
+  const marks = useMemo(() => {
+    if (bash) return []
+    const chips = chipRanges(text, fileSet, commandSet)
+    return [...chips, ...thinkRanges(text, chips)].sort((a, b) => a.start - b.start)
+  }, [text, fileSet, commandSet, bash])
+  const rainbow = marks.some((m) => m.kind === "rainbow")
   const items: MenuItem[] = useMemo(() => {
     if (!trigger) return []
     if (trigger.kind === "slash") {
       return commands.map((c) => ({ c, score: fuzzy(trigger.query, c.name) }))
         .filter((x) => x.score >= 0)
         .sort((a, b) => b.score - a.score)
-        .map(({ c }) => ({ id: `/${c.name}`, type: "command" as const, label: `/${c.name}`, description: c.description }))
+        .map(({ c }) => ({ id: `/${c.name}`, type: "command" as const, label: c.name, description: c.description }))
     }
     return files
       .map((f) => ({ f, score: fuzzy(trigger.query, f) }))
@@ -196,8 +202,13 @@ export function PromptBox(props: PromptBoxProps) {
         return { id: `@${f}`, type: "file" as const, path: f, label: f.slice(slash + 1), description: slash > 0 ? f.slice(0, slash) : "" }
       })
   }, [trigger, files, commands])
-  const menuOpen = !!trigger && !disabled
-  const effectiveActive = activeId && items.some((i) => i.id === activeId) ? activeId : (items[0]?.id ?? null)
+  // no match: no menu (Claude Code desktop)
+  const menuOpen = !!trigger && !disabled && items.length > 0
+  // "/" alone highlights nothing (Enter sends what you typed); a query highlights its best match
+  const effectiveActive = activeId && items.some((i) => i.id === activeId) ? activeId : trigger?.kind === "slash" && !trigger.query ? null : (items[0]?.id ?? null)
+  // greyed after the text: "Type to filter" after a lone "/", a picked command's arguments
+  const argHint = /^\/([\w-]+) $/.exec(text)
+  const ghost = trigger?.kind === "slash" && !trigger.query && trigger.end === text.length ? "Type to filter" : argHint ? ARG_HINTS[argHint[1]] : undefined
 
   const syncTrigger = (value: string, caret: number) => {
     const t = triggerAt(value, caret)
@@ -226,7 +237,7 @@ export function PromptBox(props: PromptBoxProps) {
 
   const applyItem = (item: MenuItem) => {
     if (!trigger) return
-    const insert = item.type === "command" ? `${item.label} ` : `@${item.path} `
+    const insert = item.type === "command" ? `/${item.label} ` : `@${item.path} `
     const next = text.slice(0, trigger.start) + insert + text.slice(trigger.end)
     const caret = trigger.start + insert.length
     setText(next)
@@ -358,6 +369,7 @@ export function PromptBox(props: PromptBoxProps) {
             items={items}
             activeId={effectiveActive}
             kind={trigger.kind}
+            query={trigger.query}
             left={anchor.left}
             bottom={anchor.bottom}
             onHighlight={setActiveId}
@@ -392,9 +404,10 @@ export function PromptBox(props: PromptBoxProps) {
             rows={size === "lg" ? 3 : 1}
             autoFocus={autoFocus}
             disabled={disabled}
-            highlights={bash ? undefined : highlights}
-            rainbow={bash ? undefined : rainbow}
-            title={rainbow.length && !bash ? "Sending this word asks for deeper reasoning on this message. Put it in quotes to leave the reasoning level alone." : undefined}
+            marks={marks}
+            ghost={bash ? undefined : ghost}
+            spellCheck={rainbow ? false : undefined}
+            title={rainbow ? "Sending this word asks for deeper reasoning on this message. Put it in quotes to leave the reasoning level alone." : undefined}
             // 7 lines and a control's height, at most 40 % of the window (then it scrolls)
             maxHeight={size === "lg" ? 320 : Math.min(175, Math.round(window.innerHeight * 0.4))}
             aria-label="Message Claude"
@@ -459,14 +472,15 @@ export function PromptBox(props: PromptBoxProps) {
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault()
                   if (!items.length) return
-                  const next = (idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length
+                  const next = idx < 0 && e.key === "ArrowUp" ? items.length - 1 : (idx + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length
                   setActiveId(items[next].id)
                   return
                 }
                 if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
-                  const item = items[Math.max(0, idx)]
+                  // nothing highlighted: Enter sends what you typed, Tab takes the first
+                  const item = idx >= 0 ? items[idx] : e.key === "Tab" ? items[0] : undefined
                   // a command typed in full: Enter runs it, like in Claude Code (not "complete, then Enter again")
-                  const typed = item?.type === "command" && e.key === "Enter" && text.trim() === item.label
+                  const typed = item?.type === "command" && e.key === "Enter" && text.trim() === `/${item.label}`
                   if (item && !typed) {
                     e.preventDefault()
                     applyItem(item)

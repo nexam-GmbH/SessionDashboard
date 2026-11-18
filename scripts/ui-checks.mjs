@@ -769,6 +769,9 @@ check("a11y: composer / menu is a listbox wired to the textarea; Esc closes it",
   await page.keyboard.type("/")
   const list = visible("[role=listbox]").first()
   await list.waitFor({ timeout: 2000 })
+  // a lone "/" highlights nothing (Enter sends what you typed, as in Claude Code desktop); ↓ starts
+  expect(!(await ta.getAttribute("aria-activedescendant")), "a lone / highlighted a command")
+  await page.keyboard.press("ArrowDown")
   const wiring = await ta.evaluate((el) => {
     const list = document.getElementById(el.getAttribute("aria-controls") ?? "")
     const opt = document.getElementById(el.getAttribute("aria-activedescendant") ?? "")
@@ -828,7 +831,8 @@ check("a11y: Escape closes the mode menu and returns focus", async () => {
   await visible("[data-slot=popover-content] [cmdk-root]").first().waitFor({ timeout: 2000 })
   await page.keyboard.press("Escape")
   await page.locator("[data-slot=popover-content] [cmdk-root]").first().waitFor({ state: "hidden", timeout: 2000 })
-  expect(await trigger.evaluate((el) => el === document.activeElement), "focus didn't return to the menu trigger")
+  // focus comes back once the closed menu has unmounted
+  expect(await until(() => trigger.evaluate((el) => el === document.activeElement), 1000), "focus didn't return to the menu trigger")
 })
 
 check("no uncaught page errors during the run", async () => {

@@ -4,11 +4,12 @@
 import { CodeXml, Hand, ScrollText, TriangleAlert, Zap, type LucideIcon } from "lucide-react"
 import type { Effort, PermissionMode } from "@/lib/model"
 
+// the mock world's catalog, with Claude Code's own descriptions
 export const MODELS = [
-  { value: "claude-opus-5-5", label: "Opus 5.5", note: "Most capable" },
-  { value: "claude-sonnet-5-5", label: "Sonnet 5.5", note: "Fast and capable" },
-  { value: "claude-haiku-5-5", label: "Haiku 5.5", note: "Fastest" },
-  { value: "claude-fable-5-2", label: "Fable 5.2", note: "Long-form writing" },
+  { value: "claude-opus-5-5", label: "Opus 5.5", note: "For complex work and everyday tasks" },
+  { value: "claude-sonnet-5-5", label: "Sonnet 5.5", note: "Most efficient for simpler tasks" },
+  { value: "claude-fable-5-2", label: "Fable 5.2", note: "For your toughest challenges" },
+  { value: "claude-haiku-5-5", label: "Haiku 5.5", note: "Fastest for quick answers" },
 ] as const
 
 export function modelLabel(model: string) {
@@ -29,6 +30,12 @@ export const EFFORTS: { value: Effort; label: string; note: string }[] = [
 
 export function effortLabel(e: Effort) {
   return EFFORTS.find((x) => x.value === e)?.label ?? e
+}
+
+/** The effort Claude Code recommends for a model (the slider's "Recommended" mark). */
+export function recommendedEffort(model: string): Effort {
+  if (/opus-4-7/.test(model)) return "xhigh"
+  return /-5-5|fable-5-2/.test(model) ? "medium" : "high"
 }
 
 // Claude Code desktop's mode menu: its order, wording and icons

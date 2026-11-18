@@ -15,7 +15,7 @@ import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
 import { PromptBox, type PromptValue } from "@/features/composer/PromptBox"
-import { GHOST, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
+import { EffortPicker, GHOST, ModePicker, ModelExtras, ModelPicker } from "@/features/composer/Pickers"
 import { ContextRing } from "@/features/composer/ContextRing"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { FolderPlus } from "lucide-react"
@@ -322,12 +322,19 @@ const ChinSettings = memo(function ChinSettings({ sessionId, locked }: { session
       <ModelPicker
         value={model}
         onChange={(m) => setSessionSettings(sessionId, { model: m })}
-        effort={effort}
-        onEffort={(e) => setSessionSettings(sessionId, { effort: e })}
         fast={!!fast}
         disabled={locked}
         disabledReason={lockReason}
-        extra={<ModelExtras model={model} fast={!!fast} ultra={!!ultra} style={style} onChange={(patch) => setSessionSettings(sessionId, patch)} />}
+        extra={<ModelExtras model={model} fast={!!fast} style={style} onChange={(patch) => setSessionSettings(sessionId, patch)} />}
+      />
+      <EffortPicker
+        value={effort}
+        model={model}
+        onChange={(e) => setSessionSettings(sessionId, { effort: e })}
+        ultra={!!ultra}
+        onUltra={(on) => setSessionSettings(sessionId, { ultracode: on })}
+        disabled={locked}
+        disabledReason={lockReason}
       />
       <ContextRing sessionId={sessionId} canCompact={!locked} />
     </>

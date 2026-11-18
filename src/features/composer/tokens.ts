@@ -1,7 +1,6 @@
 /**
- * Composer tokens: `/command` at the start of the message and `@path` mentions.
- * Produces Cline-style highlight ranges (sorted, non-overlapping [start, end))
- * and detects the trigger being typed at the caret for the `/` and `@` menus.
+ * Composer tokens: `/command` at the start of the message and `@path` mentions (painted as chips),
+ * the rainbow "ultrathink", and the trigger being typed at the caret for the `/` and `@` menus.
  */
 
 export interface SlashCommand {
@@ -25,27 +24,67 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", description: "List all commands" },
 ]
 
-const COMMAND_SET = new Set(SLASH_COMMANDS.map((c) => c.name))
-
-export type Range = { start: number; end: number }
-
-export function highlightRanges(value: string, files: ReadonlySet<string>): Range[] {
-  const ranges: Range[] = []
-  const cmd = /^\/([a-z-]+)(?=\s|$)/.exec(value)
-  if (cmd && COMMAND_SET.has(cmd[1])) ranges.push({ start: 0, end: cmd[0].length })
-  const re = /(^|\s)(@[^\s@]+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(value))) {
-    const start = m.index + m[1].length
-    const path = m[2].slice(1)
-    if (files.has(path)) ranges.push({ start, end: start + m[2].length })
-  }
-  return ranges.sort((a, b) => a.start - b.start)
+/** Argument hints of Claude Code's built-ins, shown greyed after a picked command (Claude Code desktop). */
+export const ARG_HINTS: Record<string, string> = {
+  review: "[low|medium|high|xhigh|max] [--fix] [--comment] [<pr#>|<branch>|<path>]",
+  compact: "<optional custom summarization instructions>",
+  debug: "[issue description]",
+  simplify: "[<target>]",
+  effort: "[low|medium|high|xhigh|max|ultracode]",
 }
 
-/** "ultrathink" asks for deeper reasoning (a quoted one does not): painted as a rainbow in the box. */
-export function thinkRanges(value: string): Range[] {
-  return [...value.matchAll(/(?<!["'“‘])\bultrathink\b(?!["'”’])/gi)].map((m) => ({ start: m.index, end: m.index + m[0].length }))
+export type Range = { start: number; end: number }
+/** What the box paints over its text: a picked command or file as a blue chip, or the rainbow "ultrathink". */
+export type Mark = Range & { kind: "chip" | "rainbow" }
+
+/** `/command` at the start (a known one) and `@path` mentions of the repo's files: chips. */
+export function chipRanges(value: string, files: ReadonlySet<string>, commands: ReadonlySet<string>): Mark[] {
+  const marks: Mark[] = []
+  const cmd = /^\/([\w:.-]+)(?=\s|$)/.exec(value)
+  if (cmd && commands.has(cmd[1])) marks.push({ start: 0, end: cmd[0].length, kind: "chip" })
+  for (const m of value.matchAll(/(^|\s)(@[^\s@]+)/g)) {
+    const start = m.index + m[1].length
+    if (files.has(m[2].slice(1))) marks.push({ start, end: start + m[2].length, kind: "chip" })
+  }
+  return marks
+}
+
+/**
+ * "ultrathink" asks for deeper reasoning: up to 10, whole words, not in a message over 20,000
+ * characters or one that starts with "/", not quoted or bracketed, not touching "/", "\" or "-", not
+ * followed by "?" or by "." and a letter (Claude Code desktop's rules).
+ */
+export function thinkRanges(value: string, chips: Range[]): Mark[] {
+  if (value.length > 20_000 || /^\**\//.test(value)) return []
+  const out: Mark[] = []
+  for (const m of value.matchAll(/(?<![\w/\\"'`“‘([{<-])ultrathink(?![\w/\\"'`”’)\]}>?-]|\.[\p{L}\d])/giu)) {
+    const r = { start: m.index, end: m.index + m[0].length }
+    if (chips.some((c) => c.start < r.end && r.start < c.end)) continue
+    out.push({ ...r, kind: "rainbow" })
+    if (out.length === 10) break
+  }
+  return out
+}
+
+/** Where the fuzzy match of `query` falls in `text` (for the menus' semibold letters). */
+export function matchIndices(query: string, text: string): Set<number> {
+  const out = new Set<number>()
+  if (!query) return out
+  const q = query.toLowerCase()
+  const t = text.toLowerCase()
+  const at = t.indexOf(q)
+  if (at >= 0) {
+    for (let i = 0; i < q.length; i++) out.add(at + i)
+    return out
+  }
+  let ti = 0
+  for (const ch of q) {
+    const found = t.indexOf(ch, ti)
+    if (found < 0) return new Set()
+    out.add(found)
+    ti = found + 1
+  }
+  return out
 }
 
 export type Trigger = { kind: "slash" | "mention"; query: string; start: number; end: number }
