@@ -25,6 +25,16 @@ pub struct Proc {
     /// which start this is: the reader of an older process never removes a newer one
     generation: u64,
     remote: bool,
+    activity: Arc<Mutex<Activity>>,
+}
+
+/// What claude last said about itself (`session_state_changed`: idle / running / requires_action,
+/// background work included) and when anything last went in or out: an idle session is parked.
+#[derive(Default)]
+struct Activity {
+    state: String,
+    at: Option<std::time::Instant>,
+    parked: bool,
 }
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -174,6 +184,7 @@ pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), Strin
     cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true");
     // check and insert in one step: two starts of the same key can't both get through
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let activity = Arc::new(Mutex::new(Activity { at: Some(std::time::Instant::now()), ..Default::default() }));
     let (stdout, stderr, stdin) = {
         let mut map = procs.0.lock().unwrap();
         if map.contains_key(&o.key) {
@@ -188,7 +199,7 @@ pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), Strin
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let stderr = child.stderr.take().ok_or("no stderr")?;
         let stdin = Arc::new(Mutex::new(child.stdin.take()));
-        map.insert(o.key.clone(), Proc { stdin: stdin.clone(), child, generation, remote: o.host.is_some() });
+        map.insert(o.key.clone(), Proc { stdin: stdin.clone(), child, generation, remote: o.host.is_some(), activity: activity.clone() });
         (stdout, stderr, stdin)
     };
 
@@ -227,12 +238,22 @@ pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), Strin
             }
         });
     }
+    let reader_activity = activity.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.trim().is_empty() {
                 continue;
             }
             let ev: Value = serde_json::from_str(&line).unwrap_or_else(|_| json!({"type": "raw", "text": line}));
+            {
+                // idle time counts from claude's last state change (a stray line while idle, a
+                // keep-alive, does not keep a session from being parked)
+                if ev.get("subtype").and_then(Value::as_str) == Some("session_state_changed") {
+                    let mut a = reader_activity.lock().unwrap();
+                    a.at = Some(std::time::Instant::now());
+                    a.state = ev.get("state").and_then(Value::as_str).unwrap_or("").to_string();
+                }
+            }
             if !wanted_by_ui(&ev) {
                 continue;
             }
@@ -251,7 +272,8 @@ pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), Strin
         };
         let code = mine.and_then(|mut p| p.child.wait().ok()).and_then(|s| s.code());
         let stderr_tail = err_tail.lock().unwrap().join("\n");
-        let _ = app.emit("claude-event", json!({"key": key, "exit": {"code": code, "stderr": stderr_tail}}));
+        let parked = reader_activity.lock().unwrap().parked;
+        let _ = app.emit("claude-event", json!({"key": key, "exit": {"code": code, "stderr": stderr_tail, "parked": parked}}));
     });
 
     // the readers run before anything is written: claude answering `initialize` with more than a
@@ -351,11 +373,62 @@ pub fn rewind_files(cwd: &str, session_id: &str, uuid: &str, config_dir: Option<
 
 fn write(procs: &Procs, key: &str, v: Value) -> Result<(), String> {
     // the map's lock only to find the session; the write holds this session's own lock
-    let stdin = procs.0.lock().unwrap().get(key).map(|p| p.stdin.clone()).ok_or("session is not running in the app")?;
+    let (stdin, activity) = procs.0.lock().unwrap().get(key).map(|p| (p.stdin.clone(), p.activity.clone())).ok_or("session is not running in the app")?;
     let mut guard = stdin.lock().unwrap();
     let w = guard.as_mut().ok_or("session is stopping")?;
     writeln!(w, "{v}").map_err(|e| e.to_string())?;
-    w.flush().map_err(|e| e.to_string())
+    w.flush().map_err(|e| e.to_string())?;
+    activity.lock().unwrap().at = Some(std::time::Instant::now());
+    Ok(())
+}
+
+/// How long a session the app runs may sit idle before its process is ended (`SD_PARK_MINUTES`,
+/// 0: never). Its conversation stays: the next message resumes it (`--resume`), as for any past chat.
+fn park_after() -> Option<std::time::Duration> {
+    let min = std::env::var("SD_PARK_MINUTES").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(30);
+    (min > 0).then(|| std::time::Duration::from_secs(min * 60))
+}
+
+/// Park the sessions claude itself calls idle (no turn, no background shells or subagents, no open
+/// prompt) that nothing went in or out of for a while: each holds a claude, its MCP servers and
+/// shells (hundreds of MB). Stdin closes first, so claude ends them itself; killed if it lingers.
+pub fn park_idle(procs: &Procs, after: std::time::Duration) -> Vec<String> {
+    let mut parked = Vec::new();
+    for (key, p) in procs.0.lock().unwrap().iter() {
+        if p.remote {
+            continue;
+        }
+        let mut a = p.activity.lock().unwrap();
+        if a.parked || a.state != "idle" || a.at.is_none_or(|t| t.elapsed() < after) {
+            continue;
+        }
+        // nothing is being written right now (a send holds this lock): no message is cut off
+        let Ok(mut g) = p.stdin.try_lock() else { continue };
+        a.parked = true;
+        *g = None;
+        parked.push((key.clone(), p.child.id()));
+    }
+    for (_, pid) in &parked {
+        let pid = *pid;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            if crate::sys::alive(pid) {
+                term(pid);
+            }
+        });
+    }
+    parked.into_iter().map(|(k, _)| k).collect()
+}
+
+/// Checks for idle sessions once a minute, for the app's lifetime.
+pub fn start_parker(procs: Procs) {
+    let Some(after) = park_after() else { return };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        for key in park_idle(&procs, after) {
+            log::info!("parked idle session {key}");
+        }
+    });
 }
 
 /// Answer a `can_use_tool` request: `response` is {behavior: "allow", updatedInput, updatedPermissions?}
@@ -521,5 +594,53 @@ mod tests {
         assert!(!wanted_by_ui(&se("content_block_delta", Some("input_json_delta"))));
         assert!(!wanted_by_ui(&se("content_block_delta", Some("thinking_delta"))));
         assert!(!wanted_by_ui(&se("content_block_stop", None)));
+    }
+}
+
+#[cfg(test)]
+mod park_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn proc_with(state: &str, idle_for: Duration) -> Proc {
+        // `cat` stands in for claude: it ends when its input closes, as `claude -p` does
+        let mut child = std::process::Command::new("cat").stdin(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap();
+        let stdin = Arc::new(Mutex::new(child.stdin.take()));
+        let activity = Arc::new(Mutex::new(Activity { state: state.into(), at: Some(Instant::now() - idle_for), parked: false }));
+        Proc { stdin, child, generation: 0, remote: false, activity }
+    }
+
+    #[test]
+    fn parks_only_the_long_idle() {
+        let procs = Procs::default();
+        {
+            let mut m = procs.0.lock().unwrap();
+            m.insert("idle-long".into(), proc_with("idle", Duration::from_secs(3600)));
+            m.insert("idle-recent".into(), proc_with("idle", Duration::from_secs(10)));
+            m.insert("running-long".into(), proc_with("running", Duration::from_secs(3600)));
+            m.insert("asking-long".into(), proc_with("requires_action", Duration::from_secs(3600)));
+        }
+        let parked = park_idle(&procs, Duration::from_secs(1800));
+        assert_eq!(parked, vec!["idle-long".to_string()]);
+        // its input closed: it ends by itself
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut m = procs.0.lock().unwrap();
+        loop {
+            if matches!(m.get_mut("idle-long").unwrap().child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            assert!(Instant::now() < until, "the parked process did not end");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for k in ["idle-recent", "running-long", "asking-long"] {
+            assert!(matches!(m.get_mut(k).unwrap().child.try_wait(), Ok(None)), "{k} must keep running");
+        }
+        // asked again: nothing new
+        drop(m);
+        assert!(park_idle(&procs, Duration::from_secs(1800)).is_empty());
+        for p in procs.0.lock().unwrap().values_mut() {
+            let _ = p.child.kill();
+            let _ = p.child.wait();
+        }
     }
 }

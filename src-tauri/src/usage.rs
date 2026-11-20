@@ -292,22 +292,27 @@ impl Index {
     }
 
     /// Read what a file gained since last time (all of it the first time).
-    fn file(&mut self, path: &Path) {
+    /// Read what a transcript gained; true when there was something.
+    fn file(&mut self, path: &Path) -> bool {
         let key = path.to_string_lossy().to_string();
-        let Ok(mut f) = File::open(path) else { return };
-        let Ok(meta) = f.metadata() else { return };
+        // size first: an unchanged transcript is not opened (on Windows each open can mean a scan)
+        let Ok(meta) = std::fs::metadata(path) else { return false };
         let len = meta.len();
+        if self.files.get(&key).is_some_and(|st| st.offset == len) {
+            return false;
+        }
+        let Ok(mut f) = File::open(path) else { return false };
         let st = self.files.entry(key.clone()).or_default();
         // rewritten (compaction, rewind): read again from the start, the seen set skips repeats
         if len < st.offset {
             st.offset = 0;
         }
         if len == st.offset {
-            return;
+            return false;
         }
         let start = st.offset;
         if f.seek(SeekFrom::Start(start)).is_err() {
-            return;
+            return false;
         }
         let mut r = BufReader::with_capacity(1 << 20, f.take(len - start));
         let mut buf = Vec::new();
@@ -329,6 +334,7 @@ impl Index {
         if let Some(st) = self.files.get_mut(&key) {
             st.offset = pos;
         }
+        pos != start
     }
 
     fn load() -> Index {
@@ -472,7 +478,8 @@ fn transcripts(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(root) else { return };
     for e in rd.flatten() {
         let p = e.path();
-        if p.is_dir() {
+        // the listing's own type (no extra call per entry on Windows)
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
             transcripts(&p, out);
         } else if p.extension().and_then(|x| x.to_str()) == Some("jsonl") {
             out.push(p);
@@ -493,14 +500,19 @@ pub fn scan() -> Result<Value, String> {
     for dir in crate::claude::discover::claude_dirs() {
         transcripts(&dir.join("projects"), &mut files);
     }
+    // written out only when a transcript grew (three files, the seen-set megabytes)
+    let mut grew = false;
     for f in &files {
-        ix.file(f);
+        grew |= ix.file(f);
     }
     if ix.ledger.d < 1 {
         ix.backfill_detail(&files);
+        grew = true;
     }
     ix.prune_detail();
-    ix.save()?;
+    if grew {
+        ix.save()?;
+    }
     serde_json::to_value(&ix.ledger).map_err(|e| e.to_string())
 }
 

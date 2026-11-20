@@ -11,6 +11,7 @@ pub mod ports;
 pub mod remote;
 pub mod search;
 pub mod transcript;
+pub mod watch;
 
 use serde_json::Value;
 use tauri::{AppHandle, State};
@@ -33,12 +34,19 @@ pub async fn claude_live() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn claude_pids() -> Result<Vec<Value>, String> {
-    Ok(discover::pid_sessions())
+    // off the async workers: a slow process listing must not hold up every other call
+    blocking(|| Ok(discover::pid_sessions())).await
 }
 
 #[tauri::command]
 pub async fn claude_scan(app: AppHandle) -> Result<Vec<SessionMeta>, String> {
     blocking(move || Ok(discover::scan(&app.state::<ScanCache>()))).await
+}
+
+/// The list's changes since the version the page has (`since` 0: all of it).
+#[tauri::command]
+pub async fn claude_scan_since(app: AppHandle, since: u64) -> Result<discover::ScanDelta, String> {
+    blocking(move || Ok(discover::scan_since(&app.state::<ScanCache>(), since))).await
 }
 
 #[tauri::command]
@@ -75,7 +83,9 @@ pub async fn claude_transcript_since(path: String, offset: u64, tip: Option<Stri
 
 #[tauri::command]
 pub async fn claude_start(app: AppHandle, procs: State<'_, Procs>, opts: StartOpts) -> Result<(), String> {
-    control::start(app, procs.inner().clone(), opts)
+    // starting claude (and git for a worktree) is slow on Windows: off the async workers
+    let procs = procs.inner().clone();
+    blocking(move || control::start(app, procs, opts)).await
 }
 
 #[tauri::command]

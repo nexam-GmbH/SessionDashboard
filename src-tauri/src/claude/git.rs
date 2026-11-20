@@ -194,14 +194,161 @@ fn parse(path: &str, out: &str) -> GitState {
 
 /// Git state of a folder on this computer (`quick`: only its own worktree).
 pub fn local(path: &str, quick: bool) -> GitState {
-    let mut c = crate::sys::command(crate::sys::sh());
-    c.args(["-c", SCRIPT, "sd-git", path, if quick { "quick" } else { "full" }]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-    // never let git ask for anything
+    parse(path, &local_report(path, quick))
+}
+
+/// One git command in `dir`; its stdout, or None when it failed.
+fn git(dir: &str, args: &[&str]) -> Option<String> {
+    let mut c = crate::sys::command("git");
+    c.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    // never let git ask for anything, and never take the index lock from your own git
     c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_OPTIONAL_LOCKS", "0");
-    match c.output() {
-        Ok(o) => parse(path, &String::from_utf8_lossy(&o.stdout)),
-        Err(e) => GitState { path: path.into(), error: Some(e.to_string()), ..Default::default() },
+    let o = c.output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Commits reachable from `tip` inside `graph` (commit → parents, the commits on no remote): a
+/// commit outside it is on a remote, and so is everything before it.
+fn count_in(graph: &std::collections::HashMap<&str, Vec<&str>>, tip: &str) -> u32 {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![tip];
+    while let Some(c) = stack.pop() {
+        let Some(parents) = graph.get(c) else { continue };
+        if seen.insert(c) {
+            stack.extend(parents.iter().copied());
+        }
     }
+    seen.len() as u32
+}
+
+/// The same report SCRIPT prints, from plain `git` calls: no shell. On Windows the shell is Git's
+/// MSYS `sh`, where every `$(…)` and pipe is an emulated fork; the script started dozens of
+/// processes per repository (one `rev-list` per branch, three per worktree). This is 6 git
+/// processes plus one `status` per worktree read.
+fn local_report(path: &str, quick: bool) -> String {
+    use std::fmt::Write;
+    if !std::path::Path::new(path).is_dir() {
+        return "@@nodir\n".into();
+    }
+    let Some(rp) = git(path, &["rev-parse", "--is-inside-work-tree", "--show-toplevel"]) else { return "@@norepo\n".into() };
+    let mut rl = rp.lines();
+    if rl.next() != Some("true") {
+        return "@@norepo\n".into();
+    }
+    let top = rl.next().unwrap_or("").to_string();
+    // remotes (sorted, as `git remote` lists them) and origin's URL, else the first remote's
+    let rv = git(path, &["remote", "-v"]).unwrap_or_default();
+    let mut remotes: Vec<(&str, &str)> = Vec::new();
+    for l in rv.lines() {
+        let mut f = l.split_whitespace();
+        if let (Some(n), Some(u)) = (f.next(), f.next()) {
+            if !remotes.iter().any(|(m, _)| *m == n) {
+                remotes.push((n, u));
+            }
+        }
+    }
+    let has_remote = !remotes.is_empty();
+    let url = remotes.iter().find(|(n, _)| *n == "origin").or(remotes.first()).map(|(_, u)| *u).unwrap_or("");
+    let mut out = format!("@@url {url}\n@@remotes\n");
+    for (n, _) in &remotes {
+        let _ = writeln!(out, "{n}");
+    }
+    if quick {
+        out.push_str("@@quick\n");
+    }
+    // branches: name, upstream, track, date (+ tip, for the unpushed counts)
+    let refs = if quick { String::new() } else { git(path, &["for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:unix)%09%(objectname)", "refs/heads"]).unwrap_or_default() };
+    let branches: Vec<(&str, &str)> = refs.lines().filter_map(|l| l.rsplit_once('\t')).collect();
+    // worktrees: path, HEAD, locked, prunable
+    struct Wt<'a> {
+        path: &'a str,
+        head: &'a str,
+        flags: Vec<&'static str>,
+    }
+    let wl = git(path, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let mut wts: Vec<Wt> = Vec::new();
+    for l in wl.lines() {
+        if let Some(p) = l.strip_prefix("worktree ") {
+            wts.push(Wt { path: p, head: "", flags: vec![] });
+        } else if let Some(w) = wts.last_mut() {
+            if let Some(h) = l.strip_prefix("HEAD ") {
+                w.head = h;
+            } else if l.starts_with("locked") {
+                w.flags.push("locked");
+            } else if l.starts_with("prunable") {
+                w.flags.push("prunable");
+            }
+        }
+    }
+    let read = |w: &Wt| std::path::Path::new(w.path).is_dir() && (!quick || w.path == top);
+    let heads: Vec<&str> = wts.iter().filter(|w| read(w) && !w.head.is_empty() && !w.head.bytes().all(|b| b == b'0')).map(|w| w.head).collect();
+    // every commit on no remote, with its parents: one rev-list for all branches and worktrees
+    let unpushed_raw = if has_remote && (!branches.is_empty() || !heads.is_empty()) {
+        let mut args = vec!["rev-list", "--parents"];
+        if !quick {
+            args.push("--branches");
+        }
+        args.extend(heads.iter().copied());
+        args.extend(["--not", "--remotes"]);
+        git(path, &args).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let graph: std::collections::HashMap<&str, Vec<&str>> = unpushed_raw
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?, f.collect()))
+        })
+        .collect();
+    // last commit time of every worktree read, one call
+    let mut when: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if !heads.is_empty() {
+        let mut args = vec!["log", "--no-walk=unsorted", "--format=%H %ct"];
+        args.extend(heads.iter().copied());
+        for l in git(path, &args).unwrap_or_default().lines() {
+            if let Some((h, t)) = l.split_once(' ') {
+                when.insert(h.to_string(), t.to_string());
+            }
+        }
+    }
+    out.push_str("@@branches\n");
+    for (row, _) in &branches {
+        let _ = writeln!(out, "{row}");
+    }
+    out.push_str("@@unpushed\n");
+    if !quick && has_remote {
+        for (row, tip) in &branches {
+            let name = row.split('\t').next().unwrap_or("");
+            let _ = writeln!(out, "{name}\t{}", count_in(&graph, tip));
+        }
+    }
+    for w in &wts {
+        let _ = writeln!(out, "@@worktree {}", w.path);
+        if read(w) {
+            let st = git(w.path, &["status", "--porcelain=v2", "--branch"]).unwrap_or_default();
+            for l in st.lines().take(2000) {
+                let _ = writeln!(out, "{l}");
+            }
+            let _ = writeln!(out, "@@last {}", when.get(w.head).map(String::as_str).unwrap_or(""));
+            if has_remote {
+                let _ = writeln!(out, "@@wtunpushed {}", if w.head.is_empty() { 0 } else { count_in(&graph, w.head) });
+            }
+        }
+        for f in &w.flags {
+            let _ = writeln!(out, "@@{f}");
+        }
+    }
+    out
+}
+
+/// The old shell way, kept to check `local_report` against it.
+#[cfg(test)]
+fn local_script(path: &str, quick: bool) -> String {
+    let mut c = std::process::Command::new("sh");
+    c.args(["-c", SCRIPT, "sd-git", path, if quick { "quick" } else { "full" }]).stdin(Stdio::null()).stderr(Stdio::null());
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_OPTIONAL_LOCKS", "0");
+    String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
 }
 
 /// Git state of folders on a VPS, one ssh round trip.
@@ -299,4 +446,24 @@ pub fn ci_failure_log(cwd: &str, runs: &[u64]) -> Result<String, String> {
         out = format!("…\n{}", &out[start..]);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod direct_tests {
+    use super::*;
+
+    /// The direct git calls give what the script gave, on real repositories
+    /// (`SD_GIT_REPOS=a:b cargo test same_as_the_script -- --ignored`).
+    #[test]
+    #[ignore]
+    fn same_as_the_script() {
+        let repos = std::env::var("SD_GIT_REPOS").unwrap();
+        for r in repos.split(':').filter(|r| !r.is_empty()) {
+            for quick in [false, true] {
+                let a = serde_json::to_string(&parse(r, &local_script(r, quick))).unwrap();
+                let b = serde_json::to_string(&parse(r, &local_report(r, quick))).unwrap();
+                assert_eq!(a, b, "{r} quick={quick}");
+            }
+        }
+    }
 }

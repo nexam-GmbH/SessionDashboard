@@ -22,19 +22,11 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     c
 }
 
-/// Every running process id, for systems without /proc (one listing per poll, not one per pid).
+/// Every running process id, for systems without /proc: one in-process snapshot (no `tasklist` /
+/// `ps` started every poll, which on Windows also had Defender scan each start).
 #[cfg(not(target_os = "linux"))]
 pub fn live_pids() -> Option<HashSet<u32>> {
-    #[cfg(windows)]
-    let out = command("tasklist").args(["/FO", "CSV", "/NH"]).stderr(Stdio::null()).output().ok()?;
-    #[cfg(not(windows))]
-    let out = command("ps").args(["-A", "-o", "pid="]).stderr(Stdio::null()).output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    #[cfg(windows)]
-    let set = text.lines().filter_map(|l| l.split(',').nth(1)).filter_map(|p| p.trim_matches('"').parse().ok()).collect();
-    #[cfg(not(windows))]
-    let set = text.split_whitespace().filter_map(|p| p.parse().ok()).collect();
-    Some(set)
+    Some(sysinfo_of(None, false, false).processes().keys().map(|p| p.as_u32()).collect())
 }
 
 #[cfg(target_os = "linux")]
@@ -50,8 +42,18 @@ pub fn alive(pid: u32) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        live_pids().map(|s| s.contains(&pid)).unwrap_or(false)
+        sysinfo_of(Some(&[pid]), false, false).process(sysinfo::Pid::from_u32(pid)).is_some()
     }
+}
+
+/// End a child and everything it started (Windows: `child.kill()` alone leaves its MCP servers).
+pub fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    if matches!(child.try_wait(), Ok(None)) {
+        terminate(child.id());
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Ask a process to stop (SIGTERM; Windows: end it and its children).
@@ -104,6 +106,12 @@ pub fn output_timeout(cmd: &mut Command, secs: u64) -> Option<Output> {
 
 /// The POSIX shell: `sh` (on Windows the one Git for Windows brings, when `sh` is not on PATH).
 pub fn sh() -> String {
+    // asked once: finding it starts a process
+    static SH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SH.get_or_init(find_sh).clone()
+}
+
+fn find_sh() -> String {
     #[cfg(windows)]
     {
         if command("sh").arg("-c").arg("exit 0").status().is_err() {

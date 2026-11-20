@@ -196,8 +196,7 @@ pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<
             Err(_) => break,
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    crate::sys::kill_tree(&mut child);
     HELPERS.lock().unwrap().retain(|p| *p != pid);
     Ok(out)
 }
@@ -368,7 +367,7 @@ impl HostHelper {
             h.pending.lock().unwrap().insert(id.clone(), tx);
             let line = serde_json::json!({"type": "control_request", "request_id": id, "request": req});
             if writeln!(h.stdin, "{line}").and_then(|_| h.stdin.flush()).is_err() {
-                let _ = h.child.kill();
+                crate::sys::kill_tree(&mut h.child);
                 *g = None;
                 return Err("the helper claude stopped".into());
             }
@@ -378,7 +377,7 @@ impl HostHelper {
 
     pub fn stop(&self) {
         if let Some(mut h) = self.0.lock().unwrap().take() {
-            let _ = h.child.kill();
+            crate::sys::kill_tree(&mut h.child);
         }
     }
 }
@@ -441,7 +440,35 @@ pub fn cloud_send(session_id: &str, text: &str) -> Result<Value, String> {
 }
 
 /// `claude agents --json`: running sessions (interactive and background) with their status.
+/// Starting the CLI costs a second of CPU (and a Defender scan on Windows): the last answer is
+/// reused while no session's pid file changed, for up to 45 s.
 pub fn live_sessions() -> Result<Value, String> {
+    static LAST: Mutex<Option<(u64, std::time::Instant, Value)>> = Mutex::new(None);
+    let fp = sessions_fingerprint();
+    if let Some((f, at, v)) = LAST.lock().unwrap().as_ref() {
+        if *f == fp && at.elapsed() < Duration::from_secs(45) {
+            return Ok(v.clone());
+        }
+    }
+    let v = live_sessions_now()?;
+    *LAST.lock().unwrap() = Some((fp, std::time::Instant::now(), v.clone()));
+    Ok(v)
+}
+
+/// Names, sizes and times of every pid file: changes when a session starts, ends or changes state.
+fn sessions_fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for root in claude_dirs() {
+        let Ok(rd) = fs::read_dir(root.join("sessions")) else { continue };
+        let mut rows: Vec<_> = rd.flatten().filter_map(|e| Some((e.file_name(), e.metadata().ok().map(|m| (m.len(), m.modified().ok()))?))).collect();
+        rows.sort();
+        rows.hash(&mut h);
+    }
+    h.finish()
+}
+
+fn live_sessions_now() -> Result<Value, String> {
     let mut lc = crate::sys::command(claude_bin());
     clean_env(&mut lc);
     lc.args(["agents", "--json"]);
@@ -535,16 +562,49 @@ fn note_edits(m: &mut SessionMeta, parts: &[Value]) {
 /// seconds. An entry counts only while its process is alive and is the same process (pid reuse is
 /// checked against the recorded start time).
 pub fn pid_sessions() -> Vec<Value> {
-    let mut out = Vec::new();
-    // without /proc (macOS, Windows): one listing of every process for all the pid files
-    let live = crate::sys::live_pids();
-    for root in claude_dirs() {
-        pid_sessions_in(&root, &mut out, live.as_ref());
+    static LAST: Mutex<Option<(u64, std::time::Instant, Vec<Value>)>> = Mutex::new(None);
+    let sgen = super::watch::sessions_gen(&claude_dirs());
+    if let (Some(g), Some((lg, at, v))) = (sgen, LAST.lock().unwrap().as_ref()) {
+        if g == *lg && at.elapsed() < Duration::from_secs(5) {
+            return v.clone();
+        }
+    }
+    let out = pid_sessions_now();
+    if let Some(g) = sgen {
+        *LAST.lock().unwrap() = Some((g, std::time::Instant::now(), out.clone()));
     }
     out
 }
 
-fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collections::HashSet<u32>>) {
+fn pid_sessions_now() -> Vec<Value> {
+    let mut out = Vec::new();
+    // without /proc (macOS, Windows): one listing of every process for all the pid files
+    let live = crate::sys::live_pids();
+    let mut kept = std::collections::HashSet::new();
+    for root in claude_dirs() {
+        pid_sessions_in(&root, &mut out, live.as_ref(), &mut kept);
+    }
+    // a pid gone (or reused later) is asked again
+    if let Some(m) = HIDDEN.lock().unwrap().as_mut() {
+        m.retain(|p, _| kept.contains(p));
+    }
+    out
+}
+
+/// `hidden()` per live pid: on macOS/Windows it reads the process's environment and command line
+/// (a full process snapshot each), so it is asked once per process, not every poll.
+static HIDDEN: Mutex<Option<HashMap<u32, bool>>> = Mutex::new(None);
+
+fn hidden_cached(pid: u32) -> bool {
+    if let Some(h) = HIDDEN.lock().unwrap().get_or_insert_with(HashMap::new).get(&pid) {
+        return *h;
+    }
+    let h = hidden(pid as u64);
+    HIDDEN.lock().unwrap().get_or_insert_with(HashMap::new).insert(pid, h);
+    h
+}
+
+fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collections::HashSet<u32>>, kept: &mut std::collections::HashSet<u32>) {
     let dir = root.join("sessions");
     let extra = extra_dir_of(root);
     let Ok(entries) = fs::read_dir(&dir) else { return };
@@ -563,7 +623,7 @@ fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collect
             continue;
         };
         let Some(pid) = v.get("pid").and_then(Value::as_u64) else { continue };
-        if is_helper(pid) || hidden(pid) {
+        if is_helper(pid) {
             continue;
         }
         if let Some(set) = live {
@@ -579,6 +639,11 @@ fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collect
                     continue;
                 }
             }
+        }
+        // only live processes get the (costly off Linux) environment check
+        kept.insert(pid as u32);
+        if hidden_cached(pid as u32) {
+            continue;
         }
         let mut v = v;
         if let Some(obj) = v.as_object_mut() {
@@ -617,10 +682,41 @@ struct Cached {
     size: u64,
     mtime: u64,
     meta: SessionMeta,
+    /// a big transcript's head, parsed: it does not change while the session appends, so a
+    /// running session costs the tail only, every scan
+    head: Option<SessionMeta>,
+    /// the list version it last changed in
+    ver: u64,
 }
 
+/// Every transcript's summary, kept between polls, with a version per change: the page asks for
+/// what changed since the version it has (a few entries) instead of the whole list every 5 s.
 #[derive(Default)]
-pub struct ScanCache(Mutex<HashMap<PathBuf, Cached>>);
+pub struct ScanCache(Mutex<ScanState>);
+
+#[derive(Default)]
+pub struct ScanState {
+    files: HashMap<PathBuf, Cached>,
+    version: u64,
+    /// sessions whose transcript went, with the version they went in (the last thousand or so)
+    removed: Vec<(u64, String)>,
+    /// versions before this one are not answered with changes (tombstones dropped): the whole list
+    floor: u64,
+    full_at: Option<std::time::Instant>,
+}
+
+/// What changed in the list since a version (`full`: the whole list, the page starts over).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanDelta {
+    pub version: u64,
+    pub full: bool,
+    pub changed: Vec<SessionMeta>,
+    pub removed: Vec<String>,
+}
+
+/// Even with change events, everything is read again this often (events can be lost).
+const FULL_EVERY: Duration = Duration::from_secs(60);
 
 const HEAD: u64 = 256 * 1024;
 const TAIL: u64 = 768 * 1024;
@@ -899,60 +995,136 @@ fn continuation_of(path: &Path) -> Option<String> {
     found
 }
 
-fn scan_file(path: &Path, size: u64, mtime: u64) -> Option<SessionMeta> {
+fn scan_file(path: &Path, size: u64, mtime: u64, head_hit: Option<&SessionMeta>) -> Option<(SessionMeta, Option<SessionMeta>)> {
     let session_id = path.file_stem()?.to_str()?.to_string();
     let mut f = File::open(path).ok()?;
     let mut m = SessionMeta { session_id, path: path.to_string_lossy().into(), updated_ms: mtime, size, config_dir: extra_dir_of(path), ..Default::default() };
+    let mut head_meta = None;
     if size <= HEAD + TAIL {
         let all = read_range(&mut f, 0, size);
         parse_chunk(&mut m, &all, false, false);
     } else {
-        let head = read_range(&mut f, 0, HEAD);
-        // the head may end mid-line: drop its last partial line
-        let cut = head.iter().rposition(|b| *b == b'\n').unwrap_or(0);
-        parse_chunk(&mut m, &head[..cut], false, false);
+        if let Some(h) = head_hit {
+            m = SessionMeta { updated_ms: mtime, size, ..h.clone() };
+        } else {
+            let head = read_range(&mut f, 0, HEAD);
+            // the head may end mid-line: drop its last partial line
+            let cut = head.iter().rposition(|b| *b == b'\n').unwrap_or(0);
+            parse_chunk(&mut m, &head[..cut], false, false);
+        }
+        head_meta = Some(m.clone());
         let tail = read_range(&mut f, size - TAIL, TAIL);
         parse_chunk(&mut m, &tail, true, true);
     }
     if m.continues.is_none() {
         m.continues = continuation_of(path);
     }
-    Some(m)
+    Some((m, head_meta))
 }
 
 /// Every session transcript under ~/.claude/projects (subagent transcripts excluded).
 pub fn scan(cache: &ScanCache) -> Vec<SessionMeta> {
-    let mut out = Vec::new();
-    let mut seen = Vec::new();
-    let dirs: Vec<_> = claude_dirs().iter().filter_map(|c| fs::read_dir(c.join("projects")).ok()).flat_map(|rd| rd.flatten().collect::<Vec<_>>()).collect();
-    for d in dirs {
+    let mut st = cache.0.lock().unwrap();
+    refresh(&mut st);
+    st.files.values().map(|c| c.meta.clone()).collect()
+}
+
+/// The list's changes since `since` (0, or a version too old or from before a restart: all of it).
+pub fn scan_since(cache: &ScanCache, since: u64) -> ScanDelta {
+    let mut st = cache.0.lock().unwrap();
+    refresh(&mut st);
+    let version = st.version;
+    if since == 0 || since < st.floor || since > version {
+        return ScanDelta { version, full: true, changed: st.files.values().map(|c| c.meta.clone()).collect(), removed: vec![] };
+    }
+    let changed = st.files.values().filter(|c| c.ver > since).map(|c| c.meta.clone()).collect();
+    let removed = st.removed.iter().filter(|(v, _)| *v > since).map(|(_, id)| id.clone()).collect();
+    ScanDelta { version, full: false, changed, removed }
+}
+
+/// A top-level transcript (`projects/<folder>/<id>.jsonl`), not a subagent's.
+fn is_transcript(p: &Path) -> bool {
+    p.extension().is_some_and(|e| e == "jsonl") && p.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|n| n == "projects")
+}
+
+/// Bring the list up to date: with change events only the files that changed, else (and once a
+/// minute) a listing of every folder.
+fn refresh(st: &mut ScanState) {
+    if st.version == 0 {
+        // a page from before a restart holds a smaller version: it gets the whole list
+        st.version = now_ms();
+        st.floor = st.version;
+    }
+    let dirs = claude_dirs();
+    let changed = super::watch::take_transcripts(&dirs);
+    let full = changed.is_none() || st.full_at.is_none_or(|t| t.elapsed() > FULL_EVERY);
+    if !full {
+        for p in changed.unwrap_or_default() {
+            if !is_transcript(&p) {
+                continue;
+            }
+            match fs::metadata(&p) {
+                Ok(md) if md.is_file() => update_one(st, p, &md),
+                _ => remove_one(st, &p),
+            }
+        }
+        return;
+    }
+    let mut seen = std::collections::HashSet::new();
+    let folders: Vec<_> = dirs.iter().filter_map(|c| fs::read_dir(c.join("projects")).ok()).flat_map(|rd| rd.flatten().collect::<Vec<_>>()).collect();
+    for d in folders {
         let Ok(files) = fs::read_dir(d.path()) else { continue };
         for f in files.flatten() {
             let p = f.path();
             if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
+            // from the listing itself on Windows: no extra call per file
             let Ok(md) = f.metadata() else { continue };
-            let size = md.len();
-            let mtime = md.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-            seen.push(p.clone());
-            let mut c = cache.0.lock().unwrap();
-            if let Some(hit) = c.get(&p) {
-                if hit.size == size && hit.mtime == mtime {
-                    out.push(hit.meta.clone());
-                    continue;
-                }
-            }
-            drop(c);
-            if let Some(meta) = scan_file(&p, size, mtime) {
-                c = cache.0.lock().unwrap();
-                c.insert(p, Cached { size, mtime, meta: meta.clone() });
-                out.push(meta);
-            }
+            seen.insert(p.clone());
+            update_one(st, p, &md);
         }
     }
-    cache.0.lock().unwrap().retain(|k, _| seen.contains(k));
-    out
+    let gone: Vec<PathBuf> = st.files.keys().filter(|k| !seen.contains(*k)).cloned().collect();
+    for p in gone {
+        remove_one(st, &p);
+    }
+    st.full_at = Some(std::time::Instant::now());
+}
+
+fn update_one(st: &mut ScanState, p: PathBuf, md: &fs::Metadata) {
+    let size = md.len();
+    let mtime = md.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let mut head = None;
+    if let Some(hit) = st.files.get(&p) {
+        if hit.size == size && hit.mtime == mtime {
+            return;
+        }
+        // grown (appended): the head read before still holds; shorter: rewritten, read all
+        if size > hit.size {
+            head = hit.head.clone();
+        }
+    }
+    match scan_file(&p, size, mtime, head.as_ref()) {
+        Some((meta, head)) => {
+            st.version += 1;
+            let ver = st.version;
+            st.files.insert(p, Cached { size, mtime, meta, head, ver });
+        }
+        None => remove_one(st, &p),
+    }
+}
+
+fn remove_one(st: &mut ScanState, p: &Path) {
+    let Some(c) = st.files.remove(p) else { return };
+    st.version += 1;
+    let v = st.version;
+    st.removed.push((v, c.meta.session_id));
+    if st.removed.len() > 2000 {
+        let cut = st.removed.len() - 1000;
+        st.floor = st.removed[cut - 1].0;
+        st.removed.drain(..cut);
+    }
 }
 
 #[cfg(test)]
@@ -965,5 +1137,77 @@ mod continuation_tests {
         assert_eq!(continued_from(&v).as_deref(), Some("412bb752-493a-4e09-b136-ef4b343b8610"));
         let plain: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"fix the bug in a.jsonl"}}"#).unwrap();
         assert_eq!(continued_from(&plain), None);
+    }
+}
+
+#[cfg(test)]
+mod head_cache_tests {
+    use super::*;
+
+    /// A grown transcript read with the cached head equals a fresh read
+    /// (`SD_BIG=a.jsonl:b.jsonl cargo test head_cache_same -- --ignored`).
+    #[test]
+    #[ignore]
+    fn head_cache_same() {
+        let dir = std::env::temp_dir().join(format!("sd-head-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for src in std::env::var("SD_BIG").unwrap().split(':').filter(|s| !s.is_empty()) {
+            let all = fs::read(src).unwrap();
+            let p = dir.join(Path::new(src).file_name().unwrap());
+            let cut = all[..all.len() - 50_000].iter().rposition(|b| *b == b'\n').unwrap() + 1;
+            fs::write(&p, &all[..cut]).unwrap();
+            let (_, head) = scan_file(&p, cut as u64, 1, None).unwrap();
+            fs::write(&p, &all).unwrap();
+            let size = all.len() as u64;
+            let (fresh, _) = scan_file(&p, size, 2, None).unwrap();
+            let (cached, _) = scan_file(&p, size, 2, head.as_ref()).unwrap();
+            assert!(head.is_some(), "{src} is not big enough");
+            assert_eq!(serde_json::to_string(&fresh).unwrap(), serde_json::to_string(&cached).unwrap(), "{src}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod delta_tests {
+    use super::*;
+
+    #[test]
+    fn changes_come_as_deltas() {
+        let root = std::env::temp_dir().join(format!("sd-delta-{}", std::process::id()));
+        let proj = root.join("projects").join("-tmp-x");
+        fs::create_dir_all(&proj).unwrap();
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        set_extra_dirs(&[root.to_string_lossy().to_string()]);
+        let cache = ScanCache::default();
+        let first = scan_since(&cache, 0);
+        assert!(first.full);
+        let id = "11111111-2222-3333-4444-555555555555";
+        let t = proj.join(format!("{id}.jsonl"));
+        fs::write(&t, r#"{"type":"user","cwd":"/tmp/x","sessionId":"x","message":{"role":"user","content":"hello there"}}"#.to_string() + "\n").unwrap();
+        let wait = |since: u64, f: &dyn Fn(&ScanDelta) -> bool| {
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let d = scan_since(&cache, since);
+                if f(&d) || std::time::Instant::now() > until {
+                    return d;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let d = wait(first.version, &|d| d.changed.iter().any(|m| m.session_id == id));
+        assert!(!d.full);
+        let m = d.changed.iter().find(|m| m.session_id == id).expect("the new transcript comes as a change");
+        assert_eq!(m.first_prompt.as_deref(), Some("hello there"));
+        // nothing new: an empty delta
+        let quiet = scan_since(&cache, d.version);
+        assert!(!quiet.changed.iter().any(|m| m.session_id == id));
+        fs::remove_file(&t).unwrap();
+        let d2 = wait(d.version, &|d| d.removed.iter().any(|r| r == id));
+        assert!(d2.removed.iter().any(|r| r == id), "the deleted transcript comes as removed");
+        // a version from before a restart, or unknown: the whole list
+        assert!(scan_since(&cache, 1).full);
+        set_extra_dirs(&[]);
+        let _ = fs::remove_dir_all(&root);
     }
 }

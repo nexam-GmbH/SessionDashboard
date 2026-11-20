@@ -780,13 +780,20 @@ async function attachRunning() {
   }
 }
 
-async function pollPids() {
+/** Live terminal sessions from their pid files; true when the list changed. */
+let pidsKey = ""
+async function pollPids(): Promise<boolean> {
   void attachRunning()
   try {
     const list = await invoke<Live[]>("claude_pids")
+    const key = JSON.stringify(list)
+    if (key === pidsKey) return false
+    pidsKey = key
     pidLive = new Map(list.filter((l) => l.sessionId).map((l) => [l.sessionId, l]))
+    return true
   } catch (e) {
     console.warn("claude_pids", e)
+    return false
   }
 }
 async function pollAgents() {
@@ -797,16 +804,36 @@ async function pollAgents() {
     console.warn("claude_live", e)
   }
 }
-async function pollScan() {
+/**
+ * The transcripts' summaries: only what changed since the version we have (the whole list on the
+ * first call, after a restart, or when Rust says so); true when anything changed.
+ */
+let scanVersion = 0
+async function pollScan(): Promise<boolean> {
   try {
-    const list = await invoke<Meta[]>("claude_scan")
-    // a transcript deleted (Claude Code's cleanup, an account removed) leaves the list
-    const now = new Set(list.map((m) => m.sessionId))
-    for (const id of [...metas.keys()]) if (!now.has(id)) metas.delete(id)
-    for (const m of list) metas.set(m.sessionId, m)
+    const d = await invoke<{ version: number; full: boolean; changed: Meta[]; removed: string[] }>("claude_scan_since", { since: scanVersion })
+    if (d.full) {
+      // a transcript deleted (Claude Code's cleanup, an account removed) leaves the list
+      const now = new Set(d.changed.map((m) => m.sessionId))
+      for (const id of [...metas.keys()]) if (!now.has(id)) metas.delete(id)
+    }
+    for (const id of d.removed) metas.delete(id)
+    for (const m of d.changed) metas.set(m.sessionId, m)
+    scanVersion = d.version
+    return d.full || d.changed.length > 0 || d.removed.length > 0
   } catch (e) {
-    console.warn("claude_scan", e)
+    console.warn("claude_scan_since", e)
+    return false
   }
+}
+
+/** Rebuild the sessions after a poll that changed something; quiet polls rebuild every 5th time
+ * (states that follow the clock), not every 2 s for nothing. */
+let quietPolls = 0
+function syncIfChanged(changed: boolean) {
+  if (!changed && ++quietPolls < 5) return
+  quietPolls = 0
+  sync()
 }
 
 /** Live transcripts: append what the files gained (sessions on screen or kept mounted). */
@@ -1948,7 +1975,7 @@ export function realAnswer(requestId: ID, answers: Record<string, string | strin
 }
 
 // ---------- stream events of owned sessions ----------
-type EventPayload = { key: ID; event?: Record<string, unknown> & { type?: string; subtype?: string }; exit?: { code: number | null; stderr: string } }
+type EventPayload = { key: ID; event?: Record<string, unknown> & { type?: string; subtype?: string }; exit?: { code: number | null; stderr: string; parked?: boolean } }
 
 // Streamed text arrives a token at a time: collected per session and message, applied once per
 // frame (one store update instead of dozens a second).
@@ -1996,7 +2023,8 @@ function onEvent({ key, event, exit }: EventPayload) {
       backToBox(key, left)
     }
     // 143 / 130: stopped on purpose (SIGTERM, Ctrl+C), not a failure
-    const bad = exit.code !== 0 && exit.code !== null && exit.code !== 143 && exit.code !== 130 && !own?.interrupting
+    // parked (idle a while, its process given back): not a failure; the next message resumes it
+    const bad = !exit.parked && exit.code !== 0 && exit.code !== null && exit.code !== 143 && exit.code !== 130 && !own?.interrupting
     patchTranscript(key, (t, m) => endTurn(t, m, bad))
     if (bad) {
       const message = exit.stderr.split("\n").filter(Boolean).slice(-4).join("\n") || `claude exited with code ${exit.code}`
@@ -2233,8 +2261,8 @@ export async function startReal() {
   if (!POPOUT) setTimeout(() => void import("@/features/overview/restore").then((r) => r.startRestore()), 6000)
   // read ahead the chats that need you, once the first paint is done
   setTimeout(pruneTranscripts, 1500)
-  setInterval(() => void pollPids().then(sync), 2000)
-  setInterval(() => void pollScan().then(sync), 5000)
+  setInterval(() => void pollPids().then(syncIfChanged), 2000)
+  setInterval(() => void pollScan().then(syncIfChanged), 5000)
   setInterval(() => void pollAgents().then(sync), 15000)
   setInterval(() => void tailOpen(), 1500)
   setInterval(pruneTranscripts, 60_000)

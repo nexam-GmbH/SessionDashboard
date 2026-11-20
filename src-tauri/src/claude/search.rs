@@ -52,6 +52,9 @@ struct Index {
     loaded: bool,
     #[serde(skip)]
     dirty: bool,
+    /// when it was last written out (the whole index: megabytes of JSON)
+    #[serde(skip)]
+    saved_at: Option<std::time::Instant>,
 }
 
 #[derive(Default, Clone)]
@@ -246,10 +249,14 @@ impl Index {
         }
     }
 
+    /// Write the index out, at most every 2 minutes: while a session runs its transcript grows all
+    /// the time, and every search wrote the whole index again. What is not written yet is read
+    /// again from the transcripts after a restart (only the part after the saved offsets).
     fn save(&mut self) {
-        if !self.dirty {
+        if !self.dirty || self.saved_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120)) {
             return;
         }
+        self.saved_at = Some(std::time::Instant::now());
         let path = index_path();
         if let Some(d) = path.parent() {
             let _ = std::fs::create_dir_all(d);

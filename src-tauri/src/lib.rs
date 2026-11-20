@@ -154,6 +154,7 @@ pub fn run() {
             sd_fake_claude,
             claude::claude_live,
             claude::claude_pids,
+            claude::claude_scan_since,
             claude::claude_scan,
             claude::claude_transcript,
             claude::claude_transcript_since,
@@ -209,6 +210,8 @@ pub fn run() {
         .setup(|app| {
             // hook posts from Claude Code (this computer, and VPS machines through their tunnels)
             let port = claude::hooks::serve(app.handle().clone()).unwrap_or(0);
+            // sessions idle for a while give their process back (resumed on the next message)
+            claude::control::start_parker(app.state::<claude::control::Procs>().inner().clone());
             app.manage(claude::HookPort(port));
             // the search index: read (or brought up to date) in the background once the window is up
             let search = app.state::<claude::search::Search>().inner().clone();
@@ -234,6 +237,23 @@ pub fn run() {
         })
         // the main window closing quits the app, session windows included
         .on_window_event(|window, event| {
+            // Windows: a minimized or hidden window's web view keeps little memory (WebView2's
+            // MemoryUsageTargetLevel, what Microsoft advises for inactive apps); back to normal on focus
+            #[cfg(windows)]
+            if let tauri::WindowEvent::Focused(focused) = event {
+                let (app, label) = (window.app_handle().clone(), window.label().to_string());
+                if *focused {
+                    webview_memory(&app, &label, false);
+                } else {
+                    let win = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if win.is_minimized().unwrap_or(false) || !win.is_visible().unwrap_or(true) {
+                            webview_memory(&app, &label, true);
+                        }
+                    });
+                }
+            }
             if window.label() == "main" {
                 if let tauri::WindowEvent::Destroyed = event {
                     window.app_handle().exit(0);
@@ -251,4 +271,19 @@ pub fn run() {
                 term::close_all(&app.state::<term::Terms>());
             }
         });
+}
+
+/// Ask WebView2 to keep little (low) or the usual (normal) memory for a window's web view.
+#[cfg(windows)]
+fn webview_memory(app: &tauri::AppHandle, label: &str, low: bool) {
+    let Some(w) = app.get_webview_window(label) else { return };
+    let _ = w.with_webview(move |pv| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL};
+        use windows_core::Interface;
+        if let Ok(core) = pv.controller().CoreWebView2() {
+            if let Ok(v) = core.cast::<ICoreWebView2_19>() {
+                let _ = v.SetMemoryUsageTargetLevel(if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL });
+            }
+        }
+    });
 }
