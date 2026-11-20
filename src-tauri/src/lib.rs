@@ -3,6 +3,8 @@ mod term;
 pub mod sys;
 pub mod wrap;
 mod usage;
+#[cfg(test)]
+mod bench;
 
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;

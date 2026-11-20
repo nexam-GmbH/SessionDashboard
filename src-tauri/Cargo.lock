@@ -3507,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "session-dashboard"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "crossterm",
  "listeners",

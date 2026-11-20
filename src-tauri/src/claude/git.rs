@@ -193,8 +193,65 @@ fn parse(path: &str, out: &str) -> GitState {
 }
 
 /// Git state of a folder on this computer (`quick`: only its own worktree).
+///
+/// Read again only when something under the folder or its repository's main worktree changed (a
+/// change watch, the way git's own fsmonitor spares `git status`): an untouched repository costs no
+/// git process at all. Not watched (Linux, a network drive, too many folders): read every time.
+/// At least every 5 minutes it is read anyway, in case change events were lost.
 pub fn local(path: &str, quick: bool) -> GitState {
-    parse(path, &local_report(path, quick))
+    static LAST: std::sync::Mutex<Option<std::collections::HashMap<(String, bool), (std::time::Instant, u64, GitState)>>> = std::sync::Mutex::new(None);
+    const MAX_AGE: Duration = Duration::from_secs(300);
+    let key = (path.to_string(), quick);
+    let prev = LAST.lock().unwrap().get_or_insert_with(Default::default).get(&key).cloned();
+    let roots = watch_roots(std::path::Path::new(path));
+    // the watch runs before git is read: a change during the read moves the number, and the next
+    // poll reads again (its first call only starts it, the second says where it stands)
+    let stamp = super::watch::folder_gen(path, &roots).or_else(|| super::watch::folder_gen(path, &roots));
+    if let (Some(g), Some((at, pg, st))) = (stamp, &prev) {
+        if *pg == g && at.elapsed() < MAX_AGE {
+            return st.clone();
+        }
+    }
+    let st = parse(path, &local_report(path, quick));
+    match stamp {
+        Some(g) => {
+            LAST.lock().unwrap().get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), g, st.clone()));
+        }
+        // not watched (or the watch could not start): read every time
+        None => {
+            LAST.lock().unwrap().get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), 0, st.clone()));
+        }
+    }
+    st
+}
+
+/// What a folder's git state depends on, found on disk without running git: the repository's top
+/// folder (its files and `.git`), and for a linked worktree also the main repository (where its
+/// HEAD, index, refs and the branches live). Not in a repository: the folder itself.
+fn watch_roots(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut dir = Some(path);
+    while let Some(d) = dir {
+        let dot = d.join(".git");
+        if dot.is_dir() {
+            return vec![d.to_path_buf()];
+        }
+        if dot.is_file() {
+            let mut roots = vec![d.to_path_buf()];
+            // "gitdir: <main>/.git/worktrees/<name>" → <main>
+            if let Ok(t) = std::fs::read_to_string(&dot) {
+                let gitdir = std::path::PathBuf::from(t.trim().trim_start_matches("gitdir:").trim());
+                let gitdir = if gitdir.is_absolute() { gitdir } else { d.join(gitdir) };
+                if let Some(main) = gitdir.parent().and_then(|w| w.parent()).and_then(|g| g.parent()) {
+                    if main != d {
+                        roots.push(main.to_path_buf());
+                    }
+                }
+            }
+            return roots;
+        }
+        dir = d.parent();
+    }
+    vec![path.to_path_buf()]
 }
 
 /// One git command in `dir`; its stdout, or None when it failed.
@@ -465,5 +522,73 @@ mod direct_tests {
                 assert_eq!(a, b, "{r} quick={quick}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    fn run(dir: &Path, args: &[&str]) {
+        let ok = std::process::Command::new("git").arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").status().unwrap().success();
+        assert!(ok, "git {args:?}");
+    }
+
+    /// Polls `local` (as the app does) until `ok` holds; panics after 5 s.
+    fn until(path: &str, quick: bool, ok: impl Fn(&GitState) -> bool, what: &str) {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !ok(&local(path, quick)) {
+            assert!(Instant::now() < end, "{what}: not seen");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn reads_again_only_after_a_change() {
+        let base = std::env::temp_dir().join(format!("sd-gitwatch-{}", std::process::id()));
+        let main = base.join("main");
+        let wt = base.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        run(&base, &["init", "-q", "--bare", base.join("remote.git").to_str().unwrap()]);
+        run(&main, &["init", "-q", "-b", "main"]);
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        run(&main, &["add", "-A"]);
+        run(&main, &["commit", "-qm", "a"]);
+        run(&main, &["remote", "add", "origin", base.join("remote.git").to_str().unwrap()]);
+        run(&main, &["push", "-q", "origin", "main"]);
+        run(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"]);
+        let (m, w) = (main.to_string_lossy().to_string(), wt.to_string_lossy().to_string());
+        assert_eq!(watch_roots(&wt), vec![wt.clone(), main.clone()], "a worktree depends on its main repository");
+        assert_eq!(watch_roots(&main.join("sub/dir")), vec![main.clone()], "a folder inside a repository: its top");
+
+        // first read, then an untouched repository costs no git
+        let first = local(&m, true);
+        assert_eq!(first.worktrees[0].untracked, 0);
+        std::thread::sleep(Duration::from_millis(300));
+        let t = Instant::now();
+        let again = local(&m, true);
+        assert!(t.elapsed() < Duration::from_millis(15), "cached read took {:?}", t.elapsed());
+        assert_eq!(again.worktrees[0].untracked, 0);
+
+        // a new file in the folder shows
+        std::fs::write(main.join("new.txt"), "n").unwrap();
+        until(&m, true, |s| s.worktrees[0].untracked == 1, "new untracked file");
+
+        // a commit made in the worktree (refs in the main repository) shows in the main folder's full read
+        local(&m, false);
+        std::fs::write(wt.join("b.txt"), "b").unwrap();
+        run(&wt, &["add", "-A"]);
+        run(&wt, &["commit", "-qm", "b"]);
+        until(&m, false, |s| s.branches.iter().any(|b| b.name == "feat" && b.unpushed == 1), "worktree commit");
+        // and in the worktree's own read
+        until(&w, true, |s| s.worktrees.iter().find(|x| x.path.ends_with("wt")).is_some_and(|x| x.unpushed == 1), "worktree's own commit");
+
+        // a branch made in the main repository shows in the worktree folder's full read
+        local(&w, false);
+        run(&main, &["branch", "other"]);
+        until(&w, false, |s| s.branches.iter().any(|b| b.name == "other"), "new branch");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -15,6 +15,24 @@ import { recentFolders } from "@/backend/real"
 import { homePath } from "@/lib/format"
 import type { ID } from "@/lib/model"
 
+/**
+ * A path that keeps its last folder whole: when it does not fit, the middle gives way
+ * (`~/Desktop/Git/…/frontend`, as editors shorten paths), and the whole path is on hover.
+ */
+function PathText({ path, className = "" }: { path: string; className?: string }) {
+  const trimmed = path.replace(/[\\/]+$/, "")
+  const cut = trimmed.search(/[^\\/]+$/)
+  // the separator goes with the last folder, so a shortened path still reads `…/frontend`
+  const dir = cut > 1 ? trimmed.slice(0, cut - 1) : ""
+  const leaf = cut > 1 ? trimmed.slice(cut - 1) : path
+  return (
+    <span title={path} className={`flex min-w-0 font-mono text-xs ${className}`}>
+      <span className="truncate">{dir}</span>
+      <span className="max-w-full shrink-0 truncate">{leaf}</span>
+    </span>
+  )
+}
+
 export function FolderPicker({ value, onChange }: { value: ID; onChange: (id: ID) => void }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -54,7 +72,7 @@ export function FolderPicker({ value, onChange }: { value: ID; onChange: (id: ID
           <ChevronDown size={12} className="shrink-0 text-muted-foreground/70" />
         </button>
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={6} className="w-[320px] border border-border bg-muted p-0 shadow-[0_10px_28px_rgba(0,0,0,0.5)] ring-0">
+      <PopoverContent side="top" align="start" sideOffset={6} className="w-[min(640px,calc(100vw-32px))] border border-border bg-muted p-0 shadow-[0_10px_28px_rgba(0,0,0,0.5)] ring-0">
         <Command>
           <CommandInput value={query} onValueChange={setQuery} placeholder="Find a project or type a path" className="h-9 text-sm" />
           <CommandList className="max-h-72">
@@ -62,23 +80,23 @@ export function FolderPicker({ value, onChange }: { value: ID; onChange: (id: ID
             <CommandGroup heading="Recent">
               {recent.map((id) => (
                 <CommandItem key={id} value={`${repos[id].name} ${homePath(repos[id].rootPath)}`} onSelect={() => pick(id)} className="text-sm">
-                  <FolderGit2 size={14} className="text-muted-foreground/70" />
-                  <span className="truncate">{repos[id].name}</span>
-                  <span className="ml-auto truncate font-mono text-xs text-muted-foreground/70">{homePath(repos[id].rootPath)}</span>
+                  <FolderGit2 size={14} className="shrink-0 text-muted-foreground/70" />
+                  <span className="max-w-[50%] shrink-0 truncate">{repos[id].name}</span>
+                  <PathText path={homePath(repos[id].rootPath)} className="ml-auto pl-3 text-muted-foreground/70" />
                 </CommandItem>
               ))}
             </CommandGroup>
             <CommandGroup heading="Open folder">
               {looksLikePath && !tracked.has(typed) && !folders.includes(typed) && (
                 <CommandItem value={`open ${typed}`} onSelect={() => pick(addRepoFromPath(typed))} className="text-sm">
-                  <FolderOpen size={14} className="text-muted-foreground/70" />
-                  <span className="truncate font-mono text-xs">{typed}</span>
+                  <FolderOpen size={14} className="shrink-0 text-muted-foreground/70" />
+                  <PathText path={typed} />
                 </CommandItem>
               )}
               {folders.map((f) => (
                 <CommandItem key={f} value={`open ${f}`} onSelect={() => pick(addRepoFromPath(f))} className="text-sm">
-                  <FolderOpen size={14} className="text-muted-foreground/70" />
-                  <span className="truncate font-mono text-xs">{f}</span>
+                  <FolderOpen size={14} className="shrink-0 text-muted-foreground/70" />
+                  <PathText path={f} />
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -88,9 +106,9 @@ export function FolderPicker({ value, onChange }: { value: ID; onChange: (id: ID
                 <CommandGroup key={host} heading={`On ${host}`}>
                   {there.map((id) => (
                     <CommandItem key={id} value={`${host} ${repos[id].name} ${repos[id].rootPath}`} onSelect={() => pick(id)} className="text-sm">
-                      <Server size={14} className="text-muted-foreground/70" />
-                      <span className="truncate">{repos[id].name}</span>
-                      <span className="ml-auto truncate font-mono text-xs text-muted-foreground/70">{repos[id].rootPath}</span>
+                      <Server size={14} className="shrink-0 text-muted-foreground/70" />
+                      <span className="max-w-[50%] shrink-0 truncate">{repos[id].name}</span>
+                      <PathText path={repos[id].rootPath} className="ml-auto pl-3 text-muted-foreground/70" />
                     </CommandItem>
                   ))}
                   {looksLikePath && (
