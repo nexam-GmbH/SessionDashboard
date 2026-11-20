@@ -105,6 +105,14 @@ fn make_repo(base: &Path, r: usize) -> Vec<String> {
     }
     git(&main, &["checkout", "-q", "main"]);
     let mut folders = vec![main.to_string_lossy().to_string()];
+    // the first repository is a Claude Code one: 20 worktrees inside it (.claude/worktrees)
+    if r == 0 {
+        for w in 0..20 {
+            let wt = main.join(".claude/worktrees").join(format!("w{w}"));
+            git(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", &format!("claude/w{w}")]);
+            folders.push(wt.to_string_lossy().to_string());
+        }
+    }
     for w in 3..5 {
         let wt = base.join(format!("repo{r}-wt{w}"));
         git(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), &format!("feature-{w}")]);
@@ -198,14 +206,23 @@ fn polling_minute() {
             let n = scans.time(|| crate::claude::discover::scan(&cache)).len();
             assert_eq!(n, TRANSCRIPTS);
         }
+        // one session edits a file in its worktree every 10 s (a working session)
+        if sec % 10 == 5 {
+            let f = Path::new(&busy[1]).join("src/m0/f0.rs");
+            std::fs::write(&f, format!("fn f0() {{}} // {sec}\n")).unwrap();
+        }
         if sec % 20 == 0 {
             for f in &busy {
                 quick.time(|| crate::claude::git::local(f, true));
             }
         }
+        // the 2-minute round: a full read of each repository, then every folder on its own
         if sec == 30 {
             for r in &repos {
                 full.time(|| crate::claude::git::local(r, false));
+            }
+            for f in &busy {
+                quick.time(|| crate::claude::git::local(f, true));
             }
         }
     }
