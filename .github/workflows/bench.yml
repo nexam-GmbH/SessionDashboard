@@ -1,0 +1,55 @@
+# The background work of two versions, measured the same way on GitHub's Windows runner: one real
+# minute of the app's polling on a heavy user's data (src-tauri/src/bench.rs). Runs on pushes to the
+# `bench` branch.
+name: Bench
+
+on:
+  push:
+    branches: [bench]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v0.8.4, v0.8.5]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bench-src
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.version }}
+          path: app
+
+      - name: Bench file into the version
+        run: |
+          cp bench-src/src-tauri/src/bench.rs app/src-tauri/src/bench.rs
+          grep -q "^mod bench;" app/src-tauri/src/lib.rs || printf '\n#[cfg(test)]\nmod bench;\n' >> app/src-tauri/src/lib.rs
+          mkdir -p app/dist && echo '<!doctype html><title>bench</title>' > app/dist/index.html
+
+      - name: Defender state on this runner
+        shell: pwsh
+        run: Get-MpComputerStatus | Select-Object AMRunningMode, RealTimeProtectionEnabled, BehaviorMonitorEnabled | Format-List
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./app/src-tauri -> target"
+          key: bench-${{ matrix.version }}
+
+      - name: Build
+        working-directory: app/src-tauri
+        run: cargo test --release --lib --no-run
+
+      - name: One minute of polling
+        working-directory: app/src-tauri
+        run: cargo test --release --lib polling_minute -- --ignored --nocapture 2>&1 | tee bench.txt; grep -q "busy_ms_per_minute" bench.txt
+
+      - name: Result
+        run: echo "${{ matrix.version }}" && grep BENCH app/src-tauri/bench.txt
