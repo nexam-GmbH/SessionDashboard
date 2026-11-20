@@ -167,6 +167,12 @@ fn polling_minute() {
     first.time(|| crate::claude::discover::scan(&cache));
     first.report("first_scan");
     assert_eq!(crate::claude::discover::pid_sessions().len(), LIVE);
+    // the git of every folder, read once at start too (the app's first paint does it)
+    let mut first_git = Stat::default();
+    for f in &busy {
+        first_git.time(|| crate::claude::git::local(f, true));
+    }
+    first_git.report("first_git");
 
     let (mut pids, mut scans, mut quick, mut full, mut append) = (Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default());
     let writers: Vec<&PathBuf> = transcripts.iter().skip(1).step_by(97).take(3).collect();
