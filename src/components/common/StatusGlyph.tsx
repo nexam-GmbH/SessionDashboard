@@ -50,6 +50,7 @@ const OUTCOME_ICON: Record<OutcomeKind, LucideIcon> = {
   landed: GitMerge,
   removed: CircleCheck,
   done: CircleCheck,
+  marked: CircleCheck,
 }
 const AT_REST = new Set<SessionStatus>(["idle", "done_unseen", "stopped"])
 

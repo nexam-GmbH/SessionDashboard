@@ -304,6 +304,8 @@ pub struct Helper {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     pending: std::sync::Arc<Mutex<HashMap<String, std::sync::mpsc::Sender<Value>>>>,
+    /// last asked: an idle helper (a claude, ~180 MB) is ended and started again when needed
+    used: std::time::Instant,
 }
 
 impl HostHelper {
@@ -346,7 +348,7 @@ impl HostHelper {
             p2.lock().unwrap().clear();
             HELPERS.lock().unwrap().retain(|p| *p != pid);
         });
-        Ok(Helper { child, stdin, pending })
+        Ok(Helper { child, stdin, pending, used: std::time::Instant::now() })
     }
 
     /// Ask the helper one control request and wait for its answer.
@@ -364,6 +366,7 @@ impl HostHelper {
                 *g = Some(Self::spawn()?);
             }
             let h = g.as_mut().unwrap();
+            h.used = std::time::Instant::now();
             h.pending.lock().unwrap().insert(id.clone(), tx);
             let line = serde_json::json!({"type": "control_request", "request_id": id, "request": req});
             if writeln!(h.stdin, "{line}").and_then(|_| h.stdin.flush()).is_err() {
@@ -373,6 +376,17 @@ impl HostHelper {
             }
         }
         rx.recv_timeout(timeout).map_err(|_| "claude did not answer".to_string())
+    }
+
+    /// End the helper when nothing asked it for `idle` (the cloud list stops while the window is
+    /// hidden or the cloud is off): it holds a whole claude process for nothing.
+    pub fn stop_if_idle(&self, idle: Duration) {
+        let mut g = self.0.lock().unwrap();
+        if g.as_ref().is_some_and(|h| h.used.elapsed() > idle && h.pending.lock().unwrap().is_empty()) {
+            if let Some(mut h) = g.take() {
+                crate::sys::kill_tree(&mut h.child);
+            }
+        }
     }
 
     pub fn stop(&self) {

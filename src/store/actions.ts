@@ -12,7 +12,8 @@ import { getApp, setApp, type Settings } from "./app"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway } from "./away"
-import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
+import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
+import { MARKED_DONE } from "@/lib/outcome"
 
 /**
  * Store actions — plain functions so components, palette commands, the mock
@@ -209,6 +210,12 @@ export function pinSession(id: ID, pinned?: boolean) {
   if (REAL) realPin(id, on)
   patchSession(id, { pinned: on, updatedAt: s.updatedAt })
   setApp((st) => ({ structVersion: st.structVersion + 1 }))
+}
+
+/** You say it is done (or take that back): green until it works on something new. */
+export function markSessionDone(id: ID, on: boolean) {
+  if (REAL) realMarkDone(id, on)
+  else patchSession(id, { outcome: on ? MARKED_DONE : undefined })
 }
 
 export function snoozeSession(id: ID, hours: number) {

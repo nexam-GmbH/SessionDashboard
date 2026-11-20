@@ -4,6 +4,7 @@
 pub mod control;
 pub mod discover;
 pub mod git;
+pub mod gitrepo;
 pub mod hooks;
 pub mod inject;
 pub mod perms;
@@ -211,9 +212,10 @@ pub async fn git_state(paths: Vec<String>, host: Option<String>, quick: Option<b
     blocking(move || {
         Ok(match host {
             Some(h) => git::remote(&h, &paths, quick),
-            // 8 folders at a time: one slow repo does not hold up the rest
+            // 3 folders at a time: one slow repo does not hold up the rest, and a poll of many
+            // folders is no burst of git processes (the folders of one repository share one read)
             None => {
-                let n = paths.len().div_ceil(8).max(1);
+                let n = paths.len().div_ceil(3).max(1);
                 std::thread::scope(|s| {
                     let parts: Vec<_> = paths.chunks(n).map(|c| (c, s.spawn(move || c.iter().map(|p| git::local(p, quick)).collect::<Vec<_>>()))).collect();
                     // one result per folder, in order, even if a reader failed

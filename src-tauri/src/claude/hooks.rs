@@ -385,7 +385,8 @@ pub fn status_remote(host: &str) -> Value {
             let (script, rest) = s.split_once('\n').unwrap_or((&s, ""));
             json!({"installed": script.trim() == "yes" && installed_in(rest)})
         }
-        Err(e) => json!({"installed": false, "error": e}),
+        // not reached: not known (never "not installed")
+        Err(e) => json!({"installed": null, "error": e}),
     }
 }
 

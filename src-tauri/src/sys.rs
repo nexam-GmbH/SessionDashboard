@@ -22,6 +22,38 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     c
 }
 
+/// glibc keeps one malloc arena per thread and hardly gives freed memory back: reading big chats
+/// on the async pool's many threads left ~290 MB resident after everything was freed (measured);
+/// with two arenas and a trim it was 6 MB. Linux (glibc) only: Windows and macOS have their own
+/// allocators. Called first thing, before any thread starts.
+pub fn tame_malloc() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            fn mallopt(param: i32, value: i32) -> i32;
+        }
+        const M_ARENA_MAX: i32 = -8;
+        // SAFETY: a plain glibc setting, before other threads exist
+        unsafe {
+            mallopt(M_ARENA_MAX, 2);
+        }
+    }
+}
+
+/// Give memory freed since the last call back to the system (glibc keeps it otherwise).
+pub fn release_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        // SAFETY: glibc's own call, safe at any time from any thread
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}
+
 /// Every running process id, for systems without /proc: one in-process snapshot (no `tasklist` /
 /// `ps` started every poll, which on Windows also had Defender scan each start).
 #[cfg(not(target_os = "linux"))]

@@ -459,7 +459,9 @@ function Machines() {
     <SettingsSection title="Machines" description="A VPS or another computer where repos live. The app reaches it with your ssh (keys and ~/.ssh/config aliases; it never asks for a password), keeps a tunnel so the hook there can report, and starts sessions there.">
       {machines.map(({ host: h }) => {
         const st = status[h]
-        const line = st?.error ?? (st?.ok ? [st.hostname, st.version ? `claude ${st.version.replace(/ \(.*\)$/, "")}` : "claude not found", st.tunnel === false ? `tunnel: ${st.tunnelError ?? "down"}` : undefined].filter(Boolean).join(" · ") : "checking…")
+        // only what a check found: "not found" when it looked and claude was not there
+        const claude = !st?.checkedAt ? "checking…" : st.claude ? (st.version ? `claude ${st.version.replace(/ \(.*\)$/, "")}` : "claude") : "claude not found"
+        const line = st?.error ?? (st?.ok ? [st.hostname, claude, st.tunnel === false ? `tunnel: ${st.tunnelError ?? "down"}` : undefined].filter(Boolean).join(" · ") : "checking…")
         return (
           <div key={h} className="group flex min-h-10 items-center gap-3 border-b border-border py-1.5">
             <Server size={14} className={cn("shrink-0", st?.ok ? "text-muted-foreground" : "text-muted-foreground/70")} />
@@ -467,7 +469,7 @@ function Machines() {
               <div className="truncate font-mono text-xs text-foreground">{h}</div>
               <div className={cn("truncate text-xs", st?.error ? "text-st-error-fg" : "text-muted-foreground/70")}>{line}</div>
             </div>
-            {st?.ok && (
+            {st?.ok && st.hooks !== undefined && (
               <Button size="sm" variant={st.hooks ? "ghost" : "default"} disabled={working === h} onClick={() => void hooks(h, !st.hooks)} title={st.hooks ? "Remove the hook from this machine's ~/.claude/settings.json" : "Add the hook to this machine's ~/.claude/settings.json (a backup is kept)"}>
                 {st.hooks ? "Remove hooks" : "Install hooks"}
               </Button>

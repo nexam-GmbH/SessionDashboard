@@ -7,7 +7,7 @@ import type { RepoGit } from "./model"
 import { plural } from "./format"
 
 export type OutcomeTone = "red" | "yellow" | "green"
-export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done"
+export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked"
 
 export interface Outcome {
   tone: OutcomeTone
@@ -52,6 +52,9 @@ export function outcomeOf(i: OutcomeInput): Outcome {
   if (branch && !here && g.branches && !b) return { tone: "green", kind: "merged", label: "Branch deleted" }
   return { tone: "yellow", kind: "no_pr", label: "No PR yet" }
 }
+
+/** You marked it done yourself (right-click → Mark as done): green until it works again. */
+export const MARKED_DONE: Outcome = { tone: "green", kind: "marked", label: "Marked done" }
 
 export const OUTCOME_COLOR: Record<OutcomeTone, string> = {
   red: "var(--st-error)",

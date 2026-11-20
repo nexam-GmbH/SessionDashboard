@@ -23,8 +23,9 @@ if (typeof window !== "undefined") {
   idle(() => void Promise.all([loadNew(), loadSettings(), loadHistory(), loadReview(), loadUsage()]))
 }
 
-/** sessions kept mounted besides the current screen: switching back to one of them is instant */
-const KEEP = 5
+/** sessions kept mounted besides the current screen: switching back to one of them is instant
+ * (each holds its rendered chat; the others open from the loaded transcript in a moment) */
+const KEEP = 3
 
 /**
  * The screen beside the session list. The current screen plus the most recently opened sessions

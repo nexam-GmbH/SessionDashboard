@@ -96,6 +96,7 @@ pub fn cli() -> Option<i32> {
 }
 
 pub fn run() {
+    sys::tame_malloc();
     // Fedora's KDE sets GDK_CORE_DEVICE_EVENTS=1 for every GTK3 app on X11 (a 2015 workaround):
     // GTK then gets no XInput2 events, so the web view scrolls in coarse wheel jumps, with no
     // smooth or touchpad scrolling. Not for this app: set before GTK starts, while nothing else
@@ -214,6 +215,14 @@ pub fn run() {
             let port = claude::hooks::serve(app.handle().clone()).unwrap_or(0);
             // sessions idle for a while give their process back (resumed on the next message)
             claude::control::start_parker(app.state::<claude::control::Procs>().inner().clone());
+            // once a minute: memory freed after big reads goes back to the system, and an idle
+            // helper claude ends
+            let helper = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                helper.state::<claude::discover::HostHelper>().stop_if_idle(std::time::Duration::from_secs(180));
+                sys::release_memory();
+            });
             app.manage(claude::HookPort(port));
             // the search index: read (or brought up to date) in the background once the window is up
             let search = app.state::<claude::search::Search>().inner().clone();

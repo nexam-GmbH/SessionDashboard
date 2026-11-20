@@ -41,7 +41,10 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// Where claude usually lives on a server: non-interactive ssh shells often miss ~/.local/bin etc.
-pub const REMOTE_PATH: &str = r#"PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.claude/local:$HOME/.bun/bin:/usr/local/bin:$PATH""#;
+/// Where claude is on a machine: a non-interactive ssh shell loads no profile, so the usual install
+/// places are added (the native installer, npm, bun, and node managers: nvm, volta, asdf, mise, pnpm,
+/// Linuxbrew).
+pub const REMOTE_PATH: &str = r#"PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.claude/local:$HOME/.bun/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin "$HOME/.volta/bin" "$HOME/.asdf/shims" "$HOME/.local/share/mise/shims" "$HOME/.local/share/pnpm" "$HOME/.yarn/bin" /home/linuxbrew/.linuxbrew/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done"#;
 
 /// An ssh command for `host` running `script` in a POSIX shell there.
 pub fn ssh_cmd(host: &str, script: &str) -> Command {
@@ -107,14 +110,20 @@ pub fn run(host: &str, script: &str, stdin: Option<&[u8]>, timeout: Duration) ->
 
 /// Can we reach the machine, and does it have claude? {ok, hostname, claude, error}
 pub fn probe(host: &str) -> Value {
-    match run(host, "hostname; command -v claude || echo -; claude --version 2>/dev/null | head -1", None, Duration::from_secs(12)) {
+    probe_answer(run(host, PROBE, None, Duration::from_secs(25)))
+}
+
+const PROBE: &str = r#"echo "@@host $(hostname)"; b=$(command -v claude 2>/dev/null); echo "@@bin ${b:--}"; [ -n "$b" ] && echo "@@ver $("$b" --version 2>/dev/null | head -n 1)""#;
+
+fn probe_answer(r: Result<Vec<u8>, String>) -> Value {
+    // marked lines: whatever a profile prints on the way does not shift the answers; a cold claude
+    // (first start, an update check) may take a while to say its version
+    match r {
         Ok(out) => {
             let s = String::from_utf8_lossy(&out);
-            let mut l = s.lines();
-            let hostname = l.next().unwrap_or("").trim().to_string();
-            let bin = l.next().unwrap_or("-").trim().to_string();
-            let version = l.next().unwrap_or("").trim().to_string();
-            json!({"ok": true, "hostname": hostname, "claude": if bin == "-" { Value::Null } else { json!(bin) }, "version": version})
+            let field = |k: &str| s.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string()).unwrap_or_default();
+            let bin = field("@@bin ");
+            json!({"ok": true, "hostname": field("@@host "), "claude": if bin.is_empty() || bin == "-" { Value::Null } else { json!(bin) }, "version": field("@@ver ")})
         }
         Err(e) => json!({"ok": false, "error": e}),
     }
@@ -262,5 +271,30 @@ mod tests {
         let g = super::super::git::remote("fake", &["~/projects/session-dashboard".to_string()], false);
         println!("git: repo={} branch={:?} changed={}", g[0].is_repo, g[0].worktrees.first().and_then(|w| w.branch.clone()), g[0].worktrees.first().map(|w| w.changed).unwrap_or(0));
         assert!(g[0].is_repo);
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    /// The PATH line and the probe run in a real sh (what ssh runs there), and a profile's chatter
+    /// before them does not shift the answers.
+    #[test]
+    fn probe_reads_marked_lines() {
+        let script = format!("echo 'Welcome to the server!'; {REMOTE_PATH}; {PROBE}");
+        let out = std::process::Command::new("sh").args(["-c", &script]).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let v = probe_answer(Ok(out.stdout));
+        assert_eq!(v["ok"], true);
+        assert!(!v["hostname"].as_str().unwrap().is_empty() && v["hostname"] != "Welcome to the server!");
+        // where claude is installed here, it is found, with its version
+        if let Some(bin) = v["claude"].as_str() {
+            assert!(bin.ends_with("claude"), "{v}");
+            assert!(!v["version"].as_str().unwrap().is_empty(), "{v}");
+        }
+        let gone = probe_answer(Ok(b"motd\n@@host box\n@@bin -\n".to_vec()));
+        assert_eq!(gone["claude"], Value::Null);
+        assert_eq!(gone["hostname"], "box");
     }
 }

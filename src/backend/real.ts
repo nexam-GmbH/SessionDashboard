@@ -19,7 +19,7 @@ import { onMovedOn, startHooks } from "./hooks"
 import { remoteTranscript, remoteTranscriptSince, startMachines } from "./machines"
 import { CLOUD, cloudSend, cloudTranscript, pollCloud, applyCloudList } from "./cloud"
 import { readGit } from "./git"
-import { outcomeOf, type Outcome } from "@/lib/outcome"
+import { MARKED_DONE, outcomeOf, type Outcome } from "@/lib/outcome"
 import { startNotify } from "./notify"
 
 export { REAL }
@@ -106,7 +106,15 @@ const loading = new Set<ID>()
 let home = ""
 
 const LS = "sd.real"
-type Persist = { seen: Record<ID, number>; archived: ID[]; firstRun: number; titles?: Record<ID, string>; pinned?: ID[] }
+type Persist = {
+  seen: Record<ID, number>
+  archived: ID[]
+  firstRun: number
+  titles?: Record<ID, string>
+  pinned?: ID[]
+  /** marked done by you, when (ms): holds while the session does nothing new */
+  done?: Record<ID, number>
+}
 function loadPersist(): Persist {
   try {
     const p = JSON.parse(localStorage.getItem(LS) ?? "null") as Persist | null
@@ -556,9 +564,31 @@ function buildSession(id: ID, prev?: Session): Session | null {
     lastViewedAt: persist.seen[id] ? iso(persist.seen[id]) : undefined,
     pinned: !!persist.pinned?.includes(id),
     archived: persist.archived.includes(id),
-    // how its work ended: from the transcript and the folder's git, so it stays after you look
-    outcome: meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
+    // how its work ended: marked done by you (until it does something new), else from the
+    // transcript and the folder's git, so it stays after you look
+    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
   }
+}
+
+/**
+ * Marked done, and no new prompt or answer since (2 s for one being written as you marked). The
+ * last message's time, not the file's: a title or other record written later is not new work.
+ */
+function markedDone(id: ID, meta: Meta | undefined) {
+  const at = persist.done?.[id]
+  if (at === undefined) return false
+  const last = meta?.lastAt ? Date.parse(meta.lastAt) : (meta?.updatedMs ?? 0)
+  return !(last > at + 2000)
+}
+
+/** Mark a session done by hand, or take the mark back (kept across restarts). */
+export function realMarkDone(id: ID, on: boolean) {
+  const done = { ...persist.done }
+  if (on) done[id] = Date.now()
+  else delete done[id]
+  persist.done = done
+  save()
+  sync()
 }
 
 /** The same outcome keeps its object (nothing that shows it renders again). */
@@ -1045,7 +1075,8 @@ function pruneTranscripts() {
   // sessions that need you stay loaded (and are read ahead): Ctrl+J opens them at once
   const needs = selectNeedsYou(st)
   for (const id of needs) ensureRealTranscript(id)
-  const keep = new Set([...st.recent.slice(0, 8), ...needs])
+  // the last 4 chats (8 held ~26 MB of JSON, two to four times that as objects: measured)
+  const keep = new Set([...st.recent.slice(0, 4), ...needs])
   const drop = Object.keys(st.transcripts).filter((id) => !keep.has(id) && !owned.has(id) && !loading.has(id))
   if (!drop.length) return
   for (const id of drop) {

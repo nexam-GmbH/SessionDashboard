@@ -58,10 +58,11 @@ function aliasOf(hostname: string) {
 
 export async function probeMachine(host: string) {
   const r = await invoke<{ ok: boolean; hostname?: string; claude?: string | null; version?: string; error?: string }>("remote_probe", { host })
-  setStatus(host, { ...r, checkedAt: Date.now() })
+  setStatus(host, { ...r, checkedAt: r.ok ? Date.now() : undefined })
   if (r.ok) {
-    const h = await invoke<{ installed: boolean; error?: string }>("hooks_status", { host }).catch(() => ({ installed: false }))
-    setStatus(host, { hooks: h.installed })
+    // a check that did not get through says nothing (the button waits), never "not installed"
+    const h = await invoke<{ installed: boolean | null; error?: string }>("hooks_status", { host }).catch(() => ({ installed: null }))
+    setStatus(host, { hooks: h.installed ?? undefined })
   }
   return r
 }
@@ -131,6 +132,8 @@ function onHook({ host: hostname, git, at, event: e }: Parameters<Parameters<typ
   requestSync()
 }
 
+const probedAt = new Map<string, number>()
+
 /** Keep tunnels and polls in step with Settings → Machines. */
 let timer: ReturnType<typeof setInterval> | undefined
 export async function startMachines() {
@@ -138,6 +141,16 @@ export async function startMachines() {
   await listen<{ host: string; tunnel: boolean; error?: string }>("remote-status", ({ payload }) => setStatus(payload.host, { tunnel: payload.tunnel, tunnelError: payload.error }))
   const tick = async () => {
     const hosts = machines()
+    // what claude and the hook are there: checked at start and until a check gets through (the poll
+    // below only lists sessions; it knew neither, so the row said "claude not found" / "Install hooks")
+    for (const h of hosts) {
+      const st = getApp().machineStatus[h]
+      // again at most every 2 minutes while it does not get through
+      if ((!st?.checkedAt || st.hooks === undefined) && Date.now() - (probedAt.get(h) ?? 0) > 120_000) {
+        probedAt.set(h, Date.now())
+        void probeMachine(h).catch(() => undefined)
+      }
+    }
     // machines removed in Settings go; the cloud's sessions are not a machine's (cloud.ts keeps them)
     for (const h of [...extByMachine.keys()]) if (h !== "cloud" && !hosts.includes(h)) extByMachine.delete(h)
     await invoke("remote_tunnels", { hosts }).catch((e) => console.warn("remote_tunnels", e))

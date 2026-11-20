@@ -192,70 +192,16 @@ fn parse(path: &str, out: &str) -> GitState {
     st
 }
 
-/// Git state of a folder on this computer (`quick`: only its own worktree).
-///
-/// Read again only when something under the folder or its repository's main worktree changed (a
-/// change watch, the way git's own fsmonitor spares `git status`): an untouched repository costs no
-/// git process at all. Not watched (Linux, a network drive, too many folders): read every time.
-/// At least every 5 minutes it is read anyway, in case change events were lost.
+/// Git state of a folder on this computer (`quick`: only its own worktree's status): per
+/// repository, read again only where something changed (claude/gitrepo.rs).
 pub fn local(path: &str, quick: bool) -> GitState {
-    static LAST: std::sync::Mutex<Option<std::collections::HashMap<(String, bool), (std::time::Instant, u64, GitState)>>> = std::sync::Mutex::new(None);
-    const MAX_AGE: Duration = Duration::from_secs(300);
-    let key = (path.to_string(), quick);
-    let prev = LAST.lock().unwrap().get_or_insert_with(Default::default).get(&key).cloned();
-    let roots = watch_roots(std::path::Path::new(path));
-    // the watch runs before git is read: a change during the read moves the number, and the next
-    // poll reads again (its first call only starts it, the second says where it stands)
-    let stamp = super::watch::folder_gen(path, &roots).or_else(|| super::watch::folder_gen(path, &roots));
-    if let (Some(g), Some((at, pg, st))) = (stamp, &prev) {
-        if *pg == g && at.elapsed() < MAX_AGE {
-            return st.clone();
-        }
-    }
-    let st = parse(path, &local_report(path, quick));
-    match stamp {
-        Some(g) => {
-            LAST.lock().unwrap().get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), g, st.clone()));
-        }
-        // not watched (or the watch could not start): read every time
-        None => {
-            LAST.lock().unwrap().get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), 0, st.clone()));
-        }
-    }
-    st
-}
-
-/// What a folder's git state depends on, found on disk without running git: the repository's top
-/// folder (its files and `.git`), and for a linked worktree also the main repository (where its
-/// HEAD, index, refs and the branches live). Not in a repository: the folder itself.
-fn watch_roots(path: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut dir = Some(path);
-    while let Some(d) = dir {
-        let dot = d.join(".git");
-        if dot.is_dir() {
-            return vec![d.to_path_buf()];
-        }
-        if dot.is_file() {
-            let mut roots = vec![d.to_path_buf()];
-            // "gitdir: <main>/.git/worktrees/<name>" → <main>
-            if let Ok(t) = std::fs::read_to_string(&dot) {
-                let gitdir = std::path::PathBuf::from(t.trim().trim_start_matches("gitdir:").trim());
-                let gitdir = if gitdir.is_absolute() { gitdir } else { d.join(gitdir) };
-                if let Some(main) = gitdir.parent().and_then(|w| w.parent()).and_then(|g| g.parent()) {
-                    if main != d {
-                        roots.push(main.to_path_buf());
-                    }
-                }
-            }
-            return roots;
-        }
-        dir = d.parent();
-    }
-    vec![path.to_path_buf()]
+    parse(path, &super::gitrepo::read(path, quick))
 }
 
 /// One git command in `dir`; its stdout, or None when it failed.
-fn git(dir: &str, args: &[&str]) -> Option<String> {
+pub(super) fn git(dir: &str, args: &[&str]) -> Option<String> {
+    #[cfg(test)]
+    super::gitrepo::CALLS.with(|c| c.set(c.get() + 1));
     let mut c = crate::sys::command("git");
     c.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     // never let git ask for anything, and never take the index lock from your own git
@@ -264,142 +210,7 @@ fn git(dir: &str, args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-/// Commits reachable from `tip` inside `graph` (commit → parents, the commits on no remote): a
-/// commit outside it is on a remote, and so is everything before it.
-fn count_in(graph: &std::collections::HashMap<&str, Vec<&str>>, tip: &str) -> u32 {
-    let mut seen = std::collections::HashSet::new();
-    let mut stack = vec![tip];
-    while let Some(c) = stack.pop() {
-        let Some(parents) = graph.get(c) else { continue };
-        if seen.insert(c) {
-            stack.extend(parents.iter().copied());
-        }
-    }
-    seen.len() as u32
-}
-
-/// The same report SCRIPT prints, from plain `git` calls: no shell. On Windows the shell is Git's
-/// MSYS `sh`, where every `$(…)` and pipe is an emulated fork; the script started dozens of
-/// processes per repository (one `rev-list` per branch, three per worktree). This is 6 git
-/// processes plus one `status` per worktree read.
-fn local_report(path: &str, quick: bool) -> String {
-    use std::fmt::Write;
-    if !std::path::Path::new(path).is_dir() {
-        return "@@nodir\n".into();
-    }
-    let Some(rp) = git(path, &["rev-parse", "--is-inside-work-tree", "--show-toplevel"]) else { return "@@norepo\n".into() };
-    let mut rl = rp.lines();
-    if rl.next() != Some("true") {
-        return "@@norepo\n".into();
-    }
-    let top = rl.next().unwrap_or("").to_string();
-    // remotes (sorted, as `git remote` lists them) and origin's URL, else the first remote's
-    let rv = git(path, &["remote", "-v"]).unwrap_or_default();
-    let mut remotes: Vec<(&str, &str)> = Vec::new();
-    for l in rv.lines() {
-        let mut f = l.split_whitespace();
-        if let (Some(n), Some(u)) = (f.next(), f.next()) {
-            if !remotes.iter().any(|(m, _)| *m == n) {
-                remotes.push((n, u));
-            }
-        }
-    }
-    let has_remote = !remotes.is_empty();
-    let url = remotes.iter().find(|(n, _)| *n == "origin").or(remotes.first()).map(|(_, u)| *u).unwrap_or("");
-    let mut out = format!("@@url {url}\n@@remotes\n");
-    for (n, _) in &remotes {
-        let _ = writeln!(out, "{n}");
-    }
-    if quick {
-        out.push_str("@@quick\n");
-    }
-    // branches: name, upstream, track, date (+ tip, for the unpushed counts)
-    let refs = if quick { String::new() } else { git(path, &["for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:unix)%09%(objectname)", "refs/heads"]).unwrap_or_default() };
-    let branches: Vec<(&str, &str)> = refs.lines().filter_map(|l| l.rsplit_once('\t')).collect();
-    // worktrees: path, HEAD, locked, prunable
-    struct Wt<'a> {
-        path: &'a str,
-        head: &'a str,
-        flags: Vec<&'static str>,
-    }
-    let wl = git(path, &["worktree", "list", "--porcelain"]).unwrap_or_default();
-    let mut wts: Vec<Wt> = Vec::new();
-    for l in wl.lines() {
-        if let Some(p) = l.strip_prefix("worktree ") {
-            wts.push(Wt { path: p, head: "", flags: vec![] });
-        } else if let Some(w) = wts.last_mut() {
-            if let Some(h) = l.strip_prefix("HEAD ") {
-                w.head = h;
-            } else if l.starts_with("locked") {
-                w.flags.push("locked");
-            } else if l.starts_with("prunable") {
-                w.flags.push("prunable");
-            }
-        }
-    }
-    let read = |w: &Wt| std::path::Path::new(w.path).is_dir() && (!quick || w.path == top);
-    let heads: Vec<&str> = wts.iter().filter(|w| read(w) && !w.head.is_empty() && !w.head.bytes().all(|b| b == b'0')).map(|w| w.head).collect();
-    // every commit on no remote, with its parents: one rev-list for all branches and worktrees
-    let unpushed_raw = if has_remote && (!branches.is_empty() || !heads.is_empty()) {
-        let mut args = vec!["rev-list", "--parents"];
-        if !quick {
-            args.push("--branches");
-        }
-        args.extend(heads.iter().copied());
-        args.extend(["--not", "--remotes"]);
-        git(path, &args).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let graph: std::collections::HashMap<&str, Vec<&str>> = unpushed_raw
-        .lines()
-        .filter_map(|l| {
-            let mut f = l.split_whitespace();
-            Some((f.next()?, f.collect()))
-        })
-        .collect();
-    // last commit time of every worktree read, one call
-    let mut when: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    if !heads.is_empty() {
-        let mut args = vec!["log", "--no-walk=unsorted", "--format=%H %ct"];
-        args.extend(heads.iter().copied());
-        for l in git(path, &args).unwrap_or_default().lines() {
-            if let Some((h, t)) = l.split_once(' ') {
-                when.insert(h.to_string(), t.to_string());
-            }
-        }
-    }
-    out.push_str("@@branches\n");
-    for (row, _) in &branches {
-        let _ = writeln!(out, "{row}");
-    }
-    out.push_str("@@unpushed\n");
-    if !quick && has_remote {
-        for (row, tip) in &branches {
-            let name = row.split('\t').next().unwrap_or("");
-            let _ = writeln!(out, "{name}\t{}", count_in(&graph, tip));
-        }
-    }
-    for w in &wts {
-        let _ = writeln!(out, "@@worktree {}", w.path);
-        if read(w) {
-            let st = git(w.path, &["status", "--porcelain=v2", "--branch"]).unwrap_or_default();
-            for l in st.lines().take(2000) {
-                let _ = writeln!(out, "{l}");
-            }
-            let _ = writeln!(out, "@@last {}", when.get(w.head).map(String::as_str).unwrap_or(""));
-            if has_remote {
-                let _ = writeln!(out, "@@wtunpushed {}", if w.head.is_empty() { 0 } else { count_in(&graph, w.head) });
-            }
-        }
-        for f in &w.flags {
-            let _ = writeln!(out, "@@{f}");
-        }
-    }
-    out
-}
-
-/// The old shell way, kept to check `local_report` against it.
+/// The old shell way, kept to check the per-repository reads against it.
 #[cfg(test)]
 fn local_script(path: &str, quick: bool) -> String {
     let mut c = std::process::Command::new("sh");
@@ -518,7 +329,7 @@ mod direct_tests {
         for r in repos.split(':').filter(|r| !r.is_empty()) {
             for quick in [false, true] {
                 let a = serde_json::to_string(&parse(r, &local_script(r, quick))).unwrap();
-                let b = serde_json::to_string(&parse(r, &local_report(r, quick))).unwrap();
+                let b = serde_json::to_string(&parse(r, &super::super::gitrepo::read(r, quick))).unwrap();
                 assert_eq!(a, b, "{r} quick={quick}");
             }
         }
@@ -560,8 +371,6 @@ mod watch_tests {
         run(&main, &["push", "-q", "origin", "main"]);
         run(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"]);
         let (m, w) = (main.to_string_lossy().to_string(), wt.to_string_lossy().to_string());
-        assert_eq!(watch_roots(&wt), vec![wt.clone(), main.clone()], "a worktree depends on its main repository");
-        assert_eq!(watch_roots(&main.join("sub/dir")), vec![main.clone()], "a folder inside a repository: its top");
 
         // first read, then an untouched repository costs no git
         let first = local(&m, true);

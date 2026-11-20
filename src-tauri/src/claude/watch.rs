@@ -17,7 +17,7 @@ const RETRY: Duration = Duration::from_secs(60);
 
 /// Off on Linux: /proc and stat are cheap there, and a recursive inotify watch would use up watches
 /// other apps need. `SD_WATCH=1` turns it on.
-fn wanted() -> bool {
+pub(crate) fn wanted() -> bool {
     cfg!(not(target_os = "linux")) || cfg!(test) || std::env::var("SD_WATCH").is_ok_and(|v| v == "1")
 }
 
@@ -121,64 +121,6 @@ pub fn sessions_gen(dirs: &[PathBuf]) -> Option<u64> {
     ensure(dirs).then(|| with(|p| p.sessions))
 }
 
-// ---------- git folders ----------
-
-/// More folders than this are not watched (each a recursive watch): the rest are read every time.
-const MAX_FOLDERS: usize = 64;
-
-struct FolderWatch {
-    roots: Vec<PathBuf>,
-    stamp: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    used: Instant,
-    _watcher: notify::RecommendedWatcher,
-}
-
-static FOLDERS: Mutex<Option<std::collections::HashMap<String, FolderWatch>>> = Mutex::new(None);
-
-/// A number that changes whenever anything under a folder (or the other `roots` its git state
-/// depends on: the repository's main worktree, where branches and refs live) changed. None: not
-/// watched, read it. The first call starts the watch and also says None (what changed before the
-/// watch began is not known).
-pub fn folder_gen(folder: &str, roots: &[PathBuf]) -> Option<u64> {
-    if !wanted() {
-        return None;
-    }
-    let mut g = FOLDERS.lock().unwrap();
-    let map = g.get_or_insert_with(Default::default);
-    if let Some(w) = map.get_mut(folder) {
-        if w.roots == roots {
-            w.used = Instant::now();
-            return Some(w.stamp.load(std::sync::atomic::Ordering::SeqCst));
-        }
-    }
-    map.remove(folder);
-    if map.len() >= MAX_FOLDERS {
-        let oldest = map.iter().min_by_key(|(_, w)| w.used).map(|(k, _)| k.clone());
-        if let Some(k) = oldest {
-            map.remove(&k);
-        }
-    }
-    let stamp = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
-    let g2 = stamp.clone();
-    let started = notify::recommended_watcher(move |ev: notify::Result<Event>| {
-        // a read (git's own, ours) changes nothing; anything else, errors and lost events included,
-        // may have changed the folder
-        if ev.as_ref().is_ok_and(|e| e.kind.is_access()) {
-            return;
-        }
-        g2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    })
-    .ok()
-    .and_then(|mut w| {
-        for r in roots {
-            w.watch(r, RecursiveMode::Recursive).ok()?;
-        }
-        Some(w)
-    })?;
-    map.insert(folder.to_string(), FolderWatch { roots: roots.to_vec(), stamp, used: Instant::now(), _watcher: started });
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,26 +147,6 @@ mod tests {
         }
         assert!(seen.contains(&t), "{seen:?}");
         assert_ne!(sessions_gen(&dirs), Some(g0));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn a_folder_change_moves_its_number() {
-        let root = std::env::temp_dir().join(format!("sd-fwatch-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        let f = root.to_string_lossy().to_string();
-        let roots = vec![root.clone()];
-        // the first call starts the watch: not known yet
-        assert_eq!(folder_gen(&f, &roots), None);
-        let g0 = folder_gen(&f, &roots).unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        assert_eq!(folder_gen(&f, &roots), Some(g0), "nothing changed");
-        std::fs::write(root.join("src").join("a.rs"), "x").unwrap();
-        let until = Instant::now() + Duration::from_secs(5);
-        while folder_gen(&f, &roots) == Some(g0) && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert_ne!(folder_gen(&f, &roots), Some(g0), "a file written deep inside moves it");
         let _ = std::fs::remove_dir_all(&root);
     }
 }
