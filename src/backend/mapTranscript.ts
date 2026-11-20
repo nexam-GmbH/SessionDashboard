@@ -2,7 +2,7 @@
 // record uuid, so the same record arriving from the live stream and later from the file tail is
 // applied once. Partial text from the stream (`stream_event` text deltas) shows as a streaming
 // agent message until the final assistant record replaces it.
-import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Picture } from "@/lib/model"
+import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Picture, ShellRun } from "@/lib/model"
 import { normPath } from "@/lib/format"
 import { classifyTool } from "@/features/session-view/tools/toolSummary"
 
@@ -45,6 +45,35 @@ const FAMILY_KIND: Record<string, ToolKind> = {
 const WRAPPER = /^<(local-command-std(?:out|err)|local-command-caveat|bash-std(?:out|err)|system-reminder|task-notification|user-prompt-submit-hook|command-message)\b/
 const tag = (text: string, name: string) => text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
 
+/**
+ * Claude Code's bash mode in a user record: `<bash-input>cmd</bash-input>`, then (in the CLI, its
+ * own record) `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`. The app sends the same
+ * blocks in front of your next message: what follows them (`rest`) is that message.
+ */
+export function parseBash(text: string): { runs: { input?: string; stdout?: string; stderr?: string }[]; rest: string } | null {
+  if (!text.startsWith("<bash-")) return null
+  const runs: { input?: string; stdout?: string; stderr?: string }[] = []
+  let rest = text
+  for (;;) {
+    const m = rest.match(/^\s*<(bash-input|bash-stdout|bash-stderr)>([\s\S]*?)<\/\1>/)
+    if (!m) break
+    rest = rest.slice(m[0].length)
+    const [, name, body] = m
+    if (name === "bash-input" || !runs.length) runs.push({})
+    const run = runs[runs.length - 1]
+    if (name === "bash-input") run.input = body.trim()
+    else if (name === "bash-stdout") run.stdout = body
+    else run.stderr = body
+  }
+  return runs.length ? { runs, rest: rest.trim() } : null
+}
+
+/** A `! command` and what it printed, as Claude Code records it (Claude reads it with your next message). */
+export function bashRecord(command: string, run: Pick<ShellRun, "stdout" | "stderr">): string {
+  const clean = (s: string) => s.replace(/\s+$/, "")
+  return `<bash-input>${command}</bash-input>\n<bash-stdout>${clean(run.stdout)}</bash-stdout><bash-stderr>${clean(run.stderr)}</bash-stderr>`
+}
+
 /** What you typed, from a user record: plain text, a slash command ("/model opus"), or "! cmd". */
 function userText(r: Rec): { text: string; command?: boolean } | null {
   if (r.isMeta || r.isCompactSummary) return null
@@ -73,6 +102,35 @@ function userText(r: Rec): { text: string; command?: boolean } | null {
     if (WRAPPER.test(text) || /^<command-(name|args)>/.test(text)) return null
   }
   return { text }
+}
+
+/** A user record's text (nothing when it carries a tool result). */
+function rawText(r: Rec): string {
+  const c = r.message?.content
+  if (typeof c === "string") return c.trim()
+  if (!Array.isArray(c) || (c as Block[]).some((p) => p.type === "tool_result")) return ""
+  return textOf(c).trim()
+}
+
+/** One `! cmd` (a turn of its own, as in Claude Code), or its output joining the command before it. */
+function applyBash(b: Builder, run: { input?: string; stdout?: string; stderr?: string }, id: ID, at: string, midTurn = false) {
+  const output = run.stdout !== undefined || run.stderr !== undefined ? { stdout: run.stdout?.trim() ?? "", stderr: run.stderr?.trim() ?? "" } : undefined
+  if (run.input === undefined) {
+    if (!output) return
+    // the CLI writes the output as its own record, right after the command's
+    for (let i = b.t.order.length - 1, n = 0; i >= 0 && n < 20; i--, n++) {
+      const it = b.t.items[b.t.order[i]]
+      if (it?.type !== "user_message") continue
+      if (it.command && it.text.startsWith("! ") && !it.shell) b.t.items[it.id] = { ...it, shell: output }
+      return
+    }
+    return
+  }
+  const text = `! ${run.input}`
+  // run from the app: it is in the chat already
+  if (takePending(b.st, text)) return
+  if (!midTurn) b.newTurn(id, at)
+  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, command: true, ...(output ? { shell: output } : {}) })
 }
 
 /** Your pending message for this text (sent from the app), if any; long ones are cut in the file ("… (cut)"). */
@@ -184,13 +242,31 @@ function applyRecord(b: Builder, r: Rec) {
     // a message you sent while Claude worked: it joined the running turn (Claude Code folds it in)
     const a = r.attachment as { type?: string; prompt?: unknown; origin?: { kind?: string } } | undefined
     if (a?.type !== "queued_command" || (a.origin?.kind && a.origin.kind !== "human")) return
-    const text = typeof a.prompt === "string" ? a.prompt.trim() : Array.isArray(a.prompt) ? textOf(a.prompt).trim() : ""
+    let text = typeof a.prompt === "string" ? a.prompt.trim() : Array.isArray(a.prompt) ? textOf(a.prompt).trim() : ""
+    // `! cmd` output the app sent in front of it: in the running turn too
+    const bash = parseBash(text)
+    if (bash) {
+      bash.runs.forEach((run, i) => applyBash(b, run, `${uuid ?? `q_${b.t.order.length}`}:sh${i}`, at, true))
+      text = bash.rest
+    }
     if (!text || WRAPPER.test(text)) return
     if (takePending(b.st, text)) return
     b.add({ type: "user_message", id: uuid ?? `q_${b.t.order.length}`, turnId: b.turn().id, at, text, steer: true })
     return
   }
   if (r.type === "user") {
+    // "! cmd" and what it printed (Claude Code's bash mode), maybe in front of a message of yours
+    const bash = r.isMeta ? null : parseBash(rawText(r))
+    if (bash) {
+      const text = bash.rest
+      const key = uuid ?? `u_${b.t.order.length}`
+      // the record's own id goes to what you typed (rewind finds it by that)
+      bash.runs.forEach((run, i) => applyBash(b, run, text || i ? `${key}:sh${i}` : key, at))
+      if (!text || text.startsWith("Caveat:") || WRAPPER.test(text) || takePending(b.st, text)) return
+      b.newTurn(key, at)
+      b.add({ type: "user_message", id: key, turnId: b.turn().id, at, text })
+      return
+    }
     let u = userText(r)
     // a message that is only pictures (photos you sent) still is your message
     const pics = !r.isMeta ? picturesOf(r.message?.content) : []
@@ -452,4 +528,25 @@ export function endTurn(base: Transcript, st: MapState, failed: boolean, duratio
   // the turn is over: a call still "running" was stopped with it
   closeRunning(b, new Date().toISOString(), true)
   return b.t
+}
+
+/**
+ * A `! command` run from the app, shown at once (a turn of its own, or in the running one while
+ * Claude works); its record (in front of your next message) dedupes against it.
+ */
+export function addShellRun(base: Transcript, st: MapState, id: ID, command: string, run: ShellRun): Transcript {
+  const b = new Builder(base, st)
+  const at = new Date().toISOString()
+  const text = `! ${command}`
+  st.pending.set(text, [...(st.pending.get(text) ?? []), id])
+  if (b.t.turns.at(-1)?.status !== "in_progress") b.t.turns.push({ id: `turn:${id}`, sessionId: b.t.sessionId, status: "completed", startedAt: at, completedAt: at, itemIds: [] })
+  b.add({ type: "user_message", id, turnId: b.turn().id, at, text, command: true, shell: run })
+  return b.t
+}
+
+/** What a `! command` printed, once it is done. */
+export function setShellRun(base: Transcript, id: ID, run: ShellRun): Transcript {
+  const it = base.items[id]
+  if (it?.type !== "user_message") return base
+  return { ...base, items: { ...base.items, [id]: { ...it, shell: run } } }
 }

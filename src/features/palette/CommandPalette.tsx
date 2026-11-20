@@ -1,6 +1,6 @@
 // Search (Ctrl+K). shadcn Command (cmdk, MIT); structure after Orca's worktree-jump palette (MIT,
 // ideas) and T3 Code's "In messages" (MIT, ideas): with an empty query it lists live sessions
-// ranked by attention (needs you, then finished unseen, then recently opened), so Ctrl+K ⏎ goes
+// ranked by attention (needs you, then unread, then recently opened), so Ctrl+K ⏎ goes
 // where you are needed, and the past sessions you touched last. Typing searches live sessions (in
 // every workspace), past ones by title, then what was said in every session ("In messages": opens
 // the chat at that message), then repos (new session there) and a few commands.
@@ -17,6 +17,7 @@ import { closePalette, openNewSession, openSession, takePaletteTypeAhead } from 
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Kbd, Shortcut } from "@/components/common/bits"
 import { relTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { matchScore } from "@/lib/match"
 import { prepareQuery, scoreSession } from "@/lib/sessionSearch"
 import type { Session } from "@/lib/model"
@@ -44,7 +45,7 @@ export default function CommandPalette() {
     if (!query) {
       // attention first, then what you had open most recently, then the rest in list order
       const needs = selectNeedsYou(s)
-      const unseen = order.filter((id) => s.sessions[id].status === "done_unseen")
+      const unseen = order.filter((id) => !!s.sessions[id].unreadSince)
       const ranked = [...new Set([...needs, ...unseen, ...s.recent.filter((id) => order.includes(id)), ...order])]
       live = ranked.slice(0, 8).map((id) => ({ x: s.sessions[id], repo: repoName(s.sessions[id]) }))
       // the past sessions you were in last (opened lately, or the newest ones)
@@ -191,8 +192,8 @@ function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; pa
   const status = useShownStatus(x.id)
   return (
     <Item value={`s:${x.id}`} onSelect={onSelect}>
-      <StatusGlyph status={status} outcome={x.outcome} size="sm" title={null} />
-      <span className={past ? "truncate text-muted-foreground" : "truncate text-foreground"}>{x.title}</span>
+      <StatusGlyph status={status} outcome={x.outcome} unread={!!x.unreadSince} size="sm" title={null} />
+      <span className={past && !x.unreadSince ? "truncate text-muted-foreground" : cn("truncate text-foreground", x.unreadSince && "font-medium")}>{x.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
       <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{x.archived ? "archived" : relTime(x.updatedAt)}</span>
     </Item>

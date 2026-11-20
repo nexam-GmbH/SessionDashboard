@@ -331,7 +331,7 @@ const SessionRow = memo(function SessionRow({ id, past }: { id: ID; past?: boole
     return (
       <SidebarMenuItem>
         <div className="flex h-8 w-full items-center gap-2 rounded-md bg-sidebar-accent px-2">
-          <StatusGlyph status={status} outcome={s.outcome} size="sm" title={null} />
+          <StatusGlyph status={status} outcome={s.outcome} unread={!!s.unreadSince} size="sm" title={null} />
           <EditableTitle id={id} where="list" className="h-6 text-sm">
             {null}
           </EditableTitle>
@@ -359,8 +359,8 @@ const SessionRow = memo(function SessionRow({ id, past }: { id: ID; past?: boole
           title={s.title}
           className="pr-7"
         >
-          <StatusGlyph status={status} outcome={s.outcome} size="sm" title={s.outcome && !needs ? s.outcome.label : null} />
-          <span className={cn("min-w-0 truncate", quiet || past ? "text-muted-foreground" : "text-sidebar-foreground", (needs || s.status === "done_unseen") && "font-medium")}>{s.title}</span>
+          <StatusGlyph status={status} outcome={s.outcome} unread={!!s.unreadSince} size="sm" title={s.outcome && !needs ? s.outcome.label : null} />
+          <span className={cn("min-w-0 truncate", (quiet || past) && !s.unreadSince ? "text-muted-foreground" : "text-sidebar-foreground", (needs || !!s.unreadSince) && "font-medium")}>{s.title}</span>
           {!number &&
             (past ? (
               <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/60 group-hover/menu-item:invisible">{relTime(s.updatedAt)}</span>

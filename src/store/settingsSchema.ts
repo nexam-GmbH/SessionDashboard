@@ -212,6 +212,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
   machines: { type: "list", default: [], item: (m) => isRecord(m) && isString(m.host) },
   workspaces: { type: "list", default: [], item: isWorkspace },
   workspace: { type: "string", default: "" },
+  terminalShell: { type: "string", default: "" },
   sidebarHidden: { type: "boolean", default: false },
   terminalHeight: { type: "number", default: 280, min: 120, max: 4000 },
   detailsOpen: { type: "boolean", default: true },

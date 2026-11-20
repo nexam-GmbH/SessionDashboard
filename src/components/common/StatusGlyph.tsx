@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SessionStatus } from "@/lib/model"
-import { STATUS_COLOR, STATUS_LABEL } from "@/lib/status"
+import { STATUS_COLOR, STATUS_LABEL, STATUS_TINT } from "@/lib/status"
 import { getApp } from "@/store/app"
 import { OUTCOME_COLOR, OUTCOME_TINT, type Outcome, type OutcomeKind } from "@/lib/outcome"
 
@@ -55,7 +55,9 @@ const OUTCOME_ICON: Record<OutcomeKind, LucideIcon> = {
 const AT_REST = new Set<SessionStatus>(["idle", "done_unseen", "stopped"])
 
 export const glyphColor = (status: SessionStatus) => (status === "stopped" ? "color-mix(in oklab, var(--muted-foreground) 70%, transparent)" : STATUS_COLOR[status])
-export const glyphFill = (status: SessionStatus) => (status === "done_unseen" ? "var(--st-done-tint)" : "none")
+/** Unread (Claude wrote since you last looked): the glyph filled with its colour's tint; the turning spinner stays open. */
+export const glyphFill = (status: SessionStatus, unread?: boolean) =>
+  !unread || status === "working" ? "none" : (STATUS_TINT[status] ?? (status === "starting" ? STATUS_TINT.working! : `color-mix(in oklab, ${glyphColor(status)} 22%, transparent)`))
 
 type Props = {
   status: SessionStatus
@@ -67,6 +69,8 @@ type Props = {
   animate?: boolean
   /** how its work ended: shown instead of idle / done / stopped */
   outcome?: Outcome
+  /** Claude wrote since you last looked (Session.unreadSince): filled with its colour's tint */
+  unread?: boolean
 }
 
 const ATTENTION = new Set<SessionStatus>(["waiting_permission", "waiting_input", "error"])
@@ -98,12 +102,14 @@ export const StatusGlyph = memo(function StatusGlyph({
   title,
   animate = true,
   outcome,
+  unread,
 }: Props) {
   const el = useAttentionPulse(status)
   const g = STATUS_GLYPH[status]
   const end = outcome && AT_REST.has(status) ? outcome : undefined
   const Icon = end ? OUTCOME_ICON[end.kind] : g.icon
-  const name = end ? end.label : STATUS_LABEL[status]
+  // unread is in its name too, so it reads without colour
+  const name = `${end ? end.label : STATUS_LABEL[status]}${unread ? ", unread" : ""}`
   const label = title === null ? undefined : (title ?? name)
   return (
     <span
@@ -117,8 +123,8 @@ export const StatusGlyph = memo(function StatusGlyph({
         size={ICON[size] - (end ? 1 : (g.inset ?? 0))}
         strokeWidth={end ? 2.25 : g.stroke}
         color={end ? OUTCOME_COLOR[end.tone] : glyphColor(status)}
-        // not looked at yet: filled with its colour's tint (the colour itself stays after you look)
-        fill={end ? (status === "done_unseen" ? OUTCOME_TINT[end.tone] : "none") : glyphFill(status)}
+        // unread: filled with its colour's tint (the colour itself stays after you look)
+        fill={end ? (unread ? OUTCOME_TINT[end.tone] : "none") : glyphFill(status, unread)}
         className={status === "working" && animate ? "animate-spin-steps" : undefined}
       />
     </span>

@@ -270,7 +270,8 @@ export function generateWorld(now = Date.now()): World {
       handle: handleFor(),
       createdAt: iso(createdAt),
       updatedAt: iso(now - updatedAgo),
-      lastViewedAt: status === "done_unseen" ? iso(createdAt + 5 * MIN) : iso(now - updatedAgo + MIN),
+      // finished while you were elsewhere: you last looked while it was still at it
+      lastViewedAt: status === "done_unseen" ? iso(now - updatedAgo - 2 * MIN) : iso(now - updatedAgo + MIN),
       pinned: false,
       archived: !!opts.archived,
       archivedAt: opts.archived ? iso(now - updatedAgo + rng.int(1, 48) * HOUR) : undefined,
@@ -410,6 +411,9 @@ export function generateWorld(now = Date.now()): World {
   {
     makeSession("repo_api-gateway", "Rate limiting for /v1/chat", "stopped", { history: true, createdAgo: 26 * HOUR })
   }
+
+  // unread: Claude wrote after you last looked (as the desktop app works it out from transcripts)
+  for (const s of Object.values(sessions)) if (s.lastViewedAt && s.updatedAt > s.lastViewedAt) s.unreadSince = s.lastViewedAt
 
   // ---------- notifications ----------
   for (const s of Object.values(sessions)) {

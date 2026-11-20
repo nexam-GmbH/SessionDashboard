@@ -87,6 +87,8 @@ function flush() {
       } else if (ev.t === "status") {
         Object.assign(x, ev.patch)
         x.status = ev.status
+        // finished while you were elsewhere: unread (lib/model unreadSince)
+        if (ev.status === "done_unseen" && !x.unreadSince && s.route !== `/session/${x.id}`) x.unreadSince = x.lastViewedAt ?? x.createdAt
         x.statusObservedAt = new Date().toISOString()
         statusVersion++
         if (ev.request) {

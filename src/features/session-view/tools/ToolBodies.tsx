@@ -26,7 +26,7 @@ function json(value: unknown) {
 }
 
 /** Output in a mono block: long output stops at a max height with "Show all N lines" under it. */
-function ClampedOutput({ text, running, tone, lines = 14 }: { text: string; running?: boolean; tone?: "error"; lines?: number }) {
+export function ClampedOutput({ text, running, tone, lines = 14 }: { text: string; running?: boolean; tone?: "error"; lines?: number }) {
   const [all, setAll] = useState(false)
   const body = text.replace(/\n$/, "")
   const total = body.split("\n").length

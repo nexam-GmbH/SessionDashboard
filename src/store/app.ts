@@ -75,6 +75,8 @@ export interface Settings {
   sendKey: "enter" | "mod-enter"
   /** the chat column: readable (~820 px, Claude Code desktop) or wide */
   chatWidth: "readable" | "wide"
+  /** the built-in terminal's shell (an id from term_shells: zsh, gitbash, wsl…); "" = the usual one */
+  terminalShell: string
 }
 
 export interface Workspace {

@@ -4,6 +4,7 @@
 import { memo } from "react"
 import { GitMerge } from "lucide-react"
 import type { ID } from "@/lib/model"
+import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
 import { useOverlaps } from "@/store/selectors"
 import { openSession } from "@/store/actions"
@@ -32,15 +33,15 @@ export const OverlapLine = memo(function OverlapLine({ id, className }: { id: ID
 /** The details panel's list: each other session, how it collides, and on which files. */
 export const OverlapList = memo(function OverlapList({ id }: { id: ID }) {
   const list = useOverlaps(id)
-  const sessions = useApp((s) => s.sessions)
+  const titles = useApp(useShallow((s) => list.map((o) => s.sessions[o.other]?.title)))
   if (!list.length) return null
   return (
     <ul className="flex flex-col gap-2">
-      {list.map((o) => (
+      {list.map((o, i) => (
         <li key={o.other} className="flex flex-col gap-0.5 text-xs">
           <button type="button" onClick={() => openSession(o.other)} className="flex min-w-0 items-center gap-1.5 text-left text-foreground hover:underline">
             <GitMerge size={12} className="shrink-0" />
-            <span className="min-w-0 truncate">{sessions[o.other]?.title ?? "Another session"}</span>
+            <span className="min-w-0 truncate">{titles[i] ?? "Another session"}</span>
           </button>
           <span className="pl-[18px] text-muted-foreground">
             {o.sameFolder ? "Same folder: edits can overwrite each other" : "Another worktree: expect a merge conflict"} ·{" "}

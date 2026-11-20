@@ -417,7 +417,7 @@ export function PromptBox(props: PromptBoxProps) {
             aria-controls={menuOpen ? menuAria.listId : undefined}
             aria-activedescendant={menuOpen ? menuAria.optionId : undefined}
             placeholder={
-              listening ? "Listening..." : bash ? (narrow ? "Shell command" : "Run a shell command in the terminal") : narrow && props.placeholderShort ? props.placeholderShort : placeholder
+              listening ? "Listening..." : bash ? (narrow ? "Shell command" : "Run a shell command in this session's folder") : narrow && props.placeholderShort ? props.placeholderShort : placeholder
             }
             className={cn("px-1.5 py-[3.5px] leading-[21px]", bash ? "font-mono text-[14px]" : "text-[15px]", size === "lg" && "min-h-[70px]", listening && "placeholder:italic")}
             onChange={(e) => {

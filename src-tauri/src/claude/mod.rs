@@ -11,6 +11,7 @@ pub mod perms;
 pub mod ports;
 pub mod remote;
 pub mod search;
+pub mod shell;
 pub mod transcript;
 pub mod watch;
 
@@ -374,6 +375,12 @@ pub async fn claude_inject_check(terms: State<'_, crate::term::Terms>, pid: u32)
 pub async fn claude_inject(terms: State<'_, crate::term::Terms>, pid: u32, text: String) -> Result<String, String> {
     let terms = terms.inner().clone();
     blocking(move || inject::send(&terms, pid, &text)).await
+}
+
+/// `! command` from a session's prompt box: run once in its folder (on its machine when `host`).
+#[tauri::command]
+pub async fn run_shell(cwd: String, command: String, host: Option<String>) -> Result<shell::ShellResult, String> {
+    blocking(move || shell::run(&cwd, &command, host.as_deref())).await
 }
 
 /// Terminal sync: whether `claude` in your shells runs through the app's wrapper.

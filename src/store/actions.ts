@@ -12,7 +12,7 @@ import { getApp, setApp, type Settings } from "./app"
 import type { SettingRowEntry } from "./settingsSchema"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
-import { AWAY_MS, setAway } from "./away"
+import { AWAY_MS, setAway, setNewSince } from "./away"
 import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
 import { MARKED_DONE } from "@/lib/outcome"
 
@@ -52,7 +52,7 @@ export function syncRoute(pathname: string) {
     const s = getApp().sessions[left]
     if (s) {
       if (REAL) realMarkSeen(left)
-      patchSession(left, { lastViewedAt: nowIso(), updatedAt: s.updatedAt })
+      patchSession(left, { lastViewedAt: nowIso(), unreadSince: undefined, updatedAt: s.updatedAt })
     }
     setAway(left, null)
   }
@@ -142,9 +142,11 @@ export function markSeen(id: ID) {
   if (!s) return
   // back after a while: the session screen offers what happened since
   if (s.lastViewedAt && Date.now() - Date.parse(s.lastViewedAt) >= AWAY_MS) setAway(id, s.lastViewedAt)
+  // unread: the chat marks where the new part starts (from your look before this one)
+  setNewSince(id, s.unreadSince ?? null)
   if (REAL) realMarkSeen(id)
-  if (s.status === "done_unseen") setStatus(id, "idle", { lastViewedAt: nowIso() })
-  else patchSession(id, { lastViewedAt: nowIso(), updatedAt: s.updatedAt })
+  if (s.status === "done_unseen") setStatus(id, "idle", { lastViewedAt: nowIso(), unreadSince: undefined, updatedAt: s.updatedAt })
+  else patchSession(id, { lastViewedAt: nowIso(), unreadSince: undefined, updatedAt: s.updatedAt })
   setApp((st) => ({
     notifications: st.notifications.map((n) => (n.sessionId === id && !n.readAt ? { ...n, readAt: nowIso() } : n)),
   }))

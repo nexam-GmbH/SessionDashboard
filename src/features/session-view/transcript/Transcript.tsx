@@ -33,7 +33,9 @@ import {
   EditsCard,
   DateRow,
   DoneLine,
+  NewSinceRow,
 } from "./rows"
+import { useNewSince } from "@/store/away"
 
 type ViewProps = { sessionId: ID; liveItemId?: ID; inTail?: boolean; view: TranscriptView }
 
@@ -67,6 +69,8 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
       return <ReceiptRow sessionId={sessionId} receipt={row.receipt} />
     case "date":
       return <DateRow at={row.at} />
+    case "new":
+      return <NewSinceRow />
   }
 })
 
@@ -110,8 +114,11 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
   const { ready, order, turns, liveItemId } = useTranscriptShape(sessionId)
   // Normal: tool calls folded · Thinking: + Claude's thinking · Verbose: every step open (Ctrl+O)
   const view = useApp((s) => s.settings.transcriptView ?? "normal")
+  // opened with unread messages: where the new part starts (stays while you are here)
+  const mark = useNewSince(sessionId)
+  const since = mark?.at
   // Rows depend on item *types* only, which never change: recompute on append, not on stream ticks.
-  const rows = useMemo(() => buildRows(order, getApp().transcripts[sessionId]?.items ?? {}, turns, view), [order, turns, sessionId, view])
+  const rows = useMemo(() => buildRows(order, getApp().transcripts[sessionId]?.items ?? {}, turns, view, since), [order, turns, sessionId, view, since])
   const blocks = useMemo(() => groupBlocks(rows), [rows])
   const split = useMemo(() => tailStartIndex(blocks, turns), [blocks, turns])
   const head = useMemo(() => blocks.slice(0, split), [blocks, split])
@@ -202,6 +209,37 @@ export const Transcript = memo(function Transcript({ sessionId, requests }: { se
     e.preventDefault()
     box.scrollBy({ top: tops[i], behavior: smooth() })
   }
+
+  // Opened with unread messages: to the "New since you last looked" line, near the top, instead of
+  // the end (when the new part fits on screen the chat stays at its end, as it opened)
+  const markShown = useRef(0)
+  useEffect(() => {
+    if (!mark || !ready || markShown.current === mark.n) return
+    markShown.current = mark.n
+    const bi = blocks.findIndex((b) => b.rows.some((r) => r.kind === "new"))
+    if (bi < 0) return
+    if (bi < split) {
+      releaseBottomLock()
+      virtualizer.scrollToIndex(bi, { align: "start" })
+    }
+    let tries = 0
+    const reveal = () => {
+      const box = scrollRef.current
+      const el = box?.querySelector("[data-new-since]")
+      if (!el || !box) {
+        if (tries++ < 20) requestAnimationFrame(reveal)
+        return
+      }
+      const top = box.scrollTop + el.getBoundingClientRect().top - box.getBoundingClientRect().top - 40
+      if (top >= box.scrollHeight - box.clientHeight - 8) {
+        if (bi < split) scrollToBottom("auto")
+        return
+      }
+      releaseBottomLock()
+      box.scrollTop = top
+    }
+    requestAnimationFrame(() => requestAnimationFrame(reveal))
+  }, [mark, ready, blocks, split, virtualizer, releaseBottomLock, scrollToBottom])
 
   // A message asked for (a search hit, Find): scroll to it, reading further back first when an old
   // part of a long chat is not loaded yet; then a short glow

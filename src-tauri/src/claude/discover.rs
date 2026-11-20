@@ -759,6 +759,18 @@ fn read_range(f: &mut File, start: u64, len: u64) -> Vec<u8> {
     buf
 }
 
+/// What follows the `<bash-input>`/`<bash-stdout>`/`<bash-stderr>` blocks at the start of a message.
+pub fn after_bash(text: &str) -> &str {
+    let mut t = text.trim_start();
+    loop {
+        let Some(name) = ["bash-input", "bash-stdout", "bash-stderr"].into_iter().find(|n| t.starts_with(&format!("<{n}>"))) else { break };
+        let close = format!("</{name}>");
+        let Some(end) = t.find(&close) else { break };
+        t = t[end + close.len()..].trim_start();
+    }
+    t.trim_end()
+}
+
 /// Text of a user message, or None for tool results, meta and command wrappers.
 pub fn user_text(v: &Value) -> Option<String> {
     if v.get("isMeta").and_then(Value::as_bool) == Some(true) || v.get("isCompactSummary").and_then(Value::as_bool) == Some(true) {
@@ -805,6 +817,11 @@ pub fn user_text(v: &Value) -> Option<String> {
             return Some(line.chars().take(400).collect());
         }
         if let Some(cmd) = inner("bash-input") {
+            // `! command` output the app sent in front of your message: that message is what you typed
+            let rest = after_bash(t);
+            if !rest.is_empty() {
+                return Some(rest.chars().take(400).collect());
+            }
             return Some(format!("! {cmd}").chars().take(400).collect());
         }
         const WRAPPERS: [&str; 10] = [
@@ -1195,6 +1212,16 @@ fn remove_one(st: &mut ScanState, p: &Path) {
 #[cfg(test)]
 mod continuation_tests {
     use super::*;
+
+    #[test]
+    fn a_message_after_shell_output_is_what_you_typed() {
+        let v: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"<bash-input>git status</bash-input>\n<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>\n\nwhy is it clean?"}}"#).unwrap();
+        assert_eq!(user_text(&v).as_deref(), Some("why is it clean?"));
+        let cli: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"<bash-input> ls</bash-input>"}}"#).unwrap();
+        assert_eq!(user_text(&cli).as_deref(), Some("! ls"));
+        let out: Value = serde_json::from_str(r#"{"type":"user","message":{"role":"user","content":"<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>"}}"#).unwrap();
+        assert_eq!(user_text(&out), None);
+    }
 
     #[test]
     fn finds_the_continued_session() {

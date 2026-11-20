@@ -9,9 +9,9 @@
 // Each row is memoized and selects only its own item by id, so only the live agent message
 // re-renders while streaming.
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react"
-import { Brain, Check, Copy, Ellipsis, FileDiff, GitFork, History, Info, OctagonX, Paperclip, RotateCcw, TriangleAlert } from "lucide-react"
+import { Brain, Check, Copy, Ellipsis, FileDiff, GitFork, History, Info, OctagonX, Paperclip, RotateCcw, SquareTerminal, TriangleAlert } from "lucide-react"
 import { REAL } from "@/backend/mode"
-import type { ID, ToolCall, Turn } from "@/lib/model"
+import type { ID, ShellRun, ToolCall, Turn } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
 import { forkSession, openReview, openSession, sendMessage } from "@/store/actions"
 import { Button } from "@/components/ui/button"
@@ -25,6 +25,8 @@ import { Markdown } from "../markdown/Markdown"
 import { CachedMarkdown } from "../markdown/CachedMarkdown"
 import { useCoalescedItem, useExpanded, useItem, useItems } from "../sessionStore"
 import { ToolRow } from "../tools/ToolRow"
+import { ClampedOutput } from "../tools/ToolBodies"
+import { runInTerminal } from "@/features/terminal/terminals"
 import { DiffCount, STEP_BODY, STEP_LABEL, STEP_MARK, STEP_ROW, STEP_TOGGLE, ToolLabel } from "../tools/ToolLine"
 import { Pictures, SharedFiles } from "./Media"
 import { WorkingMark } from "./Spinner"
@@ -140,13 +142,15 @@ function PromptActions({ sessionId, itemId, turnId, onOpenChange }: { sessionId:
 }
 
 /** Hidden until the message is hovered or focused, under it (Claude Code desktop): Copy, Rewind, Fork, More, when. */
-function MessageActions({ sessionId, itemId, turnId, text, at }: { sessionId: ID; itemId: ID; turnId: ID; text: string; at: string }) {
-  const { busy, canRewind, canFork } = usePromptRights(sessionId)
+function MessageActions({ sessionId, itemId, turnId, text, at, local }: { sessionId: ID; itemId: ID; turnId: ID; text: string; at: string; local?: boolean }) {
+  const rights = usePromptRights(sessionId)
+  // a `! command` run here is not in the conversation yet: nothing to rewind or fork to
+  const { busy, canRewind, canFork } = local ? { ...rights, canRewind: false, canFork: false } : rights
   const [menu, setMenu] = useState(false)
   return (
     <div className="sd-msg-actions -mt-1 flex items-center" data-open={menu || undefined}>
       <CopyButton text={text} />
-      <PromptActions sessionId={sessionId} itemId={itemId} turnId={turnId} onOpenChange={setMenu} />
+      {!local && <PromptActions sessionId={sessionId} itemId={itemId} turnId={turnId} onOpenChange={setMenu} />}
       <DropdownMenu onOpenChange={setMenu}>
         <DropdownMenuTrigger asChild>
           <button type="button" aria-label="More" title="More" className={ACTION_BTN}>
@@ -236,10 +240,44 @@ export const UserRow = memo(function UserRow({ sessionId, itemId }: { sessionId:
           )}
         </div>
       )}
-      <MessageActions sessionId={sessionId} itemId={itemId} turnId={msg.turnId} text={msg.text} at={msg.at} />
+      {msg.shell && <ShellOutput run={msg.shell} command={msg.text.replace(/^! /, "")} />}
+      <MessageActions sessionId={sessionId} itemId={itemId} turnId={msg.turnId} text={msg.text} at={msg.at} local={itemId.startsWith("shell:")} />
     </div>
   )
 })
+
+/** What a `! command` printed (Claude Code's bash mode), under it; a program that wants a terminal is offered there. */
+function ShellOutput({ run, command }: { run: ShellRun; command: string }) {
+  const still = useApp((s) => s.settings.reduceMotion)
+  const out = run.stdout.replace(/\s+$/, "")
+  const err = run.stderr.replace(/\s+$/, "")
+  return (
+    <div className="flex w-full max-w-[85%] min-w-0 flex-col gap-1.5">
+      {run.running ? (
+        <div className="flex items-center gap-2 self-end text-sm text-cc-fg3" role="status">
+          <WorkingMark still={still} className="text-cc-accent" />
+          Running…
+        </div>
+      ) : run.needsTerminal ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-cc-fg2">
+          {run.timedOut ? "No output after 60 s: it may be waiting for input." : "This needs a terminal."}
+          <Button size="sm" variant="outline" onClick={() => void runInTerminal(command)}>
+            <SquareTerminal /> Open in terminal
+          </Button>
+        </div>
+      ) : (
+        <>
+          {out && <ClampedOutput text={out} />}
+          {err && <ClampedOutput text={err} tone="error" />}
+          {!out && !err && <div className="self-end text-sm text-cc-fg3">No output</div>}
+          {(run.timedOut || (run.code != null && run.code !== 0)) && (
+            <div className="self-end text-sm text-cc-danger">{run.timedOut ? "Stopped after 60 s" : `Exit code ${run.code}`}</div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
 
 // ---------- files Claude handed you ----------
 export const FilesRow = memo(function FilesRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
@@ -722,8 +760,18 @@ export function DateRow({ at }: { at: string }) {
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
   const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const label = t === start ? "Today" : t === start - 86_400_000 ? "Yesterday" : d.getFullYear() === today.getFullYear() ? DAY_FMT.format(d) : DAY_FMT_YEAR.format(d)
+  return <LineRow label={label} />
+}
+
+/** Where the part you have not read starts (the session had unread messages when you opened it). */
+export function NewSinceRow() {
+  return <LineRow label="New since you last looked" newSince />
+}
+
+/** A quiet line across the chat with a word in it (the day, where the new part starts). */
+function LineRow({ label, newSince }: { label: string; newSince?: boolean }) {
   return (
-    <div className="flex items-center gap-3 text-[13px] text-cc-fg3" role="separator" aria-label={label}>
+    <div data-new-since={newSince || undefined} className="flex items-center gap-3 text-[13px] text-cc-fg3" role="separator" aria-label={label}>
       <div className="h-px flex-1 bg-cc-wash" />
       <span>{label}</span>
       <div className="h-px flex-1 bg-cc-wash" />

@@ -217,11 +217,11 @@ function HistoryRow({ row, selected, onHover, onOpen, tab }: { row: Row; selecte
       className={cn("group/row flex cursor-default items-start gap-3 rounded-lg px-2 py-2", selected && "bg-accent/60")}
     >
       <span className="mt-0.5">
-        <StatusGlyph status={status} outcome={x.outcome} size="sm" title={null} />
+        <StatusGlyph status={status} outcome={x.outcome} unread={!!x.unreadSince} size="sm" title={null} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-sm text-foreground">{x.title}</span>
+          <span className={cn("min-w-0 truncate text-sm text-foreground", x.unreadSince && "font-medium")}>{x.title}</span>
           {x.pinned && <Pin size={12} className="shrink-0 text-muted-foreground/70" aria-label="Pinned" />}
           <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
         </div>

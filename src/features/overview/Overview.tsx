@@ -284,7 +284,8 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
   const once = s.status === "waiting_permission" && capabilities(s.control).approve ? onceOptions(req, s.cwd) : undefined
   const risk = s.status === "waiting_permission" && req?.type === "permission" ? riskOf(req, s.cwd) : null
   const tone = needs ? (where.tone === "error" ? "error" : where.tone === "input" ? "input" : "perm") : null
-  const quiet = s.status === "idle" || s.status === "stopped"
+  // unread is never quiet: its title stays in the full colour
+  const quiet = (s.status === "idle" || s.status === "stopped") && !s.unreadSince
   return (
     <>
       <SessionMenu id={s.id} where="overview">
@@ -303,7 +304,7 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
           className="absolute inset-0 rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <div className="pointer-events-none relative flex min-w-0 items-start gap-2">
-          <StatusGlyph status={status} outcome={s.outcome} size="sm" className="mt-[3px]" title={null} />
+          <StatusGlyph status={status} outcome={s.outcome} unread={!!s.unreadSince} size="sm" className="mt-[3px]" title={null} />
           <h3
             className={cn(
               "min-w-0 flex-1 text-sm leading-5 font-medium break-words",

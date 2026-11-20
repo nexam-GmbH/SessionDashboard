@@ -7,9 +7,34 @@ import type { FitAddon } from "@xterm/addon-fit"
 import { getApp, setApp } from "@/store/app"
 import { currentSessionId } from "@/store/actions"
 import { activeWorkspace } from "@/store/selectors"
-import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
-import { terminalCommandFor } from "./slash"
+import { setShellFamily, terminalCommandFor, type ShellFamily } from "./slash"
+import { IN_TAURI, OS } from "@/lib/platform"
+
+/** The shells this computer has (Settings → Terminal shell), read once. */
+export interface ShellChoice {
+  id: string
+  label: string
+  family: ShellFamily
+}
+let shellList: ShellChoice[] = []
+let shellsRead: Promise<ShellChoice[]> | null = null
+export function loadShells(): Promise<ShellChoice[]> {
+  if (!(IN_TAURI && REAL)) return Promise.resolve([])
+  shellsRead ??= import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke<ShellChoice[]>("term_shells"))
+    .catch(() => [])
+    .then((l) => (shellList = l))
+  return shellsRead
+}
+void loadShells()
+
+/** How commands typed into a place's terminal are written: its shell's syntax (ssh: a POSIX shell). */
+function familyFor(place: Place): ShellFamily {
+  if (place.host) return "posix"
+  const id = getApp().settings.terminalShell
+  return shellList.find((s) => s.id === id)?.family ?? (OS === "windows" ? "powershell" : "posix")
+}
 
 export interface Place {
   /** the folder the shell starts in */
@@ -207,7 +232,8 @@ async function connect(entry: Entry) {
     if (entry.alive) invoke("term_resize", { key, cols, rows }).catch(() => undefined)
   })
   try {
-    await invoke("term_open", { key, cwd: place.cwd, host: place.host ?? null, cols: term.cols, rows: term.rows, onData: ch })
+    // the shell picked in Settings for this computer's terminals; a machine's is its login shell
+    await invoke("term_open", { key, cwd: place.cwd, host: place.host ?? null, shell: place.host ? null : getApp().settings.terminalShell || null, cols: term.cols, rows: term.rows, onData: ch })
   } catch (e) {
     entry.alive = false
     term.write(`\x1b[31mCould not start a shell: ${String(e)}\x1b[0m\r\n`)
@@ -286,8 +312,17 @@ let mcpPending: string | null = null
  * terminal of the session's folder. False when the session can run it itself.
  */
 export function runSlashInTerminal(text: string, sessionId?: string): boolean {
-  const c = terminalCommandFor(text)
+  if (!terminalCommandFor(text)) return false
+  setShellFamily(familyFor(currentPlace()))
+  const s = sessionId ? getApp().sessions[sessionId] : undefined
+  // a past session nobody runs opens itself with the command, as `claude --resume <id> /cmd` does in
+  // the CLI; one that runs (here or in a terminal) cannot be opened twice, so a claude of its own
+  // runs the command, under an id the app hides
+  const resume = REAL && s && s.control === "history" && !s.machine ? s.id : undefined
+  const hideAs = resume ? undefined : crypto.randomUUID()
+  const c = terminalCommandFor(text, { resume, hideAs })
   if (!c) return false
+  if (hideAs && REAL) void import("@/backend/real").then((r) => r.realHideSession(hideAs))
   if (c.mcp && sessionId) mcpPending = sessionId
   void runInTerminal(c.run)
   return true

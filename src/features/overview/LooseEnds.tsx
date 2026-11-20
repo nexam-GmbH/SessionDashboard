@@ -34,13 +34,20 @@ function age(ms: number) {
 
 export function useLooseEnds(): Row[] {
   const repos = useApp((s) => s.repos)
-  const sessions = useApp((s) => s.sessions)
+  // folders someone is working in right now are not loose: their list as one string, so a status
+  // change elsewhere does not work this out again
+  const busyKey = useApp((s) =>
+    Object.values(s.sessions)
+      .filter((x) => x.control === "owned" || x.control === "observed")
+      .map((x) => `${x.machine ?? ""}|${x.cwd}`)
+      .sort()
+      .join("\n"),
+  )
   const ws = useApp((s) => s.settings.workspace)
   return useMemo(() => {
     void ws
     const st = getApp()
-    // folders someone is working in right now are not loose
-    const busy = new Set(Object.values(sessions).filter((s) => s.control === "owned" || s.control === "observed").map((s) => `${s.machine ?? ""}|${s.cwd}`))
+    const busy = new Set(busyKey.split("\n"))
     const rows = new Map<string, Row>()
     for (const r of Object.values(repos)) {
       const g = r.git
@@ -61,7 +68,7 @@ export function useLooseEnds(): Row[] {
     }
     // most work first, then the oldest
     return [...rows.values()].sort((a, b) => b.changed + b.unpushed * 5 - (a.changed + a.unpushed * 5) || a.lastMs - b.lastMs)
-  }, [repos, sessions, ws])
+  }, [repos, busyKey, ws])
 }
 
 export function LooseEnds({ className }: { className?: string }) {

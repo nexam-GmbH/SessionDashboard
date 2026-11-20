@@ -50,8 +50,94 @@ fn shell() -> CommandBuilder {
     }
 }
 
+/// A shell the built-in terminal can open (Settings → Terminal shell). `family` says how the commands
+/// the app types into it are written (posix: bash, zsh, fish, Git Bash, WSL; powershell; cmd).
+#[derive(serde::Serialize, Clone)]
+pub struct ShellChoice {
+    pub id: String,
+    pub label: String,
+    pub family: &'static str,
+    #[serde(skip)]
+    program: std::path::PathBuf,
+    #[serde(skip)]
+    args: Vec<&'static str>,
+}
+
+/// A program on PATH (Windows: with .exe), without starting it.
+#[cfg(windows)]
+fn on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = crate::sys::helper_path().map(str::to_string).or_else(|| std::env::var("PATH").ok())?;
+    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
+/// The shells on this computer, found from files alone (nothing is started).
+pub fn shells() -> Vec<ShellChoice> {
+    let mut out: Vec<ShellChoice> = Vec::new();
+    let mut add = |id: &str, label: &str, family: &'static str, program: std::path::PathBuf, args: Vec<&'static str>| {
+        if !out.iter().any(|s| s.id == id) {
+            out.push(ShellChoice { id: id.into(), label: label.into(), family, program, args });
+        }
+    };
+    #[cfg(windows)]
+    {
+        let env = |k: &str| std::env::var(k).ok().map(std::path::PathBuf::from);
+        if let Some(p) = on_path("powershell.exe") {
+            add("powershell", "Windows PowerShell", "powershell", p, vec!["-NoLogo"]);
+        }
+        if let Some(p) = on_path("pwsh.exe") {
+            add("pwsh", "PowerShell 7", "powershell", p, vec!["-NoLogo"]);
+        }
+        // Git for Windows: machine-wide or per user
+        for base in [env("ProgramFiles"), env("ProgramFiles(x86)"), env("LOCALAPPDATA").map(|l| l.join("Programs"))].into_iter().flatten() {
+            let p = base.join("Git").join("bin").join("bash.exe");
+            if p.is_file() {
+                add("gitbash", "Git Bash", "posix", p, vec!["--login", "-i"]);
+            }
+        }
+        if let Some(p) = env("SystemRoot").map(|r| r.join("System32").join("wsl.exe")).filter(|p| p.is_file()) {
+            // starts in the folder (as /mnt/c/…); `claude` there is the Linux one, if installed
+            add("wsl", "WSL", "posix", p, vec![]);
+        }
+        if let Some(p) = env("ComSpec").filter(|p| p.is_file()).or_else(|| on_path("cmd.exe")) {
+            add("cmd", "Command Prompt", "cmd", p, vec![]);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // your login shell first, then the others /etc/shells lists that are installed
+        let listed = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        let login = std::env::var("SHELL").ok().filter(|s| !s.is_empty());
+        for p in login.iter().map(String::as_str).chain(listed.lines().map(str::trim).filter(|l| l.starts_with('/'))) {
+            let path = std::path::PathBuf::from(p);
+            let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            // nologin and the like are no shells to work in
+            if !path.is_file() || name.contains("nologin") || name == "false" || name == "true" {
+                continue;
+            }
+            let args = if matches!(name.as_str(), "bash" | "zsh" | "fish" | "sh" | "ksh" | "dash") { vec!["-l"] } else { vec![] };
+            add(&name, &name, "posix", path, args);
+        }
+    }
+    out
+}
+
+/// The shell to open: the one picked in Settings when it is there, else the usual one.
+fn shell_for(id: Option<&str>) -> CommandBuilder {
+    if let Some(s) = id.filter(|i| !i.is_empty()).and_then(|id| shells().into_iter().find(|s| s.id == id)) {
+        let mut c = CommandBuilder::new(&s.program);
+        c.args(&s.args);
+        return c;
+    }
+    shell()
+}
+
+#[tauri::command]
+pub async fn term_shells() -> Result<Vec<ShellChoice>, String> {
+    Ok(shells())
+}
+
 /// Quote for a remote POSIX shell, keeping a leading ~ so it still expands there.
-fn shell_quote(p: &str) -> String {
+pub(crate) fn shell_quote(p: &str) -> String {
     let (head, rest) = if p == "~" {
         ("~", "")
     } else if let Some(r) = p.strip_prefix("~/") {
@@ -71,7 +157,7 @@ fn expand(p: &str) -> String {
 
 /// Start a shell in `cwd` and stream what it prints to `on_data`. An empty message means it exited.
 /// A key that is already open is kept (the UI re-attaches to it).
-pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
+pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, shell: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
     {
         let map = terms.0.lock().unwrap();
         if let Some(t) = map.get(&key) {
@@ -94,7 +180,7 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, cols:
             c.args(["-t", "--", h, &format!("cd {} 2>/dev/null; exec \"$SHELL\" -l", shell_quote(&dir))]);
             c
         }
-        None => shell(),
+        None => shell_for(shell.as_deref()),
     };
     let dir = expand(&cwd);
     if host.is_none() && std::path::Path::new(&dir).is_dir() {
@@ -238,8 +324,8 @@ pub fn close_all(terms: &Terms) {
 
 // async: off the main thread, so typing in the terminal never holds up the window
 #[tauri::command]
-pub async fn term_open(terms: tauri::State<'_, Terms>, key: String, cwd: String, host: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
-    open(&terms, key, cwd, host, cols, rows, on_data)
+pub async fn term_open(terms: tauri::State<'_, Terms>, key: String, cwd: String, host: Option<String>, shell: Option<String>, cols: u16, rows: u16, on_data: Channel<InvokeResponseBody>) -> Result<bool, String> {
+    open(&terms, key, cwd, host, shell, cols, rows, on_data)
 }
 
 #[tauri::command]
@@ -303,5 +389,30 @@ mod tests {
         let t = Instant::now();
         let _ = child.wait();
         assert!(t.elapsed() < Duration::from_secs(5));
+    }
+}
+
+#[cfg(test)]
+mod shell_choice_tests {
+    use super::*;
+
+    /// The login shell comes first, nologin and the like are left out, and each one starts.
+    #[cfg(unix)]
+    #[test]
+    fn lists_installed_shells() {
+        let list = shells();
+        assert!(!list.is_empty(), "no shell found");
+        if let Ok(sh) = std::env::var("SHELL") {
+            let name = std::path::Path::new(&sh).file_name().unwrap().to_string_lossy().to_string();
+            assert_eq!(list[0].id, name, "the login shell first: {:?}", list.iter().map(|s| &s.id).collect::<Vec<_>>());
+        }
+        assert!(list.iter().all(|s| !s.id.contains("nologin") && s.family == "posix"));
+        let mut ids: Vec<&String> = list.iter().map(|s| &s.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), list.len(), "each shell once");
+        for s in &list {
+            let out = std::process::Command::new(&s.program).args(["-c", "echo ok"]).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok", "{} does not run", s.id);
+        }
     }
 }

@@ -160,7 +160,7 @@ fn full_user_text(v: &Value) -> Option<String> {
         Value::Array(parts) => parts.iter().filter(|p| p.get("type").and_then(Value::as_str) == Some("text")).filter_map(|p| p.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join(""),
         _ => return Some(short),
     };
-    Some(text.trim().to_string())
+    Some(super::discover::after_bash(text.trim()).to_string())
 }
 
 /// Read a transcript from `from` to its last complete line.

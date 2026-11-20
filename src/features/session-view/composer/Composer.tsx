@@ -12,6 +12,7 @@ import { getApp, useApp } from "@/store/app"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import { addSessionFolder, forkSession, removeSessionFolder, sendMessage, setSessionSettings, takeOverSession } from "@/store/actions"
 import { runInTerminal, runSlashInTerminal } from "@/features/terminal/terminals"
+import { runShell } from "./shell"
 import { MOD } from "@/components/common/bits"
 import { capabilities } from "@/lib/status"
 import { PromptBox, type PromptValue } from "@/features/composer/PromptBox"
@@ -201,7 +202,12 @@ export const Composer = memo(function Composer({ sessionId, dock, docked }: { se
       saveQueueEdit(sessionId, text, attachments)
       return false
     }
-    if (/^!\s*\S/.test(text) && !attachments.length) return void runInTerminal(text.replace(/^!\s*/, "").trim())
+    if (/^!\s*\S/.test(text) && !attachments.length) {
+      const command = text.replace(/^!\s*/, "").trim()
+      // a terminal session (or a cloud one) has no folder here: its terminal dock, as before
+      if (takeOver || control === "cloud") return void runInTerminal(command)
+      return void runShell(sessionId, command)
+    }
     if (!attachments.length && runSlashInTerminal(text, sessionId)) return
     if (takeOver) return replyToTerminal(sessionId, text, attachments, injectWay)
     sendMessage(sessionId, text, how, attachments)
@@ -221,7 +227,7 @@ export const Composer = memo(function Composer({ sessionId, dock, docked }: { se
         placeholder={placeholder}
         placeholderShort={working && steers && !modSends && !editing && !takeOver ? `${MOD}+Enter to queue` : undefined}
         hint={hint}
-        keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : steers ? `Enter sends a message Claude reads at its next step, ${MOD}+Enter queues it for later, Escape takes your last waiting message back or stops.` : REAL ? "Enter queues, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the terminal.${locked ? "" : " Shift+Tab changes the permission mode."}`}
+        keysHint={`${!working ? "Enter sends, Shift+Enter adds a line." : steers ? `Enter sends a message Claude reads at its next step, ${MOD}+Enter queues it for later, Escape takes your last waiting message back or stops.` : REAL ? "Enter queues, Escape stops." : `Enter queues, ${MOD}+Enter sends now, Escape stops.`} Up arrow in an empty box edits the newest queued message. Slash for commands, at sign to mention a file, ! runs a command in the session's folder and Claude reads its output with your next message.${locked ? "" : " Shift+Tab changes the permission mode."}`}
         sendHint={takeOver && !headless ? (injectWay ? `Send to ${injectWay} · Enter` : "Not synced") : working && !steers ? "Queue · Enter" : "Send · Enter"}
         busy={canStop}
         stopping={stopping}

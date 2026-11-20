@@ -24,12 +24,15 @@ export type Row =
   | { kind: "receipt"; key: string; turnId: ID; receipt: NonNullable<Turn["receipt"]> }
   | { kind: "done"; key: string; turnId: ID; promptId?: ID; durationMs: number; at?: string; tokens?: number }
   | { kind: "date"; key: string; turnId: ID; at: string }
+  | { kind: "new"; key: string; turnId: ID }
 
 /**
  * Walk `order` once. Item *types* never change after creation, so the row list
  * only changes when `order`, `turns` or the view change, never while text streams.
+ * `newSince`: the time you had last looked; a "New since you last looked" line goes before the
+ * first thing Claude wrote after it (not when there is nothing older above it).
  */
-export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], view: TranscriptView = "normal"): Row[] {
+export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], view: TranscriptView = "normal", newSince?: string): Row[] {
   const rows: Row[] = []
   const turnById = new Map<ID, Turn>()
   for (const t of turns) turnById.set(t.id, t)
@@ -44,6 +47,7 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
   let openThoughtAt = 0
   // a line with the day where the conversation crosses into another one
   let lastDay = ""
+  let sinceMs = newSince ? Date.parse(newSince) || 0 : 0
 
   const flushGroup = () => {
     if (!group.length || !groupTurn) return
@@ -79,6 +83,13 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
       flushGroup()
       closeTurn(currentTurn)
       currentTurn = it.turnId
+    }
+    // your own prompt is not news (sent from a terminal after your last look here): the line goes
+    // before what Claude wrote; the steps before it fold on their own, the new ones under the line
+    if (sinceMs && it.type !== "user_message" && Date.parse(it.at) > sinceMs) {
+      flushGroup()
+      if (rows.length) rows.push({ kind: "new", key: `new:${id}`, turnId: it.turnId })
+      sinceMs = 0
     }
     // files Claude handed you are a message to you, not a step to fold away
     if (it.type === "tool_call" && it.call.name === "SendUserFile") {
@@ -170,7 +181,8 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
     case "user": {
       const it = items[row.itemId]
       // right-aligned bubble, at most 85% of the column
-      return 60 + Math.min(it?.type === "user_message" ? textLines(it.text, Math.floor(charsPerLine * 0.85)) : 1, 12) * 21
+      const shell = it?.type === "user_message" && it.shell ? 28 + Math.min(`${it.shell.stdout}\n${it.shell.stderr}`.trim().split("\n").length, 14) * 19 : 0
+      return 60 + shell + Math.min(it?.type === "user_message" ? textLines(it.text, Math.floor(charsPerLine * 0.85)) : 1, 12) * 21
     }
     case "agent": {
       const it = items[row.itemId]
@@ -190,6 +202,7 @@ export function estimateRow(row: Row, items: Record<ID, Item>, width: number): n
     case "done":
       return 24
     case "date":
+    case "new":
       return 20
     case "compaction":
       return 36
@@ -220,8 +233,10 @@ const STEP = new Set<Row["kind"]>(["tool", "tools", "thought"])
  */
 function gapBefore(prev: Row | undefined, row: Row): number {
   if (!prev) return 0
-  if (row.kind === "user") return prev.kind === "date" ? 8 : 24
-  if (row.kind === "date" || row.kind === "compaction") return 24
+  // a line (the day, "New since you last looked") sits closer to what it heads
+  if (prev.kind === "date" || prev.kind === "new") return row.kind === "user" || row.kind === "date" ? 8 : 12
+  if (row.kind === "user") return 24
+  if (row.kind === "date" || row.kind === "new" || row.kind === "compaction") return 24
   if (row.kind === "done" || row.kind === "receipt" || prev.kind === "user") return 8
   return STEP.has(prev.kind) && STEP.has(row.kind) ? 0 : 20
 }

@@ -4,6 +4,7 @@ import { useState } from "react"
 import { History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
 import { resumeMany } from "@/store/actions"
 import { plural } from "@/lib/format"
@@ -11,12 +12,14 @@ import { useRestore } from "./restore"
 
 export function RestoreCard() {
   const r = useRestore()
-  const sessions = useApp((s) => s.sessions)
+  // only the sessions it offers back: any other session changing does not render this again
+  const listed = useApp(useShallow((s) => (r?.ids ?? []).map((id) => s.sessions[id])))
   const repos = useApp((s) => s.repos)
   const [off, setOff] = useState<Set<string>>(() => new Set())
   const [open, setOpen] = useState(false)
   if (!r) return null
-  const ids = r.ids.filter((id) => sessions[id])
+  const byId = new Map(listed.filter(Boolean).map((s) => [s.id, s]))
+  const ids = r.ids.filter((id) => byId.has(id))
   if (!ids.length) return null
   const chosen = ids.filter((id) => !off.has(id))
   const done = () => useRestore.setState(null, true)
@@ -45,7 +48,7 @@ export function RestoreCard() {
       {open && (
         <ul className="flex flex-col gap-1 pl-6">
           {ids.map((id) => {
-            const s = sessions[id]
+            const s = byId.get(id)!
             const repo = s.repoId ? repos[s.repoId]?.name : undefined
             return (
               <li key={id}>

@@ -31,7 +31,8 @@ export function rewindPoints(t: Transcript | undefined): RewindPoint[] {
       if (it?.type === "tool_call") for (const d of it.call.diff ?? []) filesFrom.add(d.path)
     }
     const first = t.items[turn.itemIds[0]]
-    if (first?.type !== "user_message") continue
+    // a `! command` run from the app is not in the conversation until your next message
+    if (first?.type !== "user_message" || first.id.startsWith("shell:")) continue
     out.push({ turnId: turn.id, prompt: first.text, at: first.at, filesAfter: filesFrom.size })
   }
   return out

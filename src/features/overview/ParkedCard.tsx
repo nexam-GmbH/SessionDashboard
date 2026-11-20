@@ -1,9 +1,10 @@
 // Above the overview while sessions sit at the usage limit: which ones, when the limit resets, and
 // "Continue at reset" for the ones you tick, in list order, staggered.
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Hourglass } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useShallow } from "zustand/react/shallow"
 import { useApp } from "@/store/app"
 import { useNow } from "@/components/common/RelativeTime"
 import { useUsage } from "@/features/usage/usageData"
@@ -11,9 +12,10 @@ import { plural, clockTime } from "@/lib/format"
 import { cancelContinue, parkedAtLimit, scheduleContinue, useParkedPlan } from "./parked"
 
 export function ParkedCard() {
-  const sessions = useApp((s) => s.sessions)
+  // only the parked sessions themselves: any other session changing does not render this again
+  const ids = useApp(useShallow((s) => Object.values(s.sessions).filter(parkedAtLimit).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).map((x) => x.id)))
+  const parked = useApp(useShallow((s) => ids.map((id) => s.sessions[id])))
   const repos = useApp((s) => s.repos)
-  const ids = useMemo(() => Object.values(sessions).filter(parkedAtLimit).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).map((s) => s.id), [sessions])
   const limits = useUsage((s) => s.limits?.limits)
   const plan = useParkedPlan()
   const now = useNow()
@@ -56,8 +58,9 @@ export function ParkedCard() {
       </header>
       {open && !plan && (
         <ul className="flex flex-col gap-1 pl-6">
-          {ids.map((id) => {
-            const s = sessions[id]
+          {ids.map((id, i) => {
+            const s = parked[i]
+            if (!s) return null
             return (
               <li key={id}>
                 <label className="flex cursor-pointer items-center gap-2">

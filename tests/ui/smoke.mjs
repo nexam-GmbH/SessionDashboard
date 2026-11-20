@@ -35,7 +35,9 @@ function chromiumPath() {
 // the mock engine leaves them alone.
 const IDLE = "Fix hydration warning on tickets page" // live, idle, web-app
 const PAST = "Clean up logging" // past (stopped), infra
-const LONG_PATH = "~/Desktop/Git/acme/frontend-worktrees/feature-order-detail-page"
+// finished while you were elsewhere (world.ts: looked at 5 minutes after it started, Claude wrote since)
+const UNREAD = "Accept ticket v3 payloads on /v2/tickets"
+const LONG_PATH ="~/Desktop/Git/acme/frontend-worktrees/feature-order-detail-page"
 
 // ---------------------------------------------------------------- harness
 const tests = []
@@ -97,6 +99,24 @@ test("session: opening one from the sidebar shows its chat and the composer", as
   assert((await row(page, IDLE).getAttribute("aria-current")) === "page", "the opened session's row is not marked current")
 })
 
+test("bash mode: ! runs a command into the chat; an editor is offered the terminal", async (page) => {
+  await row(page, IDLE).click()
+  const box = page.getByRole("textbox", { name: "Message Claude" })
+  const log = page.getByRole("log", { name: "Session transcript" })
+  await box.waitFor()
+  // "!" in an empty box is bash mode; the mock world says nothing ran (the app runs it in the folder)
+  await box.fill("!")
+  await box.pressSequentially("git status")
+  await page.keyboard.press("Enter")
+  await eventually(async () => (await log.innerText()).includes("! git status"), "the command does not show in the chat")
+  await eventually(async () => (await log.innerText()).includes("Mock world: nothing ran"), "the command's output does not show")
+  assert((await box.inputValue()) === "", "the box was not cleared")
+  // an interactive program is not run here: one click opens it in the terminal
+  await box.fill("! vim notes.md")
+  await page.keyboard.press("Enter")
+  await log.getByRole("button", { name: "Open in terminal" }).waitFor()
+})
+
 test("status glyphs: every sidebar glyph is named; sessions at rest say how their work ended", async (page) => {
   const labels = await sidebar(page)
     .getByRole("img")
@@ -109,6 +129,47 @@ test("status glyphs: every sidebar glyph is named; sessions at rest say how thei
     assert(labels.some((l) => (typeof want === "string" ? l === want : want.test(l))), `no glyph labelled ${want} (labels: ${[...new Set(labels)].join(", ")})`)
   }
   assert(/^\d+ commits? not pushed$/.test(await glyphLabel(page, IDLE)), `"${IDLE}" does not show its unpushed commits`)
+})
+
+test("unread: bold with a filled glyph until opened; the chat opens at a line where the new part starts", async (page) => {
+  // the live one (a past session of the same task is further down the list)
+  const at = (title) => row(page, title).first()
+  const label = (title) => at(title).getByRole("img").getAttribute("aria-label")
+  const weight = (title) => at(title).locator("span.truncate").evaluate((el) => Number(getComputedStyle(el).fontWeight))
+  const fill = (title) => at(title).locator("svg").evaluate((el) => el.getAttribute("fill"))
+  assert((await label(UNREAD))?.endsWith(", unread"), `"${UNREAD}" is not unread: ${await label(UNREAD)}`)
+  assert((await weight(UNREAD)) >= 500, `"${UNREAD}" is unread but its title is not bold`)
+  assert(!["none", null].includes(await fill(UNREAD)), `"${UNREAD}" is unread but its glyph is not filled`)
+  assert(!(await label(IDLE))?.includes("unread") && (await weight(IDLE)) < 500 && (await fill(IDLE)) === "none", `"${IDLE}" was read but looks unread`)
+
+  // opened: a line before the first message newer than your last look, on screen (not scrolled past to the end)
+  await at(UNREAD).click()
+  await eventually(async () => (await at(UNREAD).getAttribute("aria-current")) === "page", `"${UNREAD}" did not open`)
+  const where = await page.evaluate(() => location.hash)
+  const log = page.getByRole("log", { name: "Session transcript" })
+  const line = log.getByRole("separator", { name: "New since you last looked" })
+  await line.waitFor()
+  await eventually(async () => {
+    const [l, b] = [await line.boundingBox(), await log.boundingBox()]
+    return l && b && l.y >= b.y && l.y + l.height <= b.y + b.height
+  }, "the new-since line is not in view when the chat opens")
+  const older = await log.evaluate((box) => {
+    const slot = box.querySelector("[data-new-since]").closest("[data-row-key]")
+    const first = box.querySelector("[data-row-key]")
+    return first !== slot && !!(first.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+  assert(older, "the new-since line has no older messages above it")
+  // seen now: the mark goes, the line stays while the chat is open
+  await eventually(async () => !(await label(UNREAD))?.includes("unread"), "opening the session did not mark it read")
+  assert((await line.count()) === 1, "the line went while the chat is open")
+
+  // the next visit with nothing new: no line
+  await row(page, IDLE).click()
+  await eventually(async () => (await row(page, IDLE).getAttribute("aria-current")) === "page", `"${IDLE}" did not open`)
+  assert((await weight(UNREAD)) < 500 && (await fill(UNREAD)) === "none", "still bold or filled after it was opened")
+  await at(UNREAD).click()
+  await eventually(async () => (await page.evaluate(() => location.hash)) === where, `"${UNREAD}" did not open again`)
+  await eventually(async () => (await log.getByRole("separator", { name: "New since you last looked" }).count()) === 0, "the line is still there on a visit with nothing new")
 })
 
 test("context menu: Open, Rename, Mark as done, Archive; Mark as done and Not done", async (page) => {

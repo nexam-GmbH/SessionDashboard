@@ -13,7 +13,7 @@ import { claudeEffort } from "@/lib/effort"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
 import { DEFAULT_MODEL, type ID, type PendingRequest, type PermissionMode, type PermissionOption, type PermissionRequest, type PlanApproval, type QuestionRequest, type Repo, type Session, type SessionStatus, type Transcript } from "@/lib/model"
-import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, noteOutput, type MapState } from "./mapTranscript"
+import { addPendingUser, addShellRun, applyRecords, applyTextDelta, bashRecord, emptyTranscript, endTurn, markAwaiting, newMapState, noteOutput, setShellRun, type MapState } from "./mapTranscript"
 import { extByMachine, extSession, folderKey, gitByFolder, hookState, registerSync, requestSync, type ExtSession } from "./ext"
 import { onMovedOn, startHooks } from "./hooks"
 import { remoteTranscript, remoteTranscriptSince, startMachines } from "./machines"
@@ -114,6 +114,8 @@ type Persist = {
   pinned?: ID[]
   /** marked done by you, when (ms): holds while the session does nothing new */
   done?: Record<ID, number>
+  /** sessions the app started only to run a terminal command (/permissions…): never listed */
+  hidden?: ID[]
 }
 function loadPersist(): Persist {
   try {
@@ -134,6 +136,20 @@ function save() {
 }
 
 const iso = (ms?: number) => new Date(ms ?? Date.now()).toISOString()
+
+/** When you last had a session on screen (ms); one you never opened here: since the app first ran. */
+const seenAt = (id: ID) => persist.seen[id] ?? persist.firstRun
+
+/**
+ * Unread: Claude's newest message (ms; 0 when your own prompt is the last word) is later than your
+ * last look, or it finished a turn while you were elsewhere. Gives the time you last looked. The
+ * chat on screen has nothing unread. Kept across restarts: it only clears when you look.
+ */
+function unreadSince(id: ID, claudeMs: number, status: SessionStatus): string | undefined {
+  if (getApp().route === `/session/${id}`) return undefined
+  const seen = seenAt(id)
+  return status === "done_unseen" || claudeMs > seen ? iso(seen) : undefined
+}
 
 // ---------- scope: what the dashboard shows ----------
 /** git repos found in the workspaces' folders (Settings → Workspaces), with their workspace */
@@ -404,7 +420,7 @@ function liveStatus(l: Live, meta?: Meta, prev?: Session): { status: SessionStat
   if (s === "blocked" || s.includes("wait") || s.includes("input")) return { status: "waiting_input", waiting: { kind: "input", summary: "Waiting for you" } }
   if (s === "busy" || s === "running" || s === "working") return { status: "working" }
   // idle: finished since you last looked?
-  const seen = persist.seen[l.sessionId] ?? persist.firstRun
+  const seen = seenAt(l.sessionId)
   const changed = (l.statusUpdatedAt ?? meta?.updatedMs ?? 0) > seen
   // the chat on screen: you see it finish, nothing is "unseen"
   if (getApp().route === `/session/${l.sessionId}`) return { status: "idle" }
@@ -425,7 +441,7 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     status = prev.status
     waitingFor = prev.waitingFor
   } else if (status === "idle" && e.live) {
-    const seen = persist.seen[e.id] ?? persist.firstRun
+    const seen = seenAt(e.id)
     if (e.updatedMs > seen && prev?.status === "working") status = "done_unseen"
     else if (prev?.status === "done_unseen" && e.updatedMs > seen) status = "done_unseen"
   }
@@ -462,6 +478,8 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     createdAt: iso(e.createdMs ?? e.updatedMs),
     updatedAt: iso(e.updatedMs),
     lastViewedAt: persist.seen[e.id] ? iso(persist.seen[e.id]) : undefined,
+    // a machine says less: its file's last change counts as Claude's, unless your prompt was last
+    unreadSince: unreadSince(e.id, e.facts?.lastRole === "user" ? 0 : e.updatedMs, status),
     pinned: !!persist.pinned?.includes(e.id),
     archived: persist.archived.includes(e.id),
     // a machine's past session: how it ended, from its transcript and the machine's git
@@ -564,6 +582,8 @@ function buildSession(id: ID, prev?: Session): Session | null {
     createdAt: meta?.createdAt ?? prev?.createdAt ?? iso(live?.startedAt),
     updatedAt: updated ? iso(updated) : (prev?.updatedAt ?? iso()),
     lastViewedAt: persist.seen[id] ? iso(persist.seen[id]) : undefined,
+    // Claude's newest record (an answer, or a step it is taking); your own prompt last is not news
+    unreadSince: unreadSince(id, meta && (meta.lastRole === "assistant" || meta.lastRole === "tool") ? (meta.lastAt ? Date.parse(meta.lastAt) : meta.updatedMs) : 0, status),
     pinned: !!persist.pinned?.includes(id),
     archived: persist.archived.includes(id),
     // how its work ended: marked done by you (until it does something new), else from the
@@ -581,6 +601,15 @@ function markedDone(id: ID, meta: Meta | undefined) {
   if (at === undefined) return false
   const last = meta?.lastAt ? Date.parse(meta.lastAt) : (meta?.updatedMs ?? 0)
   return !(last > at + 2000)
+}
+
+const hiddenIds = new Set<ID>(persist.hidden ?? [])
+
+/** A session the app started only to run a terminal command: left out of every list, for good. */
+export function realHideSession(id: ID) {
+  hiddenIds.add(id)
+  persist.hidden = [...hiddenIds].slice(-500)
+  save()
 }
 
 /** Mark a session done by hand, or take the mark back (kept across restarts). */
@@ -674,6 +703,7 @@ function sync() {
     const prev = st.sessions[id]
     const meta = metas.get(id)
     if (!liveFor(id) && !owned.has(id) && meta?.cwd && isTmp(meta.cwd)) continue
+    if (hiddenIds.has(id)) continue
     let s = buildSession(id, prev)
     if (!s) continue
     const picked = owned.has(id) ? undefined : picks.get(id)
@@ -1133,6 +1163,10 @@ export function ensureRealTranscript(id: ID) {
           const it = cur.items[iid]
           if (it?.type === "user_message" && iid.startsWith("pending:") && !recent.has(it.text.trim())) next = addPendingUser(next, m, it.text, it.attachments)
           // the app's own notes (an error, "could not type into its terminal") are not in the file
+          // a `! command` run here (in the file once your next message went out with it)
+          else if (it?.type === "user_message" && iid.startsWith("shell:")) {
+            if (!recent.has(it.text.trim())) next = addShellRun(next, m, iid, it.text.replace(/^! /, ""), it.shell ?? { stdout: "", stderr: "" })
+          }
           else if (it?.type === "notice" && (iid.startsWith("notice:") || iid.startsWith("note-")) && !next.items[iid])
             next = { ...next, items: { ...next.items, [iid]: { ...it, turnId: next.turns.at(-1)?.id ?? it.turnId } }, order: [...next.order, iid], turns: next.turns.length ? [...next.turns.slice(0, -1), { ...next.turns.at(-1)!, itemIds: [...next.turns.at(-1)!.itemIds, iid] }] : next.turns }
         }
@@ -1353,8 +1387,10 @@ function setStatusLocal(id: ID, status: SessionStatus, patch: Partial<Session> =
   setApp((s) => {
     const prev = s.sessions[id]
     if (!prev) return s
+    // finished while you were elsewhere: unread at once (the transcript scan follows a poll later)
+    const unread = status === "done_unseen" && !prev.unreadSince ? { unreadSince: iso(seenAt(id)) } : {}
     return {
-      sessions: { ...s.sessions, [id]: { ...prev, status, statusObservedAt: prev.status === status ? prev.statusObservedAt : iso(), ...patch } },
+      sessions: { ...s.sessions, [id]: { ...prev, status, statusObservedAt: prev.status === status ? prev.statusObservedAt : iso(), ...unread, ...patch } },
       statusVersion: s.statusVersion + 1,
     }
   })
@@ -1366,6 +1402,9 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
   // pasted pictures go as images; other files by name
   const { images, rest } = takeImages(attachments)
   const body = `${text}${attachmentsText(rest)}`
+  // `! command` output since your last message goes in front of it (Claude Code's own blocks)
+  const context = takeShellContext(id)
+  const wire = context ? `${context}\n\n${body}` : body
   if (s.machine === CLOUD) {
     patchTranscript(id, (t, m) => addPendingUser(t, m, body, attachments))
     setStatusLocal(id, "working", { activity: "Sending to claude.ai", waitingFor: undefined })
@@ -1376,7 +1415,9 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
   }
   if (!owned.has(id)) {
     // a past session (or one taken over): continue it in the app, on the machine it ran on
-    realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt: body, images, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+    // (the chat shows your message; Claude gets the command output in front of it)
+    if (context) patchTranscript(id, (t, m) => addPendingUser(t, m, body, undefined, images))
+    realStart({ cwd: s.startCwd ?? s.cwd, resume: id, prompt: wire, images, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine, ...(context ? { promptShown: true } : {}) })
     return
   }
   const uuid = crypto.randomUUID()
@@ -1397,7 +1438,7 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
     patchTranscript(id, (t, m) => addPendingUser(t, m, body, rest, images, uuid))
     setStatusLocal(id, "working", { activity: "Thinking", waitingFor: undefined })
   }
-  invoke("claude_send", { key: id, text: body, images, uuid, priority: busy ? (now ? "now" : "next") : null }).catch((e) => {
+  invoke("claude_send", { key: id, text: wire, images, uuid, priority: busy ? (now ? "now" : "next") : null }).catch((e) => {
     // never reached Claude: back out of the queue
     patchTranscript(id, (t) => ({ ...t, queued: t.queued.filter((q) => q.id !== uuid) }))
     noticeError(id, String(e))
@@ -1730,6 +1771,38 @@ function onElicitation(key: ID, requestId: string, e: Elicitation) {
 const mcpWarned = new Set<string>()
 
 /** A note in a session's chat (not sent to Claude). */
+// ---------- `! command` (Claude Code's bash mode) ----------
+/** What `! command`s printed since your last message: Claude reads it in front of the next one. */
+const shellContext = new Map<ID, string[]>()
+
+/** The bash blocks waiting for this session's next message, taken (cleared) for sending. */
+function takeShellContext(id: ID): string {
+  const c = shellContext.get(id)
+  shellContext.delete(id)
+  return c?.join("\n") ?? ""
+}
+
+/**
+ * `! command` in the prompt box: run in the session's folder (on its machine), shown in the chat at
+ * once, its output kept for Claude to read with your next message, as Claude Code's bash mode does.
+ */
+export function realShell(id: ID, command: string, needsTerminal: boolean) {
+  const s = getApp().sessions[id]
+  if (!s) return
+  const itemId = `shell:${crypto.randomUUID()}`
+  const host = s.machine && s.machine !== CLOUD ? s.machine : undefined
+  patchTranscript(id, (t, m) => addShellRun(t, m, itemId, command, needsTerminal ? { stdout: "", stderr: "", needsTerminal: true } : { stdout: "", stderr: "", running: true }))
+  if (needsTerminal) return
+  invoke<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }>("run_shell", { cwd: owned.get(id)?.cwd ?? s.cwd, command, host })
+    .then((r) => {
+      const run = { stdout: r.stdout, stderr: r.stderr, code: r.code, timedOut: r.timedOut || undefined, needsTerminal: (r.timedOut && !r.stdout.trim() && !r.stderr.trim()) || undefined }
+      patchTranscript(id, (t) => setShellRun(t, itemId, run))
+      // a run cut off with nothing to show taught Claude nothing
+      if (!run.needsTerminal) shellContext.set(id, [...(shellContext.get(id) ?? []), bashRecord(command, r.timedOut ? { ...r, stderr: `${r.stderr.replace(/\s+$/, "")}\nStopped after 60 s`.trim() } : r)])
+    })
+    .catch((e) => patchTranscript(id, (t) => setShellRun(t, itemId, { stdout: "", stderr: String(e), code: null })))
+}
+
 export function realNotice(id: ID, text: string) {
   noticeInfo(id, text)
 }

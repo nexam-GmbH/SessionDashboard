@@ -202,6 +202,12 @@ export interface Session {
   createdAt: string
   updatedAt: string
   lastViewedAt?: string
+  /**
+   * Unread: Claude wrote after you last looked (its newest message is later than your last look;
+   * your own prompt is not news). The time you last looked, which is where the chat's "New since
+   * you last looked" line goes; unset once you have seen it all. Filled glyph + bold title.
+   */
+  unreadSince?: string
   pinned: boolean
   archived: boolean
   archivedAt?: string
@@ -305,8 +311,22 @@ export interface ToolCall {
   completedAt?: string
 }
 
+/**
+ * A `! command` run in the session's folder (Claude Code's bash mode): what it printed. `running`
+ * while it runs; `needsTerminal` when it waits for input (timed out, or an interactive program):
+ * it is offered in the terminal instead.
+ */
+export interface ShellRun {
+  stdout: string
+  stderr: string
+  code?: number | null
+  running?: boolean
+  timedOut?: boolean
+  needsTerminal?: boolean
+}
+
 export type Item =
-  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[]; images?: Picture[]; steer?: boolean; command?: boolean }
+  | { type: "user_message"; id: ID; turnId: ID; at: string; text: string; attachments?: string[]; images?: Picture[]; steer?: boolean; command?: boolean; shell?: ShellRun }
   | { type: "agent_message"; id: ID; turnId: ID; at: string; text: string; streaming: boolean }
   | { type: "thought"; id: ID; turnId: ID; at: string; text: string; durationMs?: number }
   | { type: "tool_call"; id: ID; turnId: ID; at: string; call: ToolCall }

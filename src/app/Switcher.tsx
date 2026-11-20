@@ -107,8 +107,8 @@ function SwitcherRow({ id, active }: { id: ID; active: boolean }) {
   if (!s) return null
   return (
     <div role="option" aria-selected={active} className={cn("flex h-9 items-center gap-2.5 rounded-md px-2.5", active && "bg-accent")}>
-      <StatusGlyph status={status} outcome={s.outcome} size="sm" title={null} />
-      <span className={cn("min-w-0 flex-1 truncate text-sm", active ? "text-foreground" : "text-muted-foreground")}>{s.title}</span>
+      <StatusGlyph status={status} outcome={s.outcome} unread={!!s.unreadSince} size="sm" title={null} />
+      <span className={cn("min-w-0 flex-1 truncate text-sm", active || s.unreadSince ? "text-foreground" : "text-muted-foreground", s.unreadSince && "font-medium")}>{s.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
     </div>
   )

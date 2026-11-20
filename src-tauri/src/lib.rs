@@ -193,6 +193,7 @@ pub fn run() {
             claude::claude_set_config_dirs,
             claude::claude_inject_check,
             claude::claude_inject,
+            claude::run_shell,
             claude::sync_status,
             claude::sync_set,
             claude::hooks_status,
@@ -208,6 +209,7 @@ pub fn run() {
             term::term_write,
             term::term_resize,
             term::term_close,
+            term::term_shells,
             usage::usage_scan,
             usage::usage_limits,
         ])
