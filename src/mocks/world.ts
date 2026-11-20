@@ -275,6 +275,20 @@ export function generateWorld(now = Date.now()): World {
       archived: !!opts.archived,
       archivedAt: opts.archived ? iso(now - updatedAgo + rng.int(1, 48) * HOUR) : undefined,
     }
+    // how its work ended (lib/outcome), as a real session gets it from its transcript and git;
+    // from its id, so the rest of the sample world stays as it was
+    if (status === "idle" || status === "done_unseen" || status === "stopped") {
+      const r = [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000, 7) / 1000
+      const n = session.diff.unpushed
+      session.outcome =
+        r < 0.12 ? { tone: "red", kind: "limit", label: "Hit the usage limit" }
+        : r < 0.2 ? { tone: "red", kind: "aborted", label: "Stopped before it finished" }
+        : !filesChanged ? { tone: "green", kind: "done", label: "Done" }
+        : n ? { tone: "yellow", kind: "unpushed", label: `${n} commit${n > 1 ? "s" : ""} not pushed` }
+        : r < 0.5 ? { tone: "yellow", kind: "no_pr", label: "No PR yet" }
+        : r < 0.8 ? { tone: "green", kind: "pr", label: `PR #${100 + Math.round(r * 800)}` }
+        : { tone: "green", kind: "merged", label: "Branch merged" }
+    }
     if (opts.delegated) {
       session.parent = { sessionId: mainSessionId, kind: "delegated" }
     }

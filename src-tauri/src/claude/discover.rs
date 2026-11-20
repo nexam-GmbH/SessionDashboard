@@ -517,6 +517,13 @@ pub struct SessionMeta {
     /// assistant record ended the turn: tells "finished" from "stopped mid-turn"
     pub last_role: Option<String>,
     pub ended_turn: bool,
+    /// it changed code: edited a file, committed, pushed or opened a PR (anywhere it was read):
+    /// a session that only talked has nothing to ship
+    pub made_changes: bool,
+    /// it ended on an API error or a usage limit ("You've hit your limit · resets 4pm"); cleared by
+    /// the next prompt or answer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_error: Option<String>,
     pub last_text: Option<String>,
     /// what the session did last: "Edit src/x.ts", "Bash: npm test", …
     pub last_activity: Option<String>,
@@ -882,6 +889,8 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                     if m.first_prompt.is_none() && !from_tail {
                         m.first_prompt = Some(t.clone());
                     }
+                    // a new prompt: whatever failed before is behind it
+                    m.api_error = None;
                     m.last_role = Some("user".into());
                     m.ended_turn = false;
                 } else if v.get("message").and_then(|x| x.get("content")).and_then(Value::as_array).is_some() {
@@ -905,6 +914,17 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                 if let Some(t) = assistant_text(v) {
                     m.last_text = Some(t);
                 }
+                // Claude Code writes an API error or a usage limit as an assistant message of its own
+                m.api_error = if v.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
+                    Some(assistant_text(v).map(|t| t.lines().next().unwrap_or("").chars().take(200).collect()).unwrap_or_else(|| "API error".into()))
+                } else {
+                    None
+                };
+                if !m.made_changes {
+                    if let Some(parts) = v.get("message").and_then(|x| x.get("content")).and_then(Value::as_array) {
+                        m.made_changes = parts.iter().any(changes_code);
+                    }
+                }
                 if m.updated_ms + EDITED_RECENT_MS >= now_ms() {
                     if let Some(parts) = v.get("message").and_then(|x| x.get("content")).and_then(Value::as_array) {
                         note_edits(m, parts);
@@ -924,6 +944,21 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
             }
         }
         _ => {}
+    }
+}
+
+/// A tool call that changes code: an edit, or a commit, push or PR from the shell.
+fn changes_code(part: &Value) -> bool {
+    if part.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return false;
+    }
+    match part.get("name").and_then(Value::as_str).unwrap_or("") {
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => true,
+        "Bash" => {
+            let c = part.get("input").and_then(|i| i.get("command")).and_then(Value::as_str).unwrap_or("");
+            c.contains("git commit") || c.contains("git push") || c.contains("gh pr create") || c.contains("git merge")
+        }
+        _ => false,
     }
 }
 
@@ -1209,5 +1244,40 @@ mod delta_tests {
         assert!(scan_since(&cache, 1).full);
         set_extra_dirs(&[]);
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    fn meta_of(lines: &[&str]) -> SessionMeta {
+        let mut m = SessionMeta::default();
+        parse_chunk(&mut m, lines.join("\n").as_bytes(), false, false);
+        m
+    }
+
+    #[test]
+    fn knows_changes_and_errors() {
+        let ask = r#"{"type":"user","cwd":"/r","message":{"role":"user","content":"fix it"}}"#;
+        let talk = r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"It works like this."}]}}"#;
+        let edit = r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/r/a.rs"}}]}}"#;
+        let push = r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"git add -A && git commit -m x"}}]}}"#;
+        let ls = r#"{"type":"assistant","cwd":"/r","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"ls -la"}}]}}"#;
+        let limit = r#"{"type":"assistant","cwd":"/r","isApiErrorMessage":true,"error":"rate_limit","message":{"role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"You've hit your limit · resets 4pm"}]}}"#;
+
+        let m = meta_of(&[ask, talk]);
+        assert!(!m.made_changes && m.api_error.is_none() && m.ended_turn);
+        assert!(meta_of(&[ask, edit, talk]).made_changes);
+        assert!(meta_of(&[ask, push, talk]).made_changes);
+        assert!(!meta_of(&[ask, ls, talk]).made_changes, "a read-only command is not a change");
+
+        let m = meta_of(&[ask, limit]);
+        assert_eq!(m.api_error.as_deref(), Some("You've hit your limit · resets 4pm"));
+        // asked again and answered: the limit is behind it
+        assert!(meta_of(&[ask, limit, ask, talk]).api_error.is_none());
+        // stopped mid-task: the last word is the tool's, the turn never ended
+        let m = meta_of(&[ask, edit]);
+        assert!(!m.ended_turn && m.made_changes);
     }
 }

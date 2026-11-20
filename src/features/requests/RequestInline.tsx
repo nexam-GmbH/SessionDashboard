@@ -31,7 +31,7 @@ export const RequestInline = memo(function RequestInline({
   const tone =
     w.kind === "permission"
       ? "border-st-perm/35 bg-st-perm-tint text-st-perm-fg"
-      : "border-st-input/30 bg-st-input-tint text-st-input-fg"
+      : "border-st-perm/30 bg-st-perm-tint text-st-perm-fg"
   const Icon = w.kind === "permission" ? ShieldAlert : w.kind === "plan" ? ListChecks : MessageCircleQuestion
   const once = onceOptions(req, session.cwd)
   const subject = req && req.type === "permission" ? req.subject : undefined

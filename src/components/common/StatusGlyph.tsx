@@ -7,6 +7,9 @@ import {
   CircleCheck,
   CircleDashed,
   CircleSlash,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestDraft,
   LoaderCircle,
   MessageCircleQuestion,
   OctagonX,
@@ -17,6 +20,7 @@ import { cn } from "@/lib/utils"
 import type { SessionStatus } from "@/lib/model"
 import { STATUS_COLOR, STATUS_LABEL } from "@/lib/status"
 import { getApp } from "@/store/app"
+import { OUTCOME_COLOR, OUTCOME_TINT, type Outcome, type OutcomeKind } from "@/lib/outcome"
 
 /**
  * The one status glyph set, shared with the map's CompactGlyph. `inset` draws the
@@ -33,6 +37,22 @@ export const STATUS_GLYPH: Record<SessionStatus, { icon: LucideIcon; stroke: num
   stopped: { icon: CircleSlash, stroke: 1.75, inset: 1 },
 }
 
+/** A session that does not run shows how its work ended: one shape per colour, so it reads without colour too. */
+const OUTCOME_ICON: Record<OutcomeKind, LucideIcon> = {
+  limit: OctagonX,
+  error: OctagonX,
+  aborted: OctagonX,
+  uncommitted: GitPullRequestDraft,
+  unpushed: GitPullRequestDraft,
+  no_pr: GitPullRequestDraft,
+  pr: GitPullRequest,
+  merged: GitMerge,
+  landed: GitMerge,
+  removed: CircleCheck,
+  done: CircleCheck,
+}
+const AT_REST = new Set<SessionStatus>(["idle", "done_unseen", "stopped"])
+
 export const glyphColor = (status: SessionStatus) => (status === "stopped" ? "color-mix(in oklab, var(--muted-foreground) 70%, transparent)" : STATUS_COLOR[status])
 export const glyphFill = (status: SessionStatus) => (status === "done_unseen" ? "var(--st-done-tint)" : "none")
 
@@ -44,6 +64,8 @@ type Props = {
   title?: string | null
   /** turn the working glyph (everywhere by default: a working session should look like it is working) */
   animate?: boolean
+  /** how its work ended: shown instead of idle / done / stopped */
+  outcome?: Outcome
 }
 
 const ATTENTION = new Set<SessionStatus>(["waiting_permission", "waiting_input", "error"])
@@ -74,24 +96,28 @@ export const StatusGlyph = memo(function StatusGlyph({
   className,
   title,
   animate = true,
+  outcome,
 }: Props) {
   const el = useAttentionPulse(status)
   const g = STATUS_GLYPH[status]
-  const Icon = g.icon
-  const label = title === null ? undefined : (title ?? STATUS_LABEL[status])
+  const end = outcome && AT_REST.has(status) ? outcome : undefined
+  const Icon = end ? OUTCOME_ICON[end.kind] : g.icon
+  const name = end ? end.label : STATUS_LABEL[status]
+  const label = title === null ? undefined : (title ?? name)
   return (
     <span
       ref={el}
       role="img"
-      aria-label={STATUS_LABEL[status]}
+      aria-label={name}
       title={label}
       className={cn("inline-flex shrink-0 items-center justify-center", BOX[size], className)}
     >
       <Icon
-        size={ICON[size] - (g.inset ?? 0)}
-        strokeWidth={g.stroke}
-        color={glyphColor(status)}
-        fill={glyphFill(status)}
+        size={ICON[size] - (end ? 1 : (g.inset ?? 0))}
+        strokeWidth={end ? 2.25 : g.stroke}
+        color={end ? OUTCOME_COLOR[end.tone] : glyphColor(status)}
+        // not looked at yet: filled with its colour's tint (the colour itself stays after you look)
+        fill={end ? (status === "done_unseen" ? OUTCOME_TINT[end.tone] : "none") : glyphFill(status)}
         className={status === "working" && animate ? "animate-spin-steps" : undefined}
       />
     </span>

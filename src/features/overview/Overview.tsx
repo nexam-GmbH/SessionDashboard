@@ -263,7 +263,7 @@ const SessionCardById = memo(function SessionCardById({ id, origin }: { id: ID; 
 
 const TONE_CARD: Record<string, string> = {
   perm: "ring-st-perm/60 hover:ring-st-perm/90",
-  input: "ring-st-input/55 hover:ring-st-input/80",
+  input: "ring-st-perm/55 hover:ring-st-perm/80",
   error: "ring-st-error/60 hover:ring-st-error/90",
 }
 
@@ -303,7 +303,7 @@ function SessionCard({ s, main, origin }: { s: Session; main?: boolean; origin?:
           className="absolute inset-0 rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <div className="pointer-events-none relative flex min-w-0 items-start gap-2">
-          <StatusGlyph status={status} size="sm" className="mt-[3px]" title={null} />
+          <StatusGlyph status={status} outcome={s.outcome} size="sm" className="mt-[3px]" title={null} />
           <h3
             className={cn(
               "min-w-0 flex-1 text-sm leading-5 font-medium break-words",

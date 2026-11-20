@@ -217,7 +217,7 @@ function HistoryRow({ row, selected, onHover, onOpen, tab }: { row: Row; selecte
       className={cn("group/row flex cursor-default items-start gap-3 rounded-lg px-2 py-2", selected && "bg-accent/60")}
     >
       <span className="mt-0.5">
-        <StatusGlyph status={status} size="sm" title={null} />
+        <StatusGlyph status={status} outcome={x.outcome} size="sm" title={null} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">

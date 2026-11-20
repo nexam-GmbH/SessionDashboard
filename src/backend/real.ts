@@ -19,6 +19,7 @@ import { onMovedOn, startHooks } from "./hooks"
 import { remoteTranscript, remoteTranscriptSince, startMachines } from "./machines"
 import { CLOUD, cloudSend, cloudTranscript, pollCloud, applyCloudList } from "./cloud"
 import { readGit } from "./git"
+import { outcomeOf, type Outcome } from "@/lib/outcome"
 import { startNotify } from "./notify"
 
 export { REAL }
@@ -49,6 +50,10 @@ interface Meta {
   size: number
   lastRole?: string
   endedTurn: boolean
+  /** it changed code (an edit, a commit, a push, a PR) */
+  madeChanges?: boolean
+  /** it ended on an API error or a usage limit */
+  apiError?: string
   lastText?: string
   lastActivity?: string
   edited?: string[]
@@ -551,7 +556,14 @@ function buildSession(id: ID, prev?: Session): Session | null {
     lastViewedAt: persist.seen[id] ? iso(persist.seen[id]) : undefined,
     pinned: !!persist.pinned?.includes(id),
     archived: persist.archived.includes(id),
+    // how its work ended: from the transcript and the folder's git, so it stays after you look
+    outcome: meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
   }
+}
+
+/** The same outcome keeps its object (nothing that shows it renders again). */
+function keepOutcome(prev: Outcome | undefined, next: Outcome) {
+  return prev && prev.tone === next.tone && prev.kind === next.kind && prev.label === next.label ? prev : next
 }
 
 function buildRepo(id: ID, name: string, cwd: string, machine?: string, branch?: string): Repo {

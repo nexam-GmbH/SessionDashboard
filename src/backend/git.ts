@@ -83,13 +83,14 @@ function toRepoGit(cwd: string, g: RawGit): RepoGit {
     behind: here?.behind ?? 0,
     unpushed: here?.unpushed ?? 0,
     looseEnds: loose,
+    branches: g.branches.length ? Object.fromEntries(g.branches.map((b) => [b.name, { unpushed: b.unpushed, gone: b.gone }])) : undefined,
     observedAt: now,
     error: g.error,
   }
 }
 
 function same(a: RepoGit | undefined, b: RepoGit) {
-  return !!a && a.remote === b.remote && a.root === b.root && a.branch === b.branch && a.changed === b.changed && a.unpushed === b.unpushed && a.ahead === b.ahead && a.behind === b.behind && JSON.stringify(a.looseEnds) === JSON.stringify(b.looseEnds)
+  return !!a && a.remote === b.remote && a.root === b.root && a.branch === b.branch && a.changed === b.changed && a.unpushed === b.unpushed && a.ahead === b.ahead && a.behind === b.behind && a.error === b.error && JSON.stringify(a.looseEnds) === JSON.stringify(b.looseEnds) && JSON.stringify(a.branches) === JSON.stringify(b.branches)
 }
 
 /**
@@ -109,7 +110,7 @@ export async function readGit(paths: string[], host?: string, quick = false) {
       // a read that failed (ssh down, folder busy) says nothing new: keep the last good state
       if (g.error && prev?.isRepo) return
       let next = toRepoGit(paths[i], g)
-      if (quick && prev?.isRepo) next = { ...next, looseEnds: prev.looseEnds }
+      if (quick && prev?.isRepo) next = { ...next, looseEnds: prev.looseEnds, branches: prev.branches }
       if (same(prev, next)) return
       changed = true
       gitByFolder.set(key, next)
@@ -152,6 +153,7 @@ export function gitFromPorcelain(machine: string, cwd: string, text: string) {
     behind,
     unpushed: prev && prev.branch === branch ? prev.unpushed : ahead,
     looseEnds: prev?.looseEnds ?? [],
+    branches: prev?.branches,
     observedAt: new Date().toISOString(),
   }
   if (!same(prev, next)) {

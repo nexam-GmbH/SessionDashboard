@@ -50,6 +50,8 @@ export interface RepoGit {
   unpushed: number
   /** worktrees and branches with work that is not committed or not pushed */
   looseEnds: LooseEnd[]
+  /** every local branch (from the full reads): commits on no remote, upstream deleted */
+  branches?: Record<string, { unpushed: number; gone: boolean }>
   observedAt: string
   error?: string
 }
@@ -200,6 +202,8 @@ export interface Session {
   pinned: boolean
   archived: boolean
   archivedAt?: string
+  /** how its work ended (red / yellow / green), while it does not run: see lib/outcome */
+  outcome?: import("./outcome").Outcome
   snoozedUntil?: string
 }
 

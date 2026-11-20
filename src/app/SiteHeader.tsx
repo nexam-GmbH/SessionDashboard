@@ -92,11 +92,11 @@ function NeedsYou() {
           className={cn(
             "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
             tone === "perm" && "bg-st-perm-tint text-st-perm-fg hover:bg-st-perm/25",
-            tone === "input" && "bg-st-input-tint text-st-input-fg hover:bg-st-input/25",
+            tone === "input" && "bg-st-perm-tint text-st-perm-fg hover:bg-st-perm/25",
             tone === "error" && "bg-st-error-tint text-st-error-fg hover:bg-st-error/25",
           )}
         >
-          <span aria-hidden className={cn("size-1.5 rounded-full", tone === "perm" ? "bg-st-perm" : tone === "input" ? "bg-st-input" : "bg-st-error")} />
+          <span aria-hidden className={cn("size-1.5 rounded-full", tone === "perm" || tone === "input" ? "bg-st-perm" : "bg-st-error")} />
           <span className="tabular">{count}</span> need you
         </button>
       </TooltipTrigger>

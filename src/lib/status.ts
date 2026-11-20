@@ -43,7 +43,8 @@ export const STATUS_SHORT: Record<SessionStatus, string> = {
 /** CSS color variable per status (dot color). */
 export const STATUS_COLOR: Record<SessionStatus, string> = {
   waiting_permission: "var(--st-perm)",
-  waiting_input: "var(--st-input)",
+  // orange like a permission: everything that waits for you is one colour (yellow is "no PR yet")
+  waiting_input: "var(--st-perm)",
   error: "var(--st-error)",
   done_unseen: "var(--st-done)",
   working: "var(--st-working)",
@@ -54,7 +55,7 @@ export const STATUS_COLOR: Record<SessionStatus, string> = {
 
 export const STATUS_FG: Record<SessionStatus, string> = {
   waiting_permission: "var(--st-perm-fg)",
-  waiting_input: "var(--st-input-fg)",
+  waiting_input: "var(--st-perm-fg)",
   error: "var(--st-error-fg)",
   done_unseen: "var(--st-done-fg)",
   working: "var(--st-working-fg)",
@@ -65,7 +66,7 @@ export const STATUS_FG: Record<SessionStatus, string> = {
 
 export const STATUS_TINT: Partial<Record<SessionStatus, string>> = {
   waiting_permission: "var(--st-perm-tint)",
-  waiting_input: "var(--st-input-tint)",
+  waiting_input: "var(--st-perm-tint)",
   error: "var(--st-error-tint)",
   done_unseen: "var(--st-done-tint)",
   working: "var(--st-working-tint)",

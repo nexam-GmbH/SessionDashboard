@@ -191,7 +191,7 @@ function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; pa
   const status = useShownStatus(x.id)
   return (
     <Item value={`s:${x.id}`} onSelect={onSelect}>
-      <StatusGlyph status={status} size="sm" title={null} />
+      <StatusGlyph status={status} outcome={x.outcome} size="sm" title={null} />
       <span className={past ? "truncate text-muted-foreground" : "truncate text-foreground"}>{x.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
       <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{x.archived ? "archived" : relTime(x.updatedAt)}</span>
