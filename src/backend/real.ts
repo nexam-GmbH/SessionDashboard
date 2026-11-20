@@ -12,7 +12,7 @@ import { setHomeDir } from "@/lib/format"
 import { claudeEffort } from "@/lib/effort"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
-import type { ID, PendingRequest, PermissionMode, PermissionOption, PermissionRequest, PlanApproval, QuestionRequest, Repo, Session, SessionStatus, Transcript } from "@/lib/model"
+import { DEFAULT_MODEL, type ID, type PendingRequest, type PermissionMode, type PermissionOption, type PermissionRequest, type PlanApproval, type QuestionRequest, type Repo, type Session, type SessionStatus, type Transcript } from "@/lib/model"
 import { addPendingUser, applyRecords, applyTextDelta, emptyTranscript, endTurn, markAwaiting, newMapState, noteOutput, type MapState } from "./mapTranscript"
 import { extByMachine, extSession, folderKey, gitByFolder, hookState, registerSync, requestSync, type ExtSession } from "./ext"
 import { onMovedOn, startHooks } from "./hooks"
@@ -451,8 +451,8 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     waitingFor,
     activity: own && prev?.activity ? prev.activity : e.activity,
     errorMessage: e.errorMessage,
-    model: prev?.model ?? e.model ?? "claude-opus-5-5",
-    effort: effortOf(prev, prev?.model ?? e.model ?? "claude-opus-5-5"),
+    model: prev?.model ?? e.model ?? DEFAULT_MODEL,
+    effort: effortOf(prev, prev?.model ?? e.model ?? DEFAULT_MODEL),
     effortSet: prev?.effortSet,
     permissionMode: prev?.permissionMode ?? "default",
     usage: prev?.usage ?? { contextPct: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
@@ -464,6 +464,8 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     lastViewedAt: persist.seen[e.id] ? iso(persist.seen[e.id]) : undefined,
     pinned: !!persist.pinned?.includes(e.id),
     archived: persist.archived.includes(e.id),
+    // a machine's past session: how it ended, from its transcript and the machine's git
+    outcome: persist.done?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_DONE) : e.facts ? keepOutcome(prev?.outcome, outcomeOf({ ...e.facts, git: gitByFolder.get(folderKey(e.machine, e.cwd)) })) : undefined,
   }
 }
 
@@ -547,8 +549,8 @@ function buildSession(id: ID, prev?: Session): Session | null {
     configDir: meta?.configDir ?? live?.configDir ?? prev?.configDir,
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
-    model: own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5"),
-    effort: effortOf(prev, own ? (prev?.model ?? meta?.model ?? "claude-opus-5-5") : (meta?.model ?? prev?.model ?? "claude-opus-5-5")),
+    model: own ? (prev?.model ?? meta?.model ?? DEFAULT_MODEL) : (meta?.model ?? prev?.model ?? DEFAULT_MODEL),
+    effort: effortOf(prev, own ? (prev?.model ?? meta?.model ?? DEFAULT_MODEL) : (meta?.model ?? prev?.model ?? DEFAULT_MODEL)),
     effortSet: prev?.effortSet,
     permissionMode: own ? (prev?.permissionMode ?? mapMode(meta?.permissionMode)) : meta?.permissionMode ? mapMode(meta.permissionMode) : (prev?.permissionMode ?? "default"),
     fastMode: prev?.fastMode,
@@ -747,9 +749,19 @@ function sync() {
     // a checkout on this computer is the project's home (git line, new sessions start there)
     if (!r) repos[s.repoId] = buildRepo(s.repoId, rk.name, rk.root, s.machine)
     else if (r.machine && !s.machine && (r.rootPath !== rk.root || r.name !== rk.name)) repos[s.repoId] = { ...r, rootPath: rk.root, machine: undefined, name: rk.name }
-    else if (r.name !== rk.name && !r.machine === !s.machine) repos[s.repoId] = { ...r, name: rk.name }
+    // only a folder known to be this repository names it (one whose git is not read yet would
+    // call it after the folder: "deploy-dev" for acme/api)
+    else if (r.name !== rk.name && !r.machine === !s.machine && `repo:${rk.key}` === s.repoId) repos[s.repoId] = { ...r, name: rk.name }
     ;(byRepo[s.repoId] ??= []).push(s.id)
     recency.set(s.repoId, Math.max(recency.get(s.repoId) ?? 0, Date.parse(s.updatedAt)))
+  }
+  // a repository with a known remote is called by it, whatever folder its checkout is in
+  const remoteNames = new Map<string, string>()
+  for (const g of gitByFolder.values()) if (g.remote && g.remoteName) remoteNames.set(g.remote, g.remoteName)
+  for (const [id, r] of Object.entries(repos)) {
+    if (r.isHome || !id.startsWith("repo:")) continue
+    const n = remoteNames.get(id.slice(5))
+    if (n && r.name !== n) repos[id] = { ...r, name: n }
   }
   // "owner/name" as GitHub spells it, for display (keys are lowercase)
   for (const [id, r] of Object.entries(repos)) {
@@ -1291,8 +1303,8 @@ export function realStart(opts: StartOpts): ID {
         status: opts.prompt ? "working" : "idle",
         statusObservedAt: iso(),
         activity: opts.prompt ? "Starting" : undefined,
-        model: opts.model ?? prev?.model ?? "claude-opus-5-5",
-        effort: (opts.effort as Session["effort"]) ?? effortOf(prev, opts.model ?? prev?.model ?? "claude-opus-5-5"),
+        model: opts.model ?? prev?.model ?? DEFAULT_MODEL,
+        effort: (opts.effort as Session["effort"]) ?? effortOf(prev, opts.model ?? prev?.model ?? DEFAULT_MODEL),
         effortSet: opts.effort ? true : prev?.effortSet,
         permissionMode: mapMode(opts.permissionMode ?? prev?.permissionMode),
         fastMode: opts.fastMode ?? prev?.fastMode,

@@ -10,6 +10,82 @@ import { extByMachine, gitByFolder, folderKey, requestSync, type ExtSession } fr
 import { onRemoteHook, stateOf } from "./hooks"
 import { gitFromPorcelain, readGit } from "./git"
 
+/** A past session's summary from a machine's transcript (claude/remote.rs history). */
+interface RemoteMeta {
+  sessionId: string
+  cwd?: string
+  aiTitle?: string
+  customTitle?: string
+  firstPrompt?: string
+  lastPrompt?: string
+  lastText?: string
+  model?: string
+  gitBranch?: string
+  createdAt?: string
+  updatedMs: number
+  endedTurn: boolean
+  lastRole?: string
+  madeChanges?: boolean
+  apiError?: string
+  prUrl?: string
+  prNumber?: number
+}
+
+/**
+ * Per machine: its past sessions (transcripts of the last 30 days), listed under the live ones. The
+ * live list (`claude agents`) knows only what runs: without these, everything that ended there was
+ * gone after a restart. Read every 2 minutes; Rust fetches only new or grown transcripts and keeps
+ * them on disk, so they show at once after a restart, also while the machine cannot be reached.
+ */
+const historyByMachine = new Map<string, Map<ID, ExtSession>>()
+const historyAt = new Map<string, number>()
+
+async function pollHistory(host: string) {
+  historyAt.set(host, Date.now())
+  try {
+    const list = await invoke<RemoteMeta[]>("remote_history", { host })
+    const map = new Map<ID, ExtSession>()
+    for (const m of list) {
+      if (!m.cwd || !m.sessionId) continue
+      map.set(m.sessionId, {
+        id: m.sessionId,
+        machine: host,
+        cwd: m.cwd,
+        title: m.customTitle ?? m.aiTitle ?? (m.firstPrompt ? m.firstPrompt.slice(0, 80) : "Session"),
+        status: "stopped",
+        activity: m.lastText ?? m.lastPrompt,
+        updatedMs: m.updatedMs,
+        createdMs: m.createdAt ? Date.parse(m.createdAt) : undefined,
+        model: m.model,
+        branch: m.gitBranch,
+        live: false,
+        facts: { apiError: m.apiError, endedTurn: m.endedTurn, lastRole: m.lastRole, madeChanges: m.madeChanges, prUrl: m.prUrl, prNumber: m.prNumber, branch: m.gitBranch },
+      })
+    }
+    historyByMachine.set(host, map)
+    mergeHistory(host)
+    // git of its recent folders there, so their colours know about commits, pushes and PRs
+    const cwds = [...new Set(list.slice(0, 20).map((m) => m.cwd).filter((c): c is string => !!c))]
+    if (cwds.length) void readGit(cwds, host, true)
+  } catch (e) {
+    console.warn("remote_history", host, e)
+  }
+}
+
+/** The machine's past sessions under its live ones (a live one, or one a hook just told of, wins). */
+function mergeHistory(host: string) {
+  const past = historyByMachine.get(host)
+  if (!past?.size) return
+  const next = new Map(extByMachine.get(host) ?? [])
+  for (const [id, h] of past) {
+    const cur = next.get(id)
+    if (!cur) next.set(id, h)
+    else if (!cur.live) next.set(id, { ...h, title: cur.title && cur.title !== "Session" ? cur.title : h.title })
+  }
+  extByMachine.set(host, next)
+  requestSync()
+}
+
 export interface MachineStatus {
   host: string
   ok?: boolean
@@ -95,6 +171,7 @@ async function pollMachine(host: string) {
     // ended sessions stay listed (stopped) until the app restarts
     for (const [id, s] of prev) if (!next.has(id)) next.set(id, { ...s, live: false, status: "stopped", waitingFor: undefined })
     extByMachine.set(host, next)
+    mergeHistory(host)
     setStatus(host, { ok: true, error: undefined })
     requestSync()
     // git of the folders in use there
@@ -153,7 +230,10 @@ export async function startMachines() {
     }
     // machines removed in Settings go; the cloud's sessions are not a machine's (cloud.ts keeps them)
     for (const h of [...extByMachine.keys()]) if (h !== "cloud" && !hosts.includes(h)) extByMachine.delete(h)
+    for (const h of [...historyByMachine.keys()]) if (!hosts.includes(h)) historyByMachine.delete(h)
     await invoke("remote_tunnels", { hosts }).catch((e) => console.warn("remote_tunnels", e))
+    // past sessions: at start, then every 2 minutes (they show even while the machine is down)
+    for (const h of hosts) if (Date.now() - (historyAt.get(h) ?? 0) > 120_000) void pollHistory(h)
     await Promise.all(hosts.map((h) => pollMachine(h)))
   }
   void tick()

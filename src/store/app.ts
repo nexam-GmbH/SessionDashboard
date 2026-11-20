@@ -11,8 +11,9 @@ import type {
   Transcript,
 } from "@/lib/model"
 import type { RepoSpec } from "@/mocks/catalog"
-import { generateWorld, type World } from "@/mocks/world"
+import type { World } from "@/mocks/world"
 import { POPOUT, REAL } from "@/backend/mode"
+import { isRecord, readSettings, SETTINGS_KEY } from "./settingsSchema"
 
 /**
  * One normalized zustand store: records keyed by id, components
@@ -150,71 +151,43 @@ function readEngine(): boolean {
   }
 }
 
+/**
+ * Saved settings, checked against the registry (store/settingsSchema.ts): a value of the wrong kind
+ * or out of range loads as its default, so stored data can never stop the app from starting.
+ */
 function loadSettings(): Settings {
-  const defaults: Settings = {
-    reduceMotion: false,
-    // one bar like Claude desktop / Zed: the app draws the title bar and window buttons itself
-    nativeTitlebar: false,
-    allowBypass: false,
-    notify: { permission: true, question: true, finished: false, error: true, sound: false },
-    mutedRepos: [],
-    defaults: { model: "claude-opus-5-5", effort: "high", permissionMode: "default", worktree: true },
-    claudeConfigDir: "~/.claude",
-    claudeConfigDirs: [],
-    machines: [],
-    cloud: true,
-    workspaces: [],
-    workspace: "",
-    recentPerRepo: 5,
-    // the stock theme's 14px text: 100% (the old 13px theme started at 110%)
-    uiScale: 1,
-    sidebarHidden: false,
-    terminalHeight: 280,
-    detailsOpen: true,
-    transcriptView: "normal",
-    sendKey: "enter",
-    chatWidth: "readable",
-  }
+  let saved: Record<string, unknown> = {}
   try {
-    const raw = localStorage.getItem("sd.settings")
-    const s: Settings = raw ? { ...defaults, ...JSON.parse(raw) } : defaults
-    // settings saved before the app drew its own title bar: switch once to the single bar
-    const saved = raw ? (JSON.parse(raw) as { chrome?: number }) : {}
-    if (saved.chrome !== 2) {
-      s.nativeTitlebar = false
-      ;(s as Settings & { chrome?: number }).chrome = 2
-    }
-    // the stock shadcn theme has 14px text where the old one had 13px: a saved 110% becomes 100%
-    // (the same size on screen), once
-    if ((saved as { theme?: number }).theme !== 2) {
-      if (Math.abs(s.uiScale - 1.1) < 0.01) s.uiScale = 1
-      ;(s as Settings & { theme?: number }).theme = 2
-    }
-    // a finished turn became a badge only (alerts are for what blocks a session): switch it off once
-    if ((saved as { notifyV?: number }).notifyV !== 2) {
-      s.notify = { ...defaults.notify, ...s.notify, finished: false }
-      ;(s as Settings & { notifyV?: number }).notifyV = 2
-    }
-    // a first version kept plain folders: one workspace "Work"
-    if (s.workspaces.some((w) => typeof w === "string")) {
-      const folders = (s.workspaces as unknown as string[]).filter((w) => typeof w === "string")
-      s.workspaces = [{ id: "work", name: "Work", folders }]
-      s.workspace = "work"
-    }
-    // a session window: the system's frame, no session list (and it never saves settings)
-    return POPOUT ? { ...s, nativeTitlebar: true, sidebarHidden: true, detailsOpen: false } : s
+    const parsed: unknown = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}")
+    if (isRecord(parsed)) saved = { ...parsed }
   } catch {
-    return defaults
+    /* storage unavailable or unreadable: the defaults */
   }
+  // settings saved before the app drew its own title bar: switch once to the single bar
+  if (saved.chrome !== 2) saved.nativeTitlebar = false
+  // the stock shadcn theme has 14px text where the old one had 13px: a saved 110% becomes 100%
+  // (the same size on screen), once
+  if (saved.theme !== 2 && typeof saved.uiScale === "number" && Math.abs(saved.uiScale - 1.1) < 0.01) saved.uiScale = 1
+  // a finished turn became a badge only (alerts are for what blocks a session): switch it off once
+  if (saved.notifyV !== 2) saved.notify = { ...(isRecord(saved.notify) ? saved.notify : {}), finished: false }
+  // a first version kept plain folders: one workspace "Work"
+  if (Array.isArray(saved.workspaces) && saved.workspaces.some((w) => typeof w === "string")) {
+    saved.workspaces = [{ id: "work", name: "Work", folders: saved.workspaces.filter((w) => typeof w === "string") }]
+    saved.workspace = "work"
+  }
+  // the markers of the switches above stay with the settings, so each runs once
+  const s: Settings = Object.assign(readSettings(saved), { chrome: 2, theme: 2, notifyV: 2 })
+  // a session window: the system's frame, no session list (and it never saves settings)
+  return POPOUT ? { ...s, nativeTitlebar: true, sidebarHidden: true, detailsOpen: false } : s
 }
 
-/** the desktop app starts empty and fills from Claude Code (backend/real.ts); the browser shows the mock world */
+/** the desktop app starts empty and fills from Claude Code (backend/real.ts); the browser's mock
+ * world is set by mocks/boot before the first render, so the desktop app never loads its generator */
 const EMPTY_WORLD: World = { repos: {}, repoOrder: [], repoSpecs: {}, sessions: {}, sessionIdsByRepo: {}, mainSessionId: "", subagents: {}, subagentIdsBySession: {}, requests: {}, notifications: [] }
-const world = REAL ? EMPTY_WORLD : generateWorld()
 
 export const useApp = create<AppState>()(
   subscribeWithSelector((): AppState => ({
-    ...world,
+    ...EMPTY_WORLD,
     transcripts: {},
     structVersion: 0,
     statusVersion: 0,
@@ -243,7 +216,7 @@ useApp.subscribe(
   (settings) => {
     if (POPOUT) return
     try {
-      localStorage.setItem("sd.settings", JSON.stringify(settings))
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
     } catch {
       /* storage unavailable: settings stay in memory */
     }

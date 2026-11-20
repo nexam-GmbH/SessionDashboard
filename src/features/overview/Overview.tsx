@@ -25,7 +25,7 @@ import { homePath, plural } from "@/lib/format"
 import type { ID, RepoGit, Session } from "@/lib/model"
 import { LooseEnds } from "./LooseEnds"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ensureTranscript } from "@/mocks/transcript"
+import { ensureTranscript } from "@/backend/transcript"
 import "./overview.css"
 
 export default function Overview() {

@@ -70,8 +70,18 @@ const Screen = memo(function Screen({ route }: { route: string }) {
     case "archive":
     case "history":
       return <HistoryView />
-    case "new":
-      return <NewSessionView repoId={ref} />
+    case "new": {
+      // everything after /new/: a repository id holds slashes (repo:github.com/acme/api), sent
+      // encoded; the router may hand it back either way
+      const rest = route.slice("/new/".length)
+      let repoId: string | undefined = rest || undefined
+      try {
+        if (repoId) repoId = decodeURIComponent(repoId)
+      } catch {
+        /* not encoded: as it is */
+      }
+      return <NewSessionView repoId={repoId} />
+    }
     case "usage":
       return <UsageView />
     default:

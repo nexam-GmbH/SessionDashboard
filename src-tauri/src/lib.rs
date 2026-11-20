@@ -200,6 +200,7 @@ pub fn run() {
             claude::hooks_answer,
             claude::remote_probe,
             claude::remote_agents,
+            claude::remote_history,
             claude::remote_transcript,
             claude::remote_transcript_since,
             claude::remote_tunnels,

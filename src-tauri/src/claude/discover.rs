@@ -3,7 +3,7 @@
 //! `~/.claude/projects/<slug>/<session>.jsonl`. Transcripts can be tens of MB, so the list only
 //! reads the head and the tail of each file and caches the result by (size, mtime).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -496,8 +496,8 @@ fn live_sessions_now() -> Result<Value, String> {
     Ok(v)
 }
 
-#[derive(Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct SessionMeta {
     pub session_id: String,
     pub path: String,
@@ -1069,6 +1069,22 @@ fn scan_file(path: &Path, size: u64, mtime: u64, head_hit: Option<&SessionMeta>)
         m.continues = continuation_of(path);
     }
     Some((m, head_meta))
+}
+
+/// A transcript's summary from its bytes read elsewhere (a machine over ssh): the whole file when it is
+/// small, else its head and tail, read the same way as a local one.
+pub fn meta_from_parts(path: &str, size: u64, mtime: u64, head: &[u8], tail: Option<&[u8]>) -> SessionMeta {
+    let session_id = Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let mut m = SessionMeta { session_id, path: path.to_string(), updated_ms: mtime, size, ..Default::default() };
+    match tail {
+        None => parse_chunk(&mut m, head, false, false),
+        Some(tail) => {
+            let cut = head.iter().rposition(|b| *b == b'\n').unwrap_or(0);
+            parse_chunk(&mut m, &head[..cut], false, false);
+            parse_chunk(&mut m, tail, true, true);
+        }
+    }
+    m
 }
 
 /// Every session transcript under ~/.claude/projects (subagent transcripts excluded).

@@ -298,3 +298,158 @@ mod probe_tests {
         assert_eq!(gone["hostname"], "box");
     }
 }
+
+// ---------- past sessions on a machine ----------
+
+/// What was read of a machine's transcripts, by path: (size, mtime, summary). Kept on disk, so after a
+/// restart the past sessions show at once, also while the machine cannot be reached.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct HistoryCache(HashMap<String, HashMap<String, (u64, u64, super::discover::SessionMeta)>>);
+
+static HISTORY: Mutex<Option<HistoryCache>> = Mutex::new(None);
+
+fn history_path() -> std::path::PathBuf {
+    crate::sys::config_dir().join("remote-history.json")
+}
+
+const HISTORY_DAYS: u32 = 30;
+const HISTORY_MAX: usize = 80;
+/// Of a big transcript: its start (first prompt, folder) and its end (title, last answer, state).
+const HEAD: u64 = 64 * 1024;
+const TAIL: u64 = 256 * 1024;
+
+/// A machine's past sessions: its transcripts of the last 30 days (the newest 80), summarised like
+/// the local ones. One ssh call lists them; only new or grown files are fetched (their head and
+/// tail), in batches. Unreachable: what was read before.
+pub fn history(host: &str) -> Vec<super::discover::SessionMeta> {
+    let mut g = HISTORY.lock().unwrap();
+    let cache = g.get_or_insert_with(|| std::fs::read(history_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default());
+    let list = format!(
+        r#"d="${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects"; find "$d" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mtime -{HISTORY_DAYS} -printf '%T@ %s %p\n' 2>/dev/null | sort -rn | head -n {HISTORY_MAX}"#
+    );
+    let known = cache.0.entry(host.to_string()).or_default();
+    let Ok(out) = run(host, &list, None, Duration::from_secs(20)) else {
+        return known.values().map(|(_, _, m)| m.clone()).collect();
+    };
+    let mut files: Vec<(String, u64, u64)> = Vec::new();
+    for l in String::from_utf8_lossy(&out).lines() {
+        let mut f = l.splitn(3, ' ');
+        let (Some(t), Some(sz), Some(p)) = (f.next(), f.next(), f.next()) else { continue };
+        let (Ok(t), Ok(sz)) = (t.parse::<f64>(), sz.parse::<u64>()) else { continue };
+        files.push((p.to_string(), sz, (t * 1000.0) as u64));
+    }
+    let changed: Vec<&(String, u64, u64)> = files.iter().filter(|(p, sz, t)| known.get(p).is_none_or(|(s0, t0, _)| s0 != sz || t0 != t)).collect();
+    // 8 files an ssh call: a few MB at most each
+    for batch in changed.chunks(8) {
+        let mut script = String::new();
+        for (p, sz, _) in batch {
+            let q = shell_quote(p);
+            if *sz <= HEAD + TAIL {
+                script.push_str(&format!("echo '@@whole'; cat {q}; echo; echo '@@end'\n"));
+            } else {
+                script.push_str(&format!("echo '@@head'; head -c {HEAD} {q}; echo; echo '@@tail'; tail -c {TAIL} {q}; echo; echo '@@end'\n"));
+            }
+        }
+        let Ok(out) = run(host, &script, None, Duration::from_secs(60)) else { break };
+        for ((p, sz, t), part) in batch.iter().zip(split_parts(&out)) {
+            let meta = match part {
+                Part::Whole(b) => super::discover::meta_from_parts(p, *sz, *t, b, None),
+                Part::HeadTail(h, tl) => super::discover::meta_from_parts(p, *sz, *t, h, Some(tl)),
+            };
+            known.insert(p.clone(), (*sz, *t, meta));
+        }
+    }
+    // gone from the list (older than 30 days, deleted): forgotten
+    known.retain(|p, _| files.iter().any(|(q, _, _)| q == p));
+    let result: Vec<_> = files.iter().filter_map(|(p, _, _)| known.get(p).map(|(_, _, m)| m.clone())).collect();
+    if let Ok(b) = serde_json::to_vec(&*cache) {
+        let tmp = history_path().with_extension("json.tmp");
+        if std::fs::write(&tmp, b).is_ok() {
+            let _ = std::fs::rename(&tmp, history_path());
+        }
+    }
+    result
+}
+
+enum Part<'a> {
+    Whole(&'a [u8]),
+    HeadTail(&'a [u8], &'a [u8]),
+}
+
+/// The marked sections of a fetch, in order. A record line starts with "{", so a marker line is
+/// never a transcript's.
+fn split_parts(out: &[u8]) -> Vec<Part<'_>> {
+    let mut parts = Vec::new();
+    let mut lines: Vec<(usize, &[u8])> = Vec::new();
+    let mut pos = 0;
+    for l in out.split(|b| *b == b'\n') {
+        lines.push((pos, l));
+        pos += l.len() + 1;
+    }
+    let at = |i: usize| lines[i].0;
+    let mut i = 0;
+    while i < lines.len() {
+        match lines[i].1 {
+            b"@@whole" => {
+                let start = at(i) + 8;
+                let Some(e) = (i + 1..lines.len()).find(|j| lines[*j].1 == b"@@end") else { break };
+                parts.push(Part::Whole(&out[start..at(e).saturating_sub(1).max(start)]));
+                i = e + 1;
+            }
+            b"@@head" => {
+                let start = at(i) + 7;
+                let Some(t) = (i + 1..lines.len()).find(|j| lines[*j].1 == b"@@tail") else { break };
+                let Some(e) = (t + 1..lines.len()).find(|j| lines[*j].1 == b"@@end") else { break };
+                let tstart = at(t) + 7;
+                parts.push(Part::HeadTail(&out[start..at(t).saturating_sub(1).max(start)], &out[tstart..at(e).saturating_sub(1).max(tstart)]));
+                i = e + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    parts
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn splits_fetched_transcripts() {
+        let out = b"motd line\n@@whole\n{\"a\":1}\n{\"b\":2}\n\n@@end\n@@head\n{\"h\":1}\n{\"part\n@@tail\nial\":2}\n{\"t\":3}\n\n@@end\n";
+        let parts = split_parts(out);
+        assert_eq!(parts.len(), 2);
+        match &parts[0] {
+            Part::Whole(b) => assert_eq!(*b, &b"{\"a\":1}\n{\"b\":2}\n"[..]),
+            _ => panic!("whole"),
+        }
+        match &parts[1] {
+            Part::HeadTail(h, t) => {
+                assert!(h.starts_with(b"{\"h\":1}"));
+                assert!(t.ends_with(b"{\"t\":3}\n"));
+            }
+            _ => panic!("head/tail"),
+        }
+    }
+
+    /// The whole path over a fake ssh that runs the script here: a transcript in a made-up
+    /// ~/.claude is listed, fetched and summarised, and a second call fetches nothing.
+    #[test]
+    #[ignore]
+    fn history_over_fake_ssh() {
+        let home = std::env::temp_dir().join(format!("sd-rhist-{}", std::process::id()));
+        let proj = home.join(".claude/projects/-srv-app");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("11111111-2222-3333-4444-555555555555.jsonl"), r#"{"type":"user","cwd":"/srv/app","timestamp":"2026-11-20T10:00:00Z","message":{"role":"user","content":"deploy the api"}}
+{"type":"assistant","cwd":"/srv/app","timestamp":"2026-11-20T10:01:00Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Deployed."}]}}
+"#).unwrap();
+        // SAFETY: test-only
+        unsafe { std::env::set_var("HOME", &home) };
+        let got = history("fake");
+        assert_eq!(got.len(), 1, "listed and read");
+        assert_eq!(got[0].first_prompt.as_deref(), Some("deploy the api"));
+        assert_eq!(got[0].last_text.as_deref(), Some("Deployed."));
+        assert_eq!(got[0].cwd.as_deref(), Some("/srv/app"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

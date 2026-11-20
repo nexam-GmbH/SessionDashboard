@@ -1,7 +1,7 @@
 {
   "name": "session-dashboard",
   "private": true,
-  "version": "0.8.8",
+  "version": "0.8.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check:ui": "node scripts/ui-checks.mjs",
+    "test:ui": "node tests/ui/run.mjs",
     "shots": "node scripts/shots-all.mjs ./.shots",
     "install:local": "bash scripts/install-local.sh"
   },

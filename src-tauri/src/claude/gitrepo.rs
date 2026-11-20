@@ -38,6 +38,8 @@ struct Dirty {
 struct Wt {
     /// as git prints it
     path: String,
+    /// its one spelling (canon)
+    top: PathBuf,
     head: String,
     flags: Vec<&'static str>,
     status: Option<Vec<String>>,
@@ -83,14 +85,37 @@ fn lexical(p: &Path) -> PathBuf {
     out
 }
 
-/// Paths from git ("C:/x/y") and from the disk ("C:\x\y") name the same folder.
-fn same_path(a: &Path, b: &Path) -> bool {
-    if cfg!(windows) {
-        let n = |p: &Path| p.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase();
-        n(a) == n(b)
-    } else {
-        a == b
+/// One spelling per folder. Windows names a folder many ways: short 8.3 names (RUNNER~1), any letter
+/// case ("c:" from one tool, "C:" from git) and both slashes; a watch reports paths in the spelling
+/// it was given. So every path here is canonicalized where it exists (without the `\\?\` prefix)
+/// and compared case-blind on Windows, and the watches are set on these spellings.
+fn canon(p: &Path) -> PathBuf {
+    match std::fs::canonicalize(p) {
+        Ok(c) => {
+            let s = c.to_string_lossy().to_string();
+            match s.strip_prefix(r"\\?\") {
+                Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+                _ => c,
+            }
+        }
+        Err(_) => p.to_path_buf(),
     }
+}
+
+/// The comparable form of a path: forward slashes, no trailing one, case-blind on Windows.
+fn key(p: &Path) -> String {
+    let s = p.to_string_lossy().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    if cfg!(windows) { s.to_lowercase() } else { s.to_string() }
+}
+
+/// `p` inside `root` (or the same): the rest of its path after root ("" for the same).
+fn under(p: &Path, root: &Path) -> Option<String> {
+    let (a, b) = (key(p), key(root));
+    if a == b {
+        return Some(String::new());
+    }
+    a.strip_prefix(&format!("{b}/")).map(str::to_string)
 }
 
 /// The repository a folder is in, from the disk alone: (its worktree's top, the shared `.git`).
@@ -153,6 +178,7 @@ pub fn read(path: &str, quick: bool) -> String {
         return "@@nodir\n".into();
     }
     let Some((top, common)) = locate(p) else { return "@@norepo\n".into() };
+    let (top, common) = (canon(&top), canon(&common));
     // the main worktree holds the shared `.git`; a submodule's git dir sits elsewhere
     let main_top = if common.file_name().is_some_and(|n| n == ".git") { common.parent().map(Path::to_path_buf).unwrap_or(top.clone()) } else { top.clone() };
     let repo = repo_for(&common, &main_top);
@@ -165,8 +191,8 @@ pub fn read(path: &str, quick: bool) -> String {
 
 /// What a change under one of the repository's folders means.
 fn classify(common: &Path, main_top: &Path, tops: &Mutex<Vec<PathBuf>>, d: &mut Dirty, p: &Path) {
-    if let Ok(rel) = p.strip_prefix(common) {
-        let mut parts = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string());
+    if let Some(rel) = under(p, common) {
+        let mut parts = rel.split('/').filter(|x| !x.is_empty()).map(str::to_string);
         match parts.next().as_deref() {
             // objects come with a ref or an index change; logs and hooks change nothing shown
             Some("objects") | Some("logs") | Some("hooks") | Some("info") | Some("lfs") => {}
@@ -187,7 +213,7 @@ fn classify(common: &Path, main_top: &Path, tops: &Mutex<Vec<PathBuf>>, d: &mut 
     }
     // a worktree's own files: the deepest worktree holding the path (a nested one is not the main)
     let t = tops.lock().unwrap();
-    match t.iter().filter(|top| p.starts_with(top)).max_by_key(|top| top.components().count()) {
+    match t.iter().filter(|top| under(p, top).is_some()).max_by_key(|top| key(top).len()) {
         Some(top) => {
             d.tops.insert(top.clone());
         }
@@ -204,8 +230,8 @@ impl Repo {
             return false;
         }
         let mut want = vec![self.main_top.clone()];
-        for p in std::iter::once(self.common.clone()).chain(self.wts.iter().map(|w| PathBuf::from(&w.path))) {
-            if !want.iter().any(|r| p.starts_with(r)) && p.is_dir() {
+        for p in std::iter::once(self.common.clone()).chain(self.wts.iter().map(|w| w.top.clone())) {
+            if !want.iter().any(|r| under(&p, r).is_some()) && p.is_dir() {
                 want.push(p);
             }
         }
@@ -248,7 +274,7 @@ impl Repo {
             if let Some(p) = l.strip_prefix("worktree ") {
                 // a worktree already known keeps what was read of it
                 let old = self.wts.iter().position(|w| w.path == p).map(|i| self.wts.swap_remove(i));
-                next.push(old.map(|o| Wt { head: String::new(), flags: vec![], ..o }).unwrap_or(Wt { path: p.to_string(), head: String::new(), flags: vec![], status: None, read_at: None }));
+                next.push(old.map(|o| Wt { head: String::new(), flags: vec![], ..o }).unwrap_or_else(|| Wt { path: p.to_string(), top: canon(Path::new(p)), head: String::new(), flags: vec![], status: None, read_at: None }));
             } else if let Some(w) = next.last_mut() {
                 if let Some(h) = l.strip_prefix("HEAD ") {
                     w.head = h.to_string();
@@ -266,12 +292,12 @@ impl Repo {
             for e in rd.flatten() {
                 if let Ok(t) = std::fs::read_to_string(e.path().join("gitdir")) {
                     if let Some(top) = PathBuf::from(t.trim()).parent() {
-                        self.names.insert(e.file_name().to_string_lossy().to_string(), top.to_path_buf());
+                        self.names.insert(e.file_name().to_string_lossy().to_string(), canon(top));
                     }
                 }
             }
         }
-        *self.tops.lock().unwrap() = self.wts.iter().map(|w| PathBuf::from(&w.path)).collect();
+        *self.tops.lock().unwrap() = self.wts.iter().map(|w| w.top.clone()).collect();
         self.list_at = Some(Instant::now());
         true
     }
@@ -354,15 +380,15 @@ impl Repo {
             d.tops.extend(more.tops);
             d.names.extend(more.names);
         }
-        let changed: HashSet<PathBuf> = d.tops.iter().cloned().chain(d.names.iter().filter_map(|n| self.names.get(n).cloned())).collect();
+        let changed: HashSet<String> = d.tops.iter().map(|t| key(t)).chain(d.names.iter().filter_map(|n| self.names.get(n).map(|t| key(t)))).collect();
         let mut read_any = false;
         for w in self.wts.iter_mut() {
-            let wp = PathBuf::from(&w.path);
-            let mine = same_path(&wp, top);
+            let wp = w.top.clone();
+            let mine = key(&wp) == key(top);
             let wanted = mine || !quick;
             let read = if watched {
                 // a changed worktree, one not read yet that this read needs, or one not read for long
-                d.all || changed.iter().any(|c| same_path(c, &wp)) || (w.status.is_none() && wanted) || (w.status.is_some() && stale(w.read_at, MAX_AGE))
+                d.all || changed.contains(&key(&wp)) || (w.status.is_none() && wanted) || (w.status.is_some() && stale(w.read_at, MAX_AGE))
             } else {
                 wanted && stale(w.read_at, FRESH)
             };
@@ -406,7 +432,7 @@ impl Repo {
         for w in &self.wts {
             let _ = writeln!(out, "@@worktree {}", w.path);
             // quick: this folder's worktree only, as before (the others' counts come with the full reads)
-            let show = !quick || same_path(&PathBuf::from(&w.path), top);
+            let show = !quick || key(&w.top) == key(top);
             if let Some(st) = w.status.as_ref().filter(|_| show) {
                 for l in st {
                     let _ = writeln!(out, "{l}");
@@ -510,6 +536,40 @@ mod tests {
         }
         let full = read(&folders[0], false);
         assert!(full.contains("claude/w3\t1"), "the branch's commit on no remote: {full}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A folder asked for in another spelling than git prints (here a symlink; on Windows a short
+    /// 8.3 name or another letter case) is still cached: one canonical spelling for everything.
+    #[cfg(unix)]
+    #[test]
+    fn another_spelling_of_the_same_folder() {
+        let base = std::env::temp_dir().join(format!("sd-gitspell-{}", std::process::id()));
+        let real = base.join("real");
+        let repo = real.join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        run(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("src/a.ts"), "a").unwrap();
+        run(&repo, &["add", "-A"]);
+        run(&repo, &["commit", "-qm", "a"]);
+        let wt = repo.join(".claude/worktrees/w1");
+        run(&repo, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "w1"]);
+        std::os::unix::fs::symlink(&real, base.join("link")).unwrap();
+        let via = |p: &Path| base.join("link").join(p.strip_prefix(&real).unwrap()).to_string_lossy().to_string();
+        read(&via(&repo), false);
+        std::thread::sleep(Duration::from_millis(400));
+        let (_, n) = counted(|| {
+            read(&via(&repo), true);
+            read(&via(&wt), true)
+        });
+        assert_eq!(n, 0, "the same folders in another spelling ran git again");
+        // and a change still reaches the right worktree
+        std::fs::write(wt.join("src/a.ts"), "changed").unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !read(&via(&wt), true).contains("\n1 ") {
+            assert!(Instant::now() < end, "the change in the worktree was not seen");
+            std::thread::sleep(Duration::from_millis(50));
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 }

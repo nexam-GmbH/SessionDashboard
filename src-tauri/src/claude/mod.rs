@@ -283,6 +283,12 @@ pub async fn remote_probe(host: String) -> Result<Value, String> {
     blocking(move || Ok(remote::probe(&host))).await
 }
 
+/// A machine's past sessions (its transcripts of the last 30 days), summarised like the local ones.
+#[tauri::command]
+pub async fn remote_history(host: String) -> Result<Vec<SessionMeta>, String> {
+    blocking(move || Ok(remote::history(&host))).await
+}
+
 #[tauri::command]
 pub async fn remote_agents(host: String) -> Result<Value, String> {
     blocking(move || remote::agents(&host)).await

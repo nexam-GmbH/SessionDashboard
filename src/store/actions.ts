@@ -9,6 +9,7 @@ import type {
   SessionStatus,
 } from "@/lib/model"
 import { getApp, setApp, type Settings } from "./app"
+import type { SettingRowEntry } from "./settingsSchema"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway } from "./away"
@@ -667,7 +668,8 @@ export function closePalette() {
 }
 /** The New session screen (Ctrl+N, +), in `repoId` or the project on screen. */
 export function openNewSession(repoId?: ID) {
-  navigate(repoId ? `/new/${repoId}` : "/new")
+  // a repository's id holds slashes (repo:github.com/acme/api): one path segment, encoded
+  navigate(repoId ? `/new/${encodeURIComponent(repoId)}` : "/new")
 }
 
 /** New sessions default to the repo of the session on screen. */
@@ -712,6 +714,14 @@ export function markAllNotificationsRead() {
 // ---------- settings & engine ----------
 export function patchSettings(patch: Partial<Settings>) {
   setApp((s) => ({ settings: { ...s.settings, ...patch } }))
+}
+/** One setting by its registry path: `["uiScale"]`, or a group's field like `["notify", "sound"]`. */
+export function setSetting(path: SettingRowEntry["path"], value: unknown) {
+  setApp((s) => {
+    const [key, field] = path
+    const next = field === undefined ? value : { ...(s.settings[key] as object), [field]: value }
+    return { settings: { ...s.settings, [key]: next } }
+  })
 }
 export function setEngine(patch: Partial<{ running: boolean; rate: number }>) {
   setApp((s) => ({ engine: { ...s.engine, ...patch } }))

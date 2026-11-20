@@ -2,8 +2,7 @@
 // zoom, through the web view's own zoom so text stays sharp and menus stay where they belong.
 import { getApp, setApp, useApp } from "@/store/app"
 import { IN_TAURI } from "@/lib/platform"
-
-export const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5]
+import { ZOOM_STEPS } from "@/store/settingsSchema"
 
 async function apply(scale: number) {
   if (IN_TAURI) {

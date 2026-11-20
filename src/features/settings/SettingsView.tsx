@@ -6,18 +6,16 @@
 import { createContext, useContext, useEffect, useId, useState, type ComponentProps, type ReactNode } from "react"
 import { FolderGit2, Plus, Server, Trash2 } from "lucide-react"
 import { useApp } from "@/store/app"
-import { patchSettings, pushNotification } from "@/store/actions"
+import { patchSettings, pushNotification, setSetting } from "@/store/actions"
+import { SETTING_ROWS, type SettingRowEntry, type SettingsPage } from "@/store/settingsSchema"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { homePath } from "@/lib/format"
-import { IN_TAURI, OS } from "@/lib/platform"
+import { IN_TAURI } from "@/lib/platform"
 import { cn } from "@/lib/utils"
 import { AddReposDialog } from "./AddReposDialog"
-import { ZOOM_STEPS } from "@/app/zoom"
-import { EFFORTS, MODES } from "@/features/composer/options"
-import { MOD } from "@/components/common/bits"
 import { REAL } from "@/backend/mode"
 import { setHooks } from "@/backend/real"
 import { WorkspaceDialog } from "@/features/workspaces/WorkspaceDialog"
@@ -119,7 +117,7 @@ function RowSwitch(props: ComponentProps<typeof Switch>) {
   return <Switch aria-labelledby={labelledBy} {...props} />
 }
 
-function SmallSelect<T extends string>({ value, onChange, options, width = "w-44" }: { value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; width?: string }) {
+function SmallSelect<T extends string>({ value, onChange, options, width = "w-44" }: { value: T; onChange: (v: T) => void; options: readonly { value: T; label: string }[]; width?: string }) {
   const labelledBy = useContext(RowLabel)
   const selfId = useId()
   return (
@@ -136,6 +134,38 @@ function SmallSelect<T extends string>({ value, onChange, options, width = "w-44
         ))}
       </SelectContent>
     </Select>
+  )
+}
+
+/** Hover text from the registry: `text in backticks` shows as code. */
+function richText(text: string): ReactNode {
+  if (!text.includes("`")) return text
+  return text.split("`").map((part, i) => (i % 2 ? <Code key={i}>{part}</Code> : part))
+}
+
+/** A page's plain rows, from the settings registry (store/settingsSchema.ts) in its order. */
+function RegistryRows({ page }: { page: SettingsPage }) {
+  return SETTING_ROWS.filter((e) => e.row.page === page).map((e) => <RegistryRow key={e.path.join(".")} entry={e} />)
+}
+
+/** One registry setting: a switch for on/off, a menu for a choice. */
+function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }) {
+  const value = useApp((s) => {
+    const v = s.settings[path[0]]
+    return path[1] === undefined ? v : (v as Record<string, unknown>)[path[1]]
+  })
+  const off = row.unavailable?.()
+  const set = (v: unknown) => setSetting(path, v)
+  return (
+    <SettingRow title={row.label} description={row.description && richText(row.description)} hint={off} disabled={!!off}>
+      {field.type === "boolean" ? (
+        <RowSwitch checked={value as boolean} onCheckedChange={set} disabled={!!off} />
+      ) : field.type === "number" ? (
+        <SmallSelect value={String(value)} onChange={(v) => set(Number(v))} options={(field.options ?? []).map((o) => ({ value: String(o.value), label: o.label }))} width={row.width} />
+      ) : (
+        <SmallSelect value={value as string} onChange={set} options={field.type === "enum" ? field.options.filter((o) => !field.offer || field.offer(o.value)) : (field.options ?? [])} width={row.width} />
+      )}
+    </SettingRow>
   )
 }
 
@@ -308,7 +338,6 @@ function KeepChats() {
 }
 
 export function SourcesPage() {
-  const recentPer = useApp((s) => s.settings.recentPerRepo ?? 5)
   const hooks = useApp((s) => s.hooks)
   const cloud = useApp((s) => s.settings.cloud)
   const cloudStatus = useApp((s) => s.cloudStatus)
@@ -330,11 +359,7 @@ export function SourcesPage() {
       <PageTitle title="Sessions" description="Sessions on this computer are found by themselves. Hooks make their states exact; the cloud and VPS machines add sessions that run elsewhere." />
       <Workspace />
       <SettingsSection>
-        <SettingRow title="Past sessions per project" description="How many finished sessions each project lists under its running ones (Show more adds the rest). History (Ctrl+Shift+H) has all of them; Ctrl+K searches what was said in them.">
-          <SmallSelect value={String(recentPer)} onChange={(v) => patchSettings({ recentPerRepo: Number(v) })} options={["3", "5", "8", "10", "15", "25"].map((v) => ({ value: v, label: v }))} width="w-20" />
-        </SettingRow>
-        <SendKeyRow />
-        <ChatWidthRow />
+        <RegistryRows page="sessions" />
         <TerminalSync />
         <KeepChats />
         <Accounts />
@@ -503,28 +528,11 @@ function Machines() {
 }
 
 export function ClaudePage() {
-  const settings = useApp((s) => s.settings)
-  const d = settings.defaults
-  const setD = (patch: Partial<typeof d>) => patchSettings({ defaults: { ...d, ...patch } })
   return (
     <>
       <PageTitle title="New sessions" description="Defaults for new sessions. Sessions are read from the Claude Code config directory." />
       <SettingsSection>
-        <SettingRow title="Model">
-          <SmallSelect value={d.model} onChange={(v) => setD({ model: v })} options={[{ value: "claude-opus-5-5", label: "Opus 5.5" }, { value: "claude-sonnet-5-5", label: "Sonnet 5.5" }, { value: "claude-haiku-5-5", label: "Haiku 5.5" }, { value: "claude-fable-5-2", label: "Fable 5.2" }]} />
-        </SettingRow>
-        <SettingRow title="Effort">
-          <SmallSelect value={d.effort} onChange={(v) => setD({ effort: v })} options={EFFORTS.map((e) => ({ value: e.value, label: e.label }))} />
-        </SettingRow>
-        <SettingRow title="Permissions" description="bypassPermissions is never used as a default.">
-          <SmallSelect value={d.permissionMode} onChange={(v) => setD({ permissionMode: v })} options={MODES.filter((m) => m.value !== "bypassPermissions" && m.value !== "dontAsk").map((m) => ({ value: m.value, label: m.label }))} />
-        </SettingRow>
-        <SettingRow title="Worktree" description={<>Start new sessions in <Code>.claude/worktrees/&lt;name&gt;</Code> (<Code>claude --worktree</Code>).</>}>
-          <RowSwitch checked={d.worktree} onCheckedChange={(v) => setD({ worktree: v })} />
-        </SettingRow>
-        <SettingRow title="Allow bypass permissions mode" description="Adds Bypass permissions to the mode picker. Claude then never asks before acting; use it only in a sandbox.">
-          <RowSwitch checked={settings.allowBypass} onCheckedChange={(v) => patchSettings({ allowBypass: v })} />
-        </SettingRow>
+        <RegistryRows page="new" />
       </SettingsSection>
     </>
   )
@@ -534,11 +542,6 @@ export function NotificationsPage() {
   const s = useApp((st) => st.settings)
   const repos = useApp((st) => st.repos)
   const order = useApp((st) => st.repoOrder)
-  const rule = (k: keyof typeof s.notify, title: string, description: string) => (
-    <SettingRow title={title} description={description}>
-      <RowSwitch checked={s.notify[k]} onCheckedChange={(v) => patchSettings({ notify: { ...s.notify, [k]: v } })} />
-    </SettingRow>
-  )
   const test = async () => {
     if (IN_TAURI) {
       try {
@@ -555,11 +558,7 @@ export function NotificationsPage() {
     <>
       <PageTitle title="Notifications" description="Only while the window is in the background, after 10 quiet seconds, so prompts you answer elsewhere stay silent. At most 2 in 10 minutes and 6 an hour; more arrive as one summary." actions={<Button size="sm" variant="outline" onClick={() => void test()} title="Send a test notification">Test</Button>} />
       <SettingsSection title="Notify when">
-        {rule("permission", "Needs permission", "A tool call is waiting for approval.")}
-        {rule("question", "Asks a question", "A question for you or a plan to approve.")}
-        {rule("finished", "Finishes", "Off by default: finished sessions get a dot in the list instead.")}
-        {rule("error", "Fails", "API errors, crashes, rate limits.")}
-        {rule("sound", "Sound", "The desktop's message sound with each notification.")}
+        <RegistryRows page="notifications" />
       </SettingsSection>
       <SettingsSection title="Muted repos" description="No system notifications for these repos. They still count as needing you.">
         <div className="flex flex-wrap gap-1.5 py-3">
@@ -582,20 +581,11 @@ export function NotificationsPage() {
 }
 
 export function WindowPage() {
-  const s = useApp((st) => st.settings)
   return (
     <>
       <PageTitle title="Window" />
       <SettingsSection>
-        <SettingRow title="Interface size" description={`Everything in the window, larger or smaller. ${MOD}+= and ${MOD}+− change it from anywhere.`}>
-          <SmallSelect value={String(s.uiScale ?? 1)} onChange={(v) => patchSettings({ uiScale: Number(v) })} options={ZOOM_STEPS.map((z) => ({ value: String(z), label: `${Math.round(z * 100)}%` }))} width="w-24" />
-        </SettingRow>
-        <SettingRow title="Native title bar" description="Use the window manager's title bar (recommended on Linux)." hint={OS !== "linux" ? "Linux only" : undefined} disabled={OS !== "linux"}>
-          <RowSwitch checked={s.nativeTitlebar} onCheckedChange={(v) => patchSettings({ nativeTitlebar: v })} disabled={OS !== "linux"} />
-        </SettingRow>
-        <SettingRow title="Reduce motion" description="Stops the working spinner.">
-          <RowSwitch checked={s.reduceMotion} onCheckedChange={(v) => patchSettings({ reduceMotion: v })} />
-        </SettingRow>
+        <RegistryRows page="window" />
       </SettingsSection>
     </>
   )
@@ -620,41 +610,5 @@ export function AboutPage() {
         </div>
       )}
     </section>
-  )
-}
-
-/** Enter sends (Claude Code), or Ctrl/⌘+Enter sends and Enter adds a line (safer with input methods). */
-function SendKeyRow() {
-  const key = useApp((st) => st.settings.sendKey ?? "enter")
-  return (
-    <SettingRow title="Send with" description="Enter sends and Shift+Enter adds a line, as in Claude Code; or Enter adds a line and Ctrl+Enter sends.">
-      <SmallSelect
-        value={key}
-        onChange={(v) => patchSettings({ sendKey: v as "enter" | "mod-enter" })}
-        options={[
-          { value: "enter", label: "Enter" },
-          { value: "mod-enter", label: "Ctrl+Enter" },
-        ]}
-        width="w-32"
-      />
-    </SettingRow>
-  )
-}
-
-/** The chat column: readable (Claude Code desktop's ~770 px) or wide. */
-function ChatWidthRow() {
-  const w = useApp((st) => st.settings.chatWidth ?? "readable")
-  return (
-    <SettingRow title="Chat width" description="A readable column, like Claude Code desktop, or one that uses the window's width.">
-      <SmallSelect
-        value={w}
-        onChange={(v) => patchSettings({ chatWidth: v as "readable" | "wide" })}
-        options={[
-          { value: "readable", label: "Readable" },
-          { value: "wide", label: "Wide" },
-        ]}
-        width="w-32"
-      />
-    </SettingRow>
   )
 }

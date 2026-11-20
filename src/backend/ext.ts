@@ -24,6 +24,8 @@ export interface ExtSession {
   live: boolean
   /** its claude process there (VPS) */
   pid?: number
+  /** what its transcript says about how it ended (past sessions on a machine): its colour */
+  facts?: Omit<import("@/lib/outcome").OutcomeInput, "git">
 }
 
 /** per machine: its sessions (replaced as a whole by each poll) */

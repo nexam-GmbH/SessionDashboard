@@ -24,7 +24,7 @@ import type { ID, Session } from "@/lib/model"
 import { getApp, useApp } from "@/store/app"
 import { useSession } from "@/store/selectors"
 import { openSession, sendMessage } from "@/store/actions"
-import { ensureTranscript } from "@/mocks/transcript"
+import { ensureTranscript } from "@/backend/transcript"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,

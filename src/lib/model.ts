@@ -120,6 +120,9 @@ export type PermissionMode =
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max"
 
+/** The model a new session gets, and the one assumed when a session's own is not known yet. */
+export const DEFAULT_MODEL = "claude-opus-5-5"
+
 export interface Session {
   /** ours, stable forever */
   id: ID

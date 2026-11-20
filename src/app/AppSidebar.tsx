@@ -22,7 +22,7 @@ import {
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ensureTranscript } from "@/mocks/transcript"
+import { ensureTranscript } from "@/backend/transcript"
 import {
   DropdownMenu,
   DropdownMenuContent,

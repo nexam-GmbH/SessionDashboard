@@ -7,7 +7,7 @@
 import { memo, type ComponentProps } from "react"
 import { Play } from "lucide-react"
 import { Streamdown, type ControlsConfig } from "streamdown"
-import { createCodePlugin } from "@streamdown/code"
+import type { CodeHighlighterPlugin, HighlightOptions, HighlightResult } from "@streamdown/code"
 import { cn } from "@/lib/utils"
 import { currentSessionId } from "@/store/actions"
 import { terminalCommandFor } from "@/features/terminal/slash"
@@ -16,7 +16,39 @@ import "./markdown.css"
 
 /** Copy on code blocks; no downloads, no table/mermaid chrome (Cline agentMarkdownControls). */
 const CONTROLS = { code: { copy: true, download: false }, mermaid: false, table: false } satisfies ControlsConfig
-const PLUGINS = { code: createCodePlugin({ themes: [CLAUDE_LIGHT, CLAUDE_DARK] }) }
+const THEMES: HighlightOptions["themes"] = [CLAUDE_LIGHT, CLAUDE_DARK]
+
+// @streamdown/code brings Shiki and its regex engine (about 200 KB) into the first bundle. Its
+// highlight is asynchronous anyway (null at first, the tokens through the callback once the
+// grammar has loaded), so the plugin can come in its own chunk without changing what a code block
+// shows: the chunk loads while the app is idle, or with the first block that needs it.
+let codePlugin: CodeHighlighterPlugin | null = null
+let codePluginLoad: Promise<CodeHighlighterPlugin> | null = null
+const loadCodePlugin = () =>
+  (codePluginLoad ??= import("@streamdown/code").then((m) => (codePlugin = m.createCodePlugin({ themes: THEMES }))))
+if (typeof window !== "undefined") {
+  const idle = window.requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1500))
+  idle(() => void loadCodePlugin().catch(() => undefined))
+}
+const LAZY_CODE_PLUGIN: CodeHighlighterPlugin = {
+  name: "shiki",
+  type: "code-highlighter",
+  getThemes: () => THEMES,
+  supportsLanguage: (language) => codePlugin?.supportsLanguage(language) ?? true,
+  getSupportedLanguages: () => codePlugin?.getSupportedLanguages() ?? [],
+  highlight(options, callback) {
+    if (codePlugin) return codePlugin.highlight(options, callback)
+    void loadCodePlugin().then(
+      (plugin) => {
+        const result: HighlightResult | null = plugin.highlight(options, callback)
+        if (result) callback?.(result)
+      },
+      (error) => console.error("[Streamdown Code] Failed to load the highlighter:", error),
+    )
+    return null
+  },
+}
+const PLUGINS = { code: LAZY_CODE_PLUGIN }
 
 /**
  * Inline code. A `! command` (Claude asking you to run something, Claude Code's bash mode) or a

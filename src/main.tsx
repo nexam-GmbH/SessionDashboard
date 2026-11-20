@@ -7,7 +7,6 @@ import { router } from "./app/router"
 import { ExternalLinkGuard } from "./components/external-link-guard.tsx"
 import { DebugPanel } from "./components/debug-panel.tsx"
 import { TooltipProvider } from "./components/ui/tooltip"
-import { startEngine } from "./mocks/engine"
 import { installShortcuts } from "./features/palette/shortcuts"
 import { installChatWidth, installZoom } from "./app/zoom"
 import { installTitleTooltips } from "./components/title-tooltips"
@@ -29,7 +28,8 @@ if (REAL) {
     })
     .catch(() => undefined)
 }
-else startEngine()
+// the mock world is a chunk of its own, so the desktop app never parses it; it is in place before the first render
+else (await import("./mocks/boot")).bootMocks()
 installShortcuts()
 installZoom()
 installChatWidth()
