@@ -13,7 +13,9 @@ import { navigate } from "@/app/nav"
 import { compact, usd } from "@/lib/format"
 import type { ID } from "@/lib/model"
 import { cn } from "@/lib/utils"
-import { familyOf, recentBySession, useUsage, type Limit } from "@/features/usage/usageData"
+import { familyOf, limitsFor, recentBySession, useUsage, type Limit } from "@/features/usage/usageData"
+import { accountKey, accountLabel } from "@/lib/accounts"
+import { limitLine, useAccountChoices, useHasAccounts } from "@/features/accounts/AccountItems"
 import { compactHint, severity } from "@/features/session-view/details/contextMath"
 import { minutes, useCache } from "./cache"
 import { GHOST, PANEL } from "./Pickers"
@@ -63,7 +65,11 @@ export function ContextRing({ sessionId, canCompact }: { sessionId: ID; canCompa
   const usage = useApp((s) => s.sessions[sessionId]?.usage)
   const model = useApp((s) => s.sessions[sessionId]?.model)
   const working = useApp((s) => s.sessions[sessionId]?.status === "working" || s.sessions[sessionId]?.status === "starting")
-  const limits = useUsage((s) => s.limits)
+  const configDir = useApp((s) => s.sessions[sessionId]?.configDir)
+  // the plan of the account this session runs on (null: not asked yet)
+  const limits = useUsage((s) => limitsFor(s, configDir) ?? (s.limits === null ? null : undefined))
+  const hasAccounts = useHasAccounts()
+  const others = useAccountChoices([accountKey(configDir)]).filter((a) => a.limits)
   const cache = useCache(sessionId)
   const rows = useMemo(() => limitRows(limits?.limits, model), [limits, model])
   if (!usage) return null
@@ -168,8 +174,9 @@ export function ContextRing({ sessionId, canCompact }: { sessionId: ID; canCompa
             <Divider />
             <div role="group" aria-label="Usage limits" className="flex flex-col">
               <div className="flex min-h-7 items-center justify-between gap-2 pr-2 pl-4">
-                <span className="text-cc-fg2">
-                  Plan usage limits{limits.plan ? ` · ${PLAN[limits.plan.toLowerCase()] ?? limits.plan}` : ""}
+                <span className="min-w-0 truncate text-cc-fg2">
+                  Plan usage limits{limits?.plan ? ` · ${PLAN[limits?.plan.toLowerCase()] ?? limits?.plan}` : ""}
+                  {hasAccounts && <span className="font-mono text-[12px]"> · {accountLabel(configDir)}</span>}
                 </span>
                 <button type="button" aria-label="See all usage" onClick={() => navigate("/usage")} className={cn(GHOST, "h-6 gap-1 rounded-md px-2 text-[13px]")}>
                   See all <ArrowRight className="size-3" />
@@ -180,6 +187,16 @@ export function ContextRing({ sessionId, canCompact }: { sessionId: ID; canCompa
                   <LimitRow key={label} label={label} l={l} />
                 ))}
               </div>
+              {hasAccounts && others.length > 0 && (
+                <div role="group" aria-label="Other accounts" className="mt-1 flex flex-col gap-0.5 px-4 pb-1">
+                  {others.map((a) => (
+                    <div key={a.key} className="flex min-h-5 items-baseline gap-2">
+                      <span className="min-w-0 truncate font-mono text-[12px] text-cc-fg2">{a.label}</span>
+                      <span className="tabular ml-auto shrink-0 text-cc-fg3">{limitLine(a)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         ) : null}

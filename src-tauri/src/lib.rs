@@ -191,6 +191,8 @@ pub fn run() {
             claude::claude_user_setting,
             claude::claude_set_user_setting,
             claude::claude_set_config_dirs,
+            claude::claude_copy_transcript,
+            claude::claude_remove_transcript_copy,
             claude::claude_inject_check,
             claude::claude_inject,
             claude::run_shell,

@@ -531,15 +531,51 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Ask claude for the plan's limits (no model call), keep a sample, and return the answer with the
-/// samples of the last 35 days.
+/// FNV-1a: a file name that stays the same across builds (DefaultHasher may change).
+fn stable_hash(s: &str) -> u64 {
+    s.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+/// Where an account's limit samples are kept: usage-limits.jsonl for the main account,
+/// usage-limits-<hash of its folder>.jsonl for each other one.
+fn samples_file(config_dir: Option<&Path>) -> PathBuf {
+    match config_dir {
+        None => dir().join("usage-limits.jsonl"),
+        Some(d) => dir().join(format!("usage-limits-{:016x}.jsonl", stable_hash(&d.to_string_lossy()))),
+    }
+}
+
+/// The plan's limits of every account (the main one first): `{ accounts: [{ configDir, usage,
+/// samples }] }`, `configDir` null for the main one. Each account is asked at the same time.
 pub fn limits() -> Result<Value, String> {
-    let got = crate::claude::discover::host_requests(vec![("usage", serde_json::json!({"subtype": "get_usage", "skip_behaviors": true}))], Duration::from_secs(25))?;
+    let dirs = crate::claude::discover::claude_dirs();
+    let accounts: Vec<Value> = std::thread::scope(|sc| {
+        let jobs: Vec<_> = dirs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let extra = (i > 0).then_some(d.as_path());
+                sc.spawn(move || {
+                    let mut v = limits_of(extra).unwrap_or_else(|e| serde_json::json!({ "usage": Value::Null, "samples": [], "error": e }));
+                    v["configDir"] = extra.map(|p| Value::String(p.to_string_lossy().to_string())).unwrap_or(Value::Null);
+                    v
+                })
+            })
+            .collect();
+        jobs.into_iter().filter_map(|j| j.join().ok()).collect()
+    });
+    Ok(serde_json::json!({ "accounts": accounts }))
+}
+
+/// Ask claude for one account's limits (no model call), keep a sample, and return the answer with
+/// the samples of the last 35 days.
+fn limits_of(config_dir: Option<&Path>) -> Result<Value, String> {
+    let got = crate::claude::discover::host_requests_in(vec![("usage", serde_json::json!({"subtype": "get_usage", "skip_behaviors": true}))], Duration::from_secs(25), config_dir)?;
     let usage = got.get("usage").cloned().unwrap_or(Value::Null);
     let rl = usage.get("rate_limits");
     let util = |k: &str| rl.and_then(|r| r.get(k)).and_then(|w| w.get("utilization")).and_then(Value::as_f64);
     let sample = Sample { t: now_ms(), s: util("five_hour"), w: util("seven_day") };
-    let path = dir().join("usage-limits.jsonl");
+    let path = samples_file(config_dir);
     if sample.s.is_some() || sample.w.is_some() {
         std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
@@ -577,6 +613,17 @@ mod tests {
         assert_eq!(chrono_hour(0), "1970-01-01T00");
         assert_eq!(chrono_hour(1_794_757_254_058), "2026-11-15T15");
         assert_eq!(chrono_hour(951_782_400_000), "2000-02-29T00");
+    }
+
+    /// Each account keeps its limit samples in a file of its own, named the same on every build.
+    #[test]
+    fn samples_per_account() {
+        assert_eq!(stable_hash(""), 0xcbf29ce484222325);
+        assert_eq!(stable_hash("a"), 0xaf63dc4c8601ec8c);
+        assert!(samples_file(None).ends_with("usage-limits.jsonl"));
+        let work = samples_file(Some(Path::new("/home/me/.claude-work")));
+        assert_ne!(work, samples_file(Some(Path::new("/home/me/.claude-other"))));
+        assert!(work.file_name().unwrap().to_string_lossy().starts_with("usage-limits-"));
     }
 
     #[test]

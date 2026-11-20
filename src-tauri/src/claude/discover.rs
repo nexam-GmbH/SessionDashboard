@@ -145,6 +145,11 @@ fn is_helper(pid: u64) -> bool {
 /// collect the answers by their id ("initialize" for the first). For questions only the program
 /// that started the CLI may ask: cloud sessions and their transcripts.
 pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<serde_json::Map<String, Value>, String> {
+    host_requests_in(requests, timeout, None)
+}
+
+/// `host_requests` as another account (`config_dir`: its CLAUDE_CONFIG_DIR; None = the main one).
+pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, config_dir: Option<&Path>) -> Result<serde_json::Map<String, Value>, String> {
     use std::io::{BufRead, BufReader, Write};
     let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
@@ -153,6 +158,9 @@ pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     clean_env(&mut cmd);
+    if let Some(d) = config_dir {
+        cmd.env("CLAUDE_CONFIG_DIR", d);
+    }
     let mut child = cmd.spawn().map_err(|e| format!("cannot run claude: {e}"))?;
     let pid = child.id();
     HELPERS.lock().unwrap().push(pid);
@@ -1142,7 +1150,8 @@ fn refresh(st: &mut ScanState) {
     let full = changed.is_none() || st.full_at.is_none_or(|t| t.elapsed() > FULL_EVERY);
     if !full {
         for p in changed.unwrap_or_default() {
-            if !is_transcript(&p) {
+            // a transcript copied for a fork on another account is not a session of its own
+            if !is_transcript(&p) || super::accounts::is_copy(&p) {
                 continue;
             }
             match fs::metadata(&p) {
@@ -1158,7 +1167,7 @@ fn refresh(st: &mut ScanState) {
         let Ok(files) = fs::read_dir(d.path()) else { continue };
         for f in files.flatten() {
             let p = f.path();
-            if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            if p.extension().and_then(|e| e.to_str()) != Some("jsonl") || super::accounts::is_copy(&p) {
                 continue;
             }
             // from the listing itself on Windows: no extra call per file

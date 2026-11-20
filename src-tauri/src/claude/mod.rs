@@ -1,6 +1,7 @@
 //! Claude Code backend (Phase 2): discovery, transcripts, owned sessions. The UI calls these
 //! commands and listens to `claude-event` (see src/backend/real.ts).
 
+pub mod accounts;
 pub mod control;
 pub mod discover;
 pub mod git;
@@ -361,6 +362,19 @@ pub async fn claude_set_user_setting(key: String, value: Value) -> Result<(), St
 pub async fn claude_set_config_dirs(dirs: Vec<String>) -> Result<(), String> {
     discover::set_extra_dirs(&dirs);
     Ok(())
+}
+
+/// Continue a session on another account: copy its transcript there (`fromDir`/`toDir`: config
+/// folders, none = the main one). Returns the copy's path. The original stays as history.
+#[tauri::command]
+pub async fn claude_copy_transcript(session_id: String, from_dir: Option<String>, to_dir: Option<String>) -> Result<String, String> {
+    blocking(move || accounts::copy_transcript(&session_id, from_dir.as_deref(), to_dir.as_deref())).await
+}
+
+/// The fork on the other account has its own transcript now: the copy it started from goes.
+#[tauri::command]
+pub async fn claude_remove_transcript_copy(session_id: String, to_dir: Option<String>) -> Result<(), String> {
+    blocking(move || accounts::remove_copy(&session_id, to_dir.as_deref())).await
 }
 
 /// How a reply would reach a terminal session without stopping it ("Konsole", "tmux", …), or null.

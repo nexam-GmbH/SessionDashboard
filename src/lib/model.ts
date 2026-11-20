@@ -166,6 +166,11 @@ export interface Session {
   editedPaths?: string[]
   /** the other Claude Code config folder (account) it belongs to; unset: the main one */
   configDir?: string
+  /**
+   * Continued here from a session on another account (a usage limit, or by hand): that session,
+   * its account (unset: the main one), when, and whether the app moved it by itself.
+   */
+  movedFrom?: { sessionId: ID; configDir?: string; at: string; auto?: boolean }
   lastStopReason?: "end_turn" | "max_tokens" | "refusal" | "cancelled" | "error"
   errorMessage?: string
   model: string

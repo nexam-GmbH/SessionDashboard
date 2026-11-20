@@ -457,6 +457,38 @@ check("archive from the session menu → Undo toast → History · Archived → 
   return title
 })
 
+check("usage limit card: Continue now on another account moves the parked session there", async () => {
+  await load("#/")
+  const card = () => visible('section[aria-label="Sessions at the usage limit"]').first()
+  await card().waitFor({ timeout: 3000 })
+  // one account only: the card stays as it was
+  expect((await card().getByRole("button", { name: /Continue now on/ }).count()) === 0, "account button shown without a second account")
+  const parked = await app((s) => Object.values(s.sessions).find((x) => !x.archived && /hit your 5-hour limit/.test(x.lastText ?? ""))?.id)
+  expect(parked, "no parked session in the demo world")
+  const before = await app((s, id) => ({ model: s.sessions[id].model, effort: s.sessions[id].effort, mode: s.sessions[id].permissionMode, title: s.sessions[id].title }), parked)
+  await action("patchSettings", { claudeConfigDirs: ["~/.claude-work"] })
+  const btn = card().getByRole("button", { name: /Continue now on/ })
+  await btn.waitFor({ timeout: 2000 })
+  await btn.click()
+  // the other account, with its 5-hour and weekly use
+  const item = page.getByRole("menuitem", { name: /~\/\.claude-work, 5 h \d+% · week \d+%/ })
+  await item.waitFor({ timeout: 2000 })
+  await item.click()
+  const moved = await until(() => app((s, id) => Object.values(s.sessions).find((x) => x.movedFrom?.sessionId === id && !x.archived)?.id, parked))
+  expect(moved, "no session continued on the other account")
+  const after = await app((s, ids) => ({ old: s.sessions[ids[0]].archived, dir: s.sessions[ids[1]].configDir, model: s.sessions[ids[1]].model, effort: s.sessions[ids[1]].effort, mode: s.sessions[ids[1]].permissionMode, title: s.sessions[ids[1]].title }), [parked, moved])
+  expect(after.old, "the old session was not archived")
+  expect(after.dir === "~/.claude-work", `new session on ${after.dir}`)
+  expect(after.model === before.model && after.effort === before.effort && after.mode === before.mode, "model, effort or mode changed")
+  // listed once: the old one is archived, the new one on the overview
+  const shown = await app((s, title) => Object.values(s.sessions).filter((x) => !x.archived && x.title === title).length, before.title)
+  expect(shown === 1, `the session is listed ${shown} times`)
+  // its details say which account it runs on now
+  await go(`#/session/${moved}`)
+  const row = visible("div").filter({ hasText: /^~\/\.claude-workfrom ~\/\.claudeAccount$/ }).first()
+  await row.waitFor({ timeout: 3000 })
+})
+
 check("search: Ctrl+K finds a past session; Resume brings it back to life", async () => {
   await load("#/")
   const ids = await discover()

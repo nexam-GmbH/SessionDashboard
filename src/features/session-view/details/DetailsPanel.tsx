@@ -33,6 +33,9 @@ import { openReview, openSession, sendMessage } from "@/store/actions"
 import { useOverlaps } from "@/store/selectors"
 import { capabilities } from "@/lib/status"
 import { homePath, plural } from "@/lib/format"
+import { accountLabel } from "@/lib/accounts"
+import { ContinueOnAccountItems, useCanMove, useMoveBlocked } from "@/features/accounts/ContinueOnAccount"
+import { useHasAccounts } from "@/features/accounts/AccountItems"
 import { cn } from "@/lib/utils"
 import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
@@ -241,7 +244,6 @@ const Environment = memo(function Environment({ sessionId }: { sessionId: ID }) 
   const cwd = useApp((st) => st.sessions[sessionId]?.cwd ?? "")
   const machine = useApp((st) => st.sessions[sessionId]?.machine)
   const control = useApp((st) => st.sessions[sessionId]?.control)
-  const configDir = useApp((st) => st.sessions[sessionId]?.configDir)
   const branch = useBranch(sessionId)
   // a session in a worktree of its repo (not the main checkout): its path
   const worktree = useApp((st) => {
@@ -297,14 +299,51 @@ const Environment = memo(function Environment({ sessionId }: { sessionId: ID }) 
           <span className="font-mono text-[13px]">{branch}</span>
         </Row>
       )}
-      {configDir && (
-        <Row icon={<UserRound />} meta="Account" title={`The Claude Code config folder (account) this session belongs to\n${configDir}`}>
-          {homePath(configDir)}
-        </Row>
-      )}
+      <AccountRow sessionId={sessionId} />
     </Section>
   )
 })
+
+/** The account the session runs on (shown with another account set up), and moving it to another one. */
+function AccountRow({ sessionId }: { sessionId: ID }) {
+  const configDir = useApp((st) => st.sessions[sessionId]?.configDir)
+  const from = useApp((st) => st.sessions[sessionId]?.movedFrom)
+  const has = useHasAccounts()
+  const can = useCanMove(sessionId)
+  const why = useMoveBlocked(sessionId)
+  if (!configDir && !has) return null
+  return (
+    <div className="group/row flex min-h-8 min-w-0 items-center gap-2.5 rounded-lg px-2 text-sm leading-5" title={`The Claude Code config folder (account) this session runs on\n${configDir ?? accountLabel()}`}>
+      <span className="grid size-5 shrink-0 place-items-center text-cc-fg2 [&_svg]:size-4" aria-hidden>
+        <UserRound />
+      </span>
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="shrink-0 truncate font-mono text-[13px] text-cc-fg">{accountLabel(configDir)}</span>
+        {from && (
+          <span className="min-w-0 shrink truncate text-cc-fg2" title={`Continued from ${accountLabel(from.configDir)}${from.auto ? " by itself, at the usage limit" : ""}`}>
+            from {accountLabel(from.configDir)}
+          </span>
+        )}
+      </span>
+      <span className="shrink-0 text-[13px] leading-4 text-cc-fg2">Account</span>
+      {can && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="Continue on another account"
+            disabled={!!why}
+            title={why ?? "Continue on another account"}
+            className={cn(XS_GHOST, "w-6 justify-center px-0 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 disabled:opacity-0 data-[state=open]:opacity-100 pointer-coarse:opacity-100")}
+          >
+            <Ellipsis className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-80">
+            <ContinueOnAccountItems sessionId={sessionId} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------- Context
 

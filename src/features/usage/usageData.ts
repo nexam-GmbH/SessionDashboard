@@ -5,6 +5,7 @@ import { create } from "zustand"
 import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
 import { getApp } from "@/store/app"
+import { accountKey } from "@/lib/accounts"
 
 export interface Tokens {
   i: number
@@ -367,26 +368,67 @@ export const usdFmt = (n: number) => (n >= 1000 ? `$${Math.round(n).toLocaleStri
 // ---------- loading ----------
 interface UsageState {
   ledger: Ledger | null
+  /** the main account's limits */
   limits: Limits | null
+  /** every account's limits by account key (lib/accounts: "" = the main one) */
+  accounts: Record<string, Limits>
   scanning: boolean
   error?: string
 }
-export const useUsage = create<UsageState>(() => ({ ledger: null, limits: null, scanning: false }))
+export const useUsage = create<UsageState>(() => ({ ledger: null, limits: null, accounts: {}, scanning: false }))
+
+/** The 5-hour window of an account's limits. */
+export const fiveHourOf = (l?: Limits | null) => l?.limits.find((x) => x.group === "session" || x.kind === "session" || x.kind === "five_hour")
+/** The weekly window for all models. */
+export const weeklyOf = (l?: Limits | null) => l?.limits.find((x) => x.kind === "weekly_all") ?? l?.limits.find((x) => x.group === "weekly")
+/** A limit used up: no work goes on on this account until it resets. */
+export const atLimit = (l?: Limits | null) => !!l?.limits.some((x) => x.percent >= 99)
+
+/** When work can go on: the reset of the limit that is used up, else of the 5-hour window (ms). */
+export function resetOf(l?: Limits | null): number | null {
+  const spent = l?.limits.filter((x) => x.percent >= 99 && x.resets_at) ?? []
+  const pick = spent.length ? spent : (l?.limits.filter((x) => x.group === "session" && x.resets_at) ?? [])
+  return pick.length ? Math.max(...pick.map((x) => Date.parse(x.resets_at!))) : null
+}
+
+/** An account's limits (`dir` as anywhere: Settings, a session's configDir; "" = the main one). */
+export function limitsFor(st: UsageState, dir?: string | null): Limits | undefined {
+  const key = accountKey(dir)
+  return st.accounts[key] ?? (key === "" ? (st.limits ?? undefined) : !(IN_TAURI && REAL) ? mockOther(key) : undefined)
+}
 
 let started = false
+let lastLimits = 0
+
+/** Ask for the limits again soon (a session just stopped at one), at most once a minute. */
+export function refreshLimitsSoon() {
+  if (Date.now() - lastLimits < 60_000) return
+  void refreshUsage({ limits: true })
+}
 export async function refreshUsage(what: { ledger?: boolean; limits?: boolean } = { ledger: true, limits: true }) {
   if (!(IN_TAURI && REAL)) {
-    if (!useUsage.getState().ledger) useUsage.setState({ ledger: mockLedger(), limits: mockLimits() })
+    if (!useUsage.getState().ledger) {
+      const main = mockLimits()
+      useUsage.setState({ ledger: mockLedger(), limits: main, accounts: { "": main } })
+    }
     return
   }
   const { invoke } = await import("@tauri-apps/api/core")
-  if (what.limits)
-    invoke<{ usage: Record<string, unknown>; samples: LimitSample[] }>("usage_limits")
+  if (what.limits) {
+    lastLimits = Date.now()
+    invoke<{ accounts: { configDir: string | null; usage: Record<string, unknown> | null; samples: LimitSample[]; error?: string }[] }>("usage_limits")
       .then((r) => {
-        const rl = r.usage?.rate_limits as { limits?: Limit[] } | undefined
-        useUsage.setState({ limits: { limits: rl?.limits ?? [], plan: r.usage?.subscription_type as string | undefined, samples: r.samples ?? [], at: Date.now() } })
+        const accounts: Record<string, Limits> = {}
+        for (const a of r.accounts ?? []) {
+          const rl = a.usage?.rate_limits as { limits?: Limit[] } | undefined
+          // an account that did not answer (signed out, offline): nothing to show for it
+          if (!rl?.limits && !a.samples?.length) continue
+          accounts[accountKey(a.configDir)] = { limits: rl?.limits ?? [], plan: a.usage?.subscription_type as string | undefined, samples: a.samples ?? [], at: Date.now() }
+        }
+        useUsage.setState({ limits: accounts[""] ?? null, accounts })
       })
       .catch((e) => useUsage.setState({ error: String(e) }))
+  }
   if (what.ledger && !useUsage.getState().scanning) {
     useUsage.setState({ scanning: true })
     try {
@@ -446,6 +488,23 @@ function mockLedger(): Ledger {
     })
   }
   return { hours, sessions }
+}
+
+/** Another account in the browser preview: a quieter plan, the same shape. */
+const mockOthers = new Map<string, Limits>()
+function mockOther(key: string): Limits {
+  let l = mockOthers.get(key)
+  if (!l) {
+    const main = mockLimits()
+    const five = 8 + (mockOthers.size * 23) % 60
+    l = {
+      ...main,
+      samples: main.samples.map((x) => ({ t: x.t, s: x.s == null ? x.s : Math.round(x.s * 0.3), w: x.w == null ? x.w : Math.round(x.w * 0.5) })),
+      limits: main.limits.map((x) => (x.group === "session" ? { ...x, percent: five } : { ...x, percent: Math.round(x.percent * 0.5) })),
+    }
+    mockOthers.set(key, l)
+  }
+  return l
 }
 
 function mockLimits(): Limits {

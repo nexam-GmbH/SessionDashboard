@@ -233,10 +233,12 @@ export async function runSelftest() {
   })
 
   await step("usage: limits", async () => {
-    const r = await invoke<{ usage?: { rate_limits?: { five_hour?: { utilization?: number }; seven_day?: { utilization?: number } } } }>("usage_limits")
-    const rl = r.usage?.rate_limits
+    // every account, the main one first
+    type Usage = { rate_limits?: { five_hour?: { utilization?: number }; seven_day?: { utilization?: number } } }
+    const r = await invoke<{ accounts: { configDir: string | null; usage?: Usage | null }[] }>("usage_limits")
+    const rl = r.accounts[0]?.usage?.rate_limits
     if (rl?.five_hour?.utilization == null) throw new Error("no five_hour in the answer")
-    return `5h ${rl.five_hour.utilization}% · week ${rl.seven_day?.utilization}%`
+    return `${r.accounts.length} account(s) · 5h ${rl.five_hour.utilization}% · week ${rl.seven_day?.utilization}%`
   })
 
   await step("usage: scan (all transcripts, first time)", async () => {

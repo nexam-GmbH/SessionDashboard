@@ -215,7 +215,7 @@ impl Index {
                 let Ok(files) = std::fs::read_dir(p.path()) else { continue };
                 for f in files.flatten() {
                     let path = f.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") || super::accounts::is_copy(&path) {
                         continue;
                     }
                     let Ok(md) = f.metadata() else { continue };

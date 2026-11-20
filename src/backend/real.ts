@@ -21,6 +21,7 @@ import { CLOUD, cloudSend, cloudTranscript, pollCloud, applyCloudList } from "./
 import { readGit } from "./git"
 import { MARKED_DONE, outcomeOf, type Outcome } from "@/lib/outcome"
 import { startNotify } from "./notify"
+import { accountKey, accountLabel } from "@/lib/accounts"
 
 export { REAL }
 
@@ -116,6 +117,10 @@ type Persist = {
   done?: Record<ID, number>
   /** sessions the app started only to run a terminal command (/permissions…): never listed */
   hidden?: ID[]
+  /** sessions continued from another account: new id → where from (`dir`: unset = the main account) */
+  moved?: Record<ID, { from: ID; dir?: string; at: number; auto?: boolean }>
+  /** transcripts copied to another account for a fork, removed once the fork has its own: fork id → copy */
+  copies?: Record<ID, { src: ID; to?: string }>
 }
 function loadPersist(): Persist {
   try {
@@ -565,6 +570,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     lastText: meta?.lastText,
     editedPaths: meta?.edited && prev?.editedPaths && sameList(prev.editedPaths, meta.edited) ? prev.editedPaths : meta?.edited,
     configDir: meta?.configDir ?? live?.configDir ?? prev?.configDir,
+    movedFrom: movedFrom(id, prev),
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
     model: own ? (prev?.model ?? meta?.model ?? DEFAULT_MODEL) : (meta?.model ?? prev?.model ?? DEFAULT_MODEL),
@@ -590,6 +596,14 @@ function buildSession(id: ID, prev?: Session): Session | null {
     // transcript and the folder's git, so it stays after you look
     outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
   }
+}
+
+/** Where a session continued from another account came from (kept across restarts). */
+function movedFrom(id: ID, prev?: Session): Session["movedFrom"] {
+  const m = persist.moved?.[id]
+  if (!m) return undefined
+  if (prev?.movedFrom?.sessionId === m.from) return prev.movedFrom
+  return { sessionId: m.from, configDir: m.dir, at: iso(m.at), auto: m.auto }
 }
 
 /**
@@ -904,6 +918,7 @@ async function pollScan(): Promise<boolean> {
     for (const id of d.removed) metas.delete(id)
     for (const m of d.changed) metas.set(m.sessionId, m)
     scanVersion = d.version
+    dropCopies()
     return d.full || d.changed.length > 0 || d.removed.length > 0
   } catch (e) {
     console.warn("claude_scan_since", e)
@@ -1281,8 +1296,10 @@ interface StartOpts {
   fork?: boolean
   /** pictures for the first message (data: URLs) */
   images?: string[]
-  /** another Claude Code config folder (account); a resumed session keeps its own */
+  /** another Claude Code config folder (account); a resumed session keeps its own; "" = the main one */
   configDir?: string
+  /** pass `effort` even when the resumed session never had one chosen (it moves to another account) */
+  keepEffort?: boolean
   model?: string
   effort?: string
   permissionMode?: string
@@ -1313,7 +1330,7 @@ export function realStart(opts: StartOpts): ID {
   }
   // an effort is passed only when it was chosen (a new session's picker, or picked in the app for
   // this one); a resumed session the app never set runs at what your settings give its model
-  if (opts.resume && !getApp().sessions[opts.resume]?.effortSet) opts = { ...opts, effort: undefined }
+  if (opts.resume && !opts.keepEffort && !getApp().sessions[opts.resume]?.effortSet) opts = { ...opts, effort: undefined }
   const id = opts.resume && !opts.fork ? opts.resume : crypto.randomUUID()
   const host = opts.machine && opts.machine !== CLOUD ? opts.machine : undefined
   failed.delete(id)
@@ -1344,6 +1361,8 @@ export function realStart(opts: StartOpts): ID {
         fastMode: opts.fastMode ?? prev?.fastMode,
         ultracode: opts.ultracode ?? prev?.ultracode,
         outputStyle: opts.outputStyle ?? prev?.outputStyle,
+        // the account it runs on, before its transcript says so ("" = the main one)
+        ...(opts.configDir !== undefined ? { configDir: opts.configDir || undefined } : {}),
       },
     },
     structVersion: s.structVersion + 1,
@@ -1356,7 +1375,8 @@ export function realStart(opts: StartOpts): ID {
     patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!, undefined, opts.images, promptUuid))
   }
   const flags = settingsOf(opts)
-  const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, ...rest } = opts
+  const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, keepEffort: _k, ...rest } = opts
+  void _k
   void _p
   void _f
   void _u
@@ -1682,6 +1702,76 @@ export function realForkAt(id: ID, promptItemId: ID): ID | undefined {
   const nid = at ? realStart({ ...opts, resume: id, fork: true, resumeSessionAt: at, name: `${s.title.replace(/ \(copy\)$/, "")} (copy)` }) : realStart(opts)
   void import("@/features/session-view/sessionStore").then((m) => m.setDraft(nid, { text, attachments: [] }))
   return nid
+}
+
+/**
+ * Continue a session on another account (another Claude Code config folder; `dir` as Settings has
+ * it, "" = the main one): its transcript is copied into the same project folder there, and the
+ * conversation goes on as a fork under a new id (one session id never lives in two folders). The
+ * old session is archived; its transcript stays as history. Model, effort and permission mode go
+ * along. Only sessions on this computer. Returns the new session's id.
+ */
+export async function realContinueOnAccount(id: ID, dir: string, opts: { prompt?: string; auto?: boolean } = {}): Promise<ID> {
+  const s = getApp().sessions[id]
+  if (!s) throw new Error("The session is gone")
+  if (s.machine) throw new Error("Only sessions on this computer can move to another account")
+  if (accountKey(s.configDir) === accountKey(dir)) throw new Error(`The session already runs on ${accountLabel(dir)}`)
+  // one conversation, one writer: the app's own process stops first
+  if (owned.has(id)) {
+    if (isRunning(id)) realInterrupt(id)
+    await stopAndWait(id)
+  }
+  await invoke<string>("claude_copy_transcript", { sessionId: id, fromDir: s.configDir || null, toDir: dir || null })
+  const nid = realStart({
+    cwd: s.startCwd ?? s.cwd,
+    resume: id,
+    fork: true,
+    configDir: dir,
+    keepEffort: true,
+    prompt: opts.prompt,
+    name: s.title,
+    model: s.model,
+    effort: s.effort,
+    permissionMode: s.permissionMode,
+    fastMode: s.fastMode,
+    ultracode: s.ultracode,
+    outputStyle: s.outputStyle,
+  })
+  persist.moved = { ...persist.moved, [nid]: { from: id, ...(s.configDir ? { dir: s.configDir } : {}), at: Date.now(), ...(opts.auto ? { auto: true } : {}) } }
+  persist.copies = { ...persist.copies, [nid]: { src: id, ...(dir ? { to: dir } : {}) } }
+  if (s.title) persist.titles = { ...persist.titles, [nid]: s.title }
+  save()
+  setApp((st) => (st.sessions[nid] ? { sessions: { ...st.sessions, [nid]: { ...st.sessions[nid], title: s.title || st.sessions[nid].title, movedFrom: movedFrom(nid) } } } : st))
+  noticeInfo(nid, `Continued from account ${accountLabel(s.configDir)} on ${accountLabel(dir)}. The first message reads the whole conversation again, on this account's limit.`)
+  const a = await import("@/store/actions")
+  a.archiveSessions([id])
+  return nid
+}
+
+/**
+ * Copies made for forks on another account: once the fork has a transcript of its own (it holds the
+ * whole conversation), the copy goes. A fork that could not start, or whose process ended before it
+ * wrote anything (the app closed right after the move), never took the conversation over: the old
+ * session comes back from the archive, nothing is lost.
+ */
+function dropCopies() {
+  const c = persist.copies
+  if (!c) return
+  for (const [nid, x] of Object.entries(c)) {
+    const fail = failed.get(nid)
+    const wrote = metas.has(nid)
+    if (!wrote && !fail && owned.has(nid)) continue
+    delete c[nid]
+    save()
+    void invoke("claude_remove_transcript_copy", { sessionId: x.src, toDir: x.to || null }).catch(() => undefined)
+    if (!wrote) {
+      if (persist.moved) delete persist.moved[nid]
+      failed.delete(nid)
+      void import("@/store/actions").then((a) => a.restoreSessions([x.src]))
+      if (fail) noticeError(x.src, `Could not continue on ${accountLabel(x.to)}: ${fail.message}`, false)
+      sync()
+    }
+  }
 }
 
 export function realInterrupt(id: ID) {

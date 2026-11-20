@@ -288,7 +288,7 @@ function Accounts() {
     <SettingRow
       title="Other Claude accounts"
       hint={dirs.length ? `${dirs.length}` : undefined}
-      description="Config folders of other Claude Code accounts (what CLAUDE_CONFIG_DIR points to, like ~/.claude-work). Their sessions and usage show here too, and a workspace can start new sessions in one of them. Plan limits shown are the main account's."
+      description="Config folders of other Claude Code accounts (what CLAUDE_CONFIG_DIR points to, like ~/.claude-work). Their sessions and plan limits show here too, a workspace can start new sessions in one of them, and a session can continue on another account (session menu, or the usage limit card)."
     >
       <div className="flex flex-col items-end gap-1.5">
         {dirs.map((d) => (
@@ -312,6 +312,29 @@ function Accounts() {
           </Button>
         </form>
       </div>
+    </SettingRow>
+  )
+}
+
+const AUTO_SWITCH = [
+  { value: "0", label: "Off" },
+  { value: "50", label: "If under 50 %" },
+  { value: "80", label: "If under 80 %" },
+  { value: "95", label: "If under 95 %" },
+] as const
+
+/** At the usage limit, carry the app's sessions on with another account by themselves. */
+function AutoSwitchAccount() {
+  const dirs = useApp((st) => st.settings.claudeConfigDirs ?? [])
+  const value = useApp((st) => st.settings.autoSwitchAccount ?? 0)
+  if (!dirs.length) return null
+  const shown = AUTO_SWITCH.find((o) => Number(o.value) === value)?.value ?? "0"
+  return (
+    <SettingRow
+      title="Switch accounts at the limit"
+      description="A session the app runs that stops at the usage limit continues on the other account with the most room, if that account's 5-hour window is used less than this. At most once per session in 5 hours. The old session is archived; the first message reads the conversation again on the other account."
+    >
+      <SmallSelect value={shown} onChange={(v) => patchSettings({ autoSwitchAccount: Number(v) })} options={AUTO_SWITCH} width="w-36" />
     </SettingRow>
   )
 }
@@ -384,6 +407,7 @@ export function SourcesPage() {
         <TerminalShellRow />
         <KeepChats />
         <Accounts />
+        <AutoSwitchAccount />
         <SettingRow
           title="Exact states from hooks"
           hint={err ? "failed" : hooks?.installed ? "on" : undefined}

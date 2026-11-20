@@ -47,6 +47,11 @@ export interface Settings {
   claudeConfigDir: string
   /** other Claude Code config folders (accounts) whose sessions and usage are read too */
   claudeConfigDirs: string[]
+  /**
+   * A session the app runs that stops at the usage limit continues on another account by itself,
+   * when that account's 5-hour window is under this percentage; 0 = off (you choose on the limit card).
+   */
+  autoSwitchAccount: number
   /** VPS machines reached over ssh (an alias from ~/.ssh/config or user@host) */
   machines: { host: string }[]
   /** show the account's cloud sessions (claude.ai/code) */

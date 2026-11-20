@@ -209,6 +209,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
   // set elsewhere: their own screens, the top bar, keys
   claudeConfigDir: { type: "string", default: "~/.claude" },
   claudeConfigDirs: { type: "list", default: [], item: isString },
+  autoSwitchAccount: { type: "number", default: 0, min: 0, max: 100 },
   machines: { type: "list", default: [], item: (m) => isRecord(m) && isString(m.host) },
   workspaces: { type: "list", default: [], item: isWorkspace },
   workspace: { type: "string", default: "" },
