@@ -119,6 +119,8 @@ type Persist = {
   done?: Record<ID, number>
   /** sessions the app started only to run a terminal command (/permissions…): never listed */
   hidden?: ID[]
+  /** each session's last colour (lib/outcome): shown after a start until its folder's git is read */
+  outcomes?: Record<ID, Outcome>
   /** sessions continued from another account: new id → where from (`dir`: unset = the main account) */
   moved?: Record<ID, { from: ID; dir?: string; at: number; auto?: boolean }>
   /** transcripts copied to another account for a fork, removed once the fork has its own: fork id → copy */
@@ -596,7 +598,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     archived: persist.archived.includes(id),
     // how its work ended: marked done by you (until it does something new), else from the
     // transcript and the folder's git, so it stays after you look
-    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, asksUser: meta.asksUser, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
+    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, stableOutcome(id, cwd, meta)) : undefined,
   }
 }
 
@@ -636,6 +638,29 @@ export function realMarkDone(id: ID, on: boolean) {
   persist.done = done
   save()
   sync()
+}
+
+/** What git decides: these colours wait for the folder's git; the others come from the transcript alone. */
+const FROM_GIT = new Set(["uncommitted", "unpushed", "no_pr", "landed", "merged", "removed"])
+let outcomesDirty: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * A session's colour without a flash after a start: until its folder's git is read, the colour it
+ * had last time (kept with the other per-session state) stands in for a git-based one, instead of a
+ * "No PR yet" that turns green a moment later. Every colour worked out with git is remembered.
+ */
+function stableOutcome(id: ID, cwd: string, meta: Meta): Outcome {
+  const git = gitByFolder.get(folderKey(undefined, cwd))
+  const now = outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, asksUser: meta.asksUser, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git })
+  const last = persist.outcomes?.[id]
+  if (!git && FROM_GIT.has(now.kind) && last) return last
+  if (!last || last.tone !== now.tone || last.kind !== now.kind || last.label !== now.label) {
+    persist.outcomes = { ...persist.outcomes, [id]: now }
+    // one write for a whole round of changes
+    clearTimeout(outcomesDirty)
+    outcomesDirty = setTimeout(save, 2000)
+  }
+  return now
 }
 
 /** The same outcome keeps its object (nothing that shows it renders again). */

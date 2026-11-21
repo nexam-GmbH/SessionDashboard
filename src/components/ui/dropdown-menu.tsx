@@ -6,9 +6,11 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 import { CheckIcon, ChevronRightIcon } from "lucide-react"
 
 // Claude Code desktop's menus (A.8), in cc-* tokens so they work when portalled outside [data-chat]:
-// radius 12, popover colour, 1 px ring + popover shadow, 6 px gutter; 120 ms fade + scale 0.98.
+// radius 12, popover colour, 1 px ring + popover shadow, 6 px gutter; 120 ms fade + scale 0.98 in.
+// Closing is instant: a menu fading out showed the picked item change under it (a blink after every
+// choice, and on WebKitGTK the stale menu lingered a frame or two)
 export const MENU_SURFACE =
-  "z-50 rounded-[12px] bg-cc-raised p-1.5 text-[color:var(--cc-fg)] shadow-[0_0_0_1px_var(--cc-wash-2),0_8px_24px_rgb(0_0_0/0.12),0_2px_6px_rgb(0_0_0/0.08)] dark:shadow-[0_0_0_1px_var(--cc-wash-2),0_8px_24px_rgb(0_0_0/0.32),0_2px_6px_rgb(0_0_0/0.2)] outline-hidden duration-120 ease-[cubic-bezier(0.32,0.72,0,1)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-98 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-98 motion-reduce:animate-none [:root[data-reduce-motion]_&]:animate-none"
+  "z-50 rounded-[12px] bg-cc-raised p-1.5 text-[color:var(--cc-fg)] shadow-[0_0_0_1px_var(--cc-wash-2),0_8px_24px_rgb(0_0_0/0.12),0_2px_6px_rgb(0_0_0/0.08)] dark:shadow-[0_0_0_1px_var(--cc-wash-2),0_8px_24px_rgb(0_0_0/0.32),0_2px_6px_rgb(0_0_0/0.2)] outline-hidden duration-120 ease-[cubic-bezier(0.32,0.72,0,1)] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-98 motion-reduce:animate-none [:root[data-reduce-motion]_&]:animate-none"
 // item: 28 px, 12×4 padding, radius 8, 14 px; highlighted = ghost-selected; danger in danger colours
 export const MENU_ITEM =
   "relative flex min-h-7 cursor-default items-center gap-2 rounded-[8px] px-3 py-1 text-sm text-[color:var(--cc-fg)] outline-hidden select-none focus:bg-cc-ghost-sel data-open:bg-cc-ghost-sel data-inset:pl-8 data-disabled:pointer-events-none data-disabled:opacity-40 data-[variant=destructive]:text-cc-danger data-[variant=destructive]:focus:bg-cc-danger-fill/12 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
