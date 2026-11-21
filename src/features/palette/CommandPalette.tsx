@@ -142,7 +142,7 @@ export default function CommandPalette() {
                 ))}
                 {content.busy && !inMessages.length && (
                   <div className="flex h-8 items-center gap-2 px-2 text-xs text-muted-foreground/70">
-                    <LoaderCircle size={13} className="animate-spin-steps" /> Reading every session once (a few seconds)…
+                    <span className="animate-spin-steps"><LoaderCircle size={13} /></span> Reading every session once (a few seconds)…
                   </div>
                 )}
               </Group>

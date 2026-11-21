@@ -51,6 +51,7 @@ const OUTCOME_ICON: Record<OutcomeKind, LucideIcon> = {
   removed: CircleCheck,
   done: CircleCheck,
   marked: CircleCheck,
+  asks: MessageCircleQuestion,
 }
 const AT_REST = new Set<SessionStatus>(["idle", "done_unseen", "stopped"])
 
@@ -117,7 +118,7 @@ export const StatusGlyph = memo(function StatusGlyph({
       role="img"
       aria-label={name}
       title={label}
-      className={cn("inline-flex shrink-0 items-center justify-center", BOX[size], className)}
+      className={cn("inline-flex shrink-0 items-center justify-center", BOX[size], status === "working" && animate && "animate-spin-steps", className)}
     >
       <Icon
         size={ICON[size] - (end ? 1 : (g.inset ?? 0))}
@@ -125,7 +126,6 @@ export const StatusGlyph = memo(function StatusGlyph({
         color={end ? OUTCOME_COLOR[end.tone] : glyphColor(status)}
         // unread: filled with its colour's tint (the colour itself stays after you look)
         fill={end ? (unread ? OUTCOME_TINT[end.tone] : "none") : glyphFill(status, unread)}
-        className={status === "working" && animate ? "animate-spin-steps" : undefined}
       />
     </span>
   )

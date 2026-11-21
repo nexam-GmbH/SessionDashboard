@@ -202,7 +202,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
   nativeTitlebar: {
     type: "boolean",
     default: false,
-    row: { page: "window", label: "Native title bar", description: "Use the window manager's title bar (recommended on Linux).", unavailable: () => (OS !== "linux" ? "Linux only" : undefined) },
+    row: { page: "window", label: "Native title bar", description: "Use the window manager's title bar instead of the app's own. On KDE Wayland the change shows after a restart.", unavailable: () => (OS !== "linux" ? "Linux only" : undefined) },
   },
   reduceMotion: { type: "boolean", default: false, row: { page: "window", label: "Reduce motion", description: "Stops the working spinner." } },
 

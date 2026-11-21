@@ -1,10 +1,9 @@
 //! Git state per project, for "loose ends": uncommitted changes, commits that are on no remote,
 //! branches without an upstream and worktrees nobody went back to. Plain `git` commands, run
-//! locally or over ssh on a VPS (one script, one round trip).
+//! locally (claude/gitrepo.rs) or over ssh on a machine (claude/gitremote.rs).
 
 use serde::Serialize;
 use std::process::Stdio;
-use std::time::Duration;
 
 #[derive(Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -49,9 +48,11 @@ pub struct GitState {
     pub error: Option<String>,
 }
 
-// One POSIX script for both local and ssh: sections separated by marker lines. `$2 = quick`: only
-// the folder's own worktree (status, last commit, unpushed), no per-branch counts and no other
-// worktrees: a handful of git processes instead of hundreds in a repo with many worktrees.
+// The old POSIX script, sections separated by marker lines (`$2 = quick`: only the folder's own
+// worktree: status, last commit, unpushed). The reports it printed are what `parse` reads; the
+// local (gitrepo.rs) and remote (gitremote.rs) reads print the same, and the tests compare them
+// with it.
+#[cfg(test)]
 const SCRIPT: &str = r#"
 cd "$1" 2>/dev/null || { echo "@@nodir"; exit 0; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "@@norepo"; exit 0; }
@@ -83,7 +84,7 @@ git worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
 done
 "#;
 
-fn parse(path: &str, out: &str) -> GitState {
+pub(super) fn parse(path: &str, out: &str) -> GitState {
     let mut st = GitState { path: path.to_string(), ..Default::default() };
     if out.starts_with("@@nodir") {
         st.error = Some("folder not found".into());
@@ -212,21 +213,28 @@ pub(super) fn git(dir: &str, args: &[&str]) -> Option<String> {
 
 /// The old shell way, kept to check the per-repository reads against it.
 #[cfg(test)]
-fn local_script(path: &str, quick: bool) -> String {
+pub(super) fn local_script(path: &str, quick: bool) -> String {
     let mut c = std::process::Command::new("sh");
     c.args(["-c", SCRIPT, "sd-git", path, if quick { "quick" } else { "full" }]).stdin(Stdio::null()).stderr(Stdio::null());
     c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_OPTIONAL_LOCKS", "0");
     String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
 }
 
-/// Git state of folders on a VPS, one ssh round trip.
+/// Git state of folders on a machine over ssh: one round trip a poll, git only in repositories
+/// where something changed (claude/gitremote.rs).
 pub fn remote(host: &str, paths: &[String], quick: bool) -> Vec<GitState> {
+    super::gitremote::read(host, paths, quick)
+}
+
+/// The old way, every folder read in full on every poll; kept to measure against.
+#[cfg(test)]
+pub(super) fn remote_old(host: &str, paths: &[String], quick: bool) -> Vec<GitState> {
     let mut script = String::from("export GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0\n");
     for p in paths {
         let dir = p.strip_prefix("~/").map(|r| format!("\"$HOME\"/{}", super::remote::shell_quote(r))).unwrap_or_else(|| super::remote::shell_quote(p));
         script.push_str(&format!("echo '@@@repo'; sh -c {} sd-git {dir} {}\n", super::remote::shell_quote(SCRIPT), if quick { "quick" } else { "full" }));
     }
-    match super::remote::run(host, &script, None, Duration::from_secs(25)) {
+    match super::remote::run(host, &script, None, std::time::Duration::from_secs(25)) {
         Ok(out) => {
             let s = String::from_utf8_lossy(&out);
             let parts: Vec<&str> = s.split("@@@repo\n").skip(1).collect();

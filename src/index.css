@@ -437,14 +437,17 @@ body {
 /* every spinner turns smoothly (the owner wants Claude Code's fluid motion, not steps). On X11
    WebKitGTK copies one frame of the window per vsync while any of them turns, however many there
    are: the cost is one stream of frames, not one per spinner */
+/* on an HTML box, never on the <svg> itself: a transform animated on an SVG element is worked out
+   on the main thread every frame (12 spinners on screen took 30% of it, measured), on an HTML box
+   with will-change the compositor turns it alone */
 @utility animate-spin-steps {
-  transform-box: fill-box;
+  display: inline-flex;
   transform-origin: center;
   animation: sd-spin 0.9s linear infinite;
   will-change: transform;
 }
 [data-spin] {
-  transform-box: fill-box;
+  display: inline-flex;
   transform-origin: center;
   animation: sd-spin 1.2s linear infinite;
   will-change: transform;
@@ -453,6 +456,11 @@ body {
 :root[data-reduce-motion] .animate-spin-steps,
 :root[data-reduce-motion] [data-spin] {
   animation: none;
+}
+/* the window hidden or minimized: nobody sees them turn */
+:root[data-window-hidden] .animate-spin-steps,
+:root[data-window-hidden] [data-spin] {
+  animation-play-state: paused;
 }
 
 /* Find in chat (Ctrl+F): every match, and the current one stronger (CSS Custom Highlight API) */

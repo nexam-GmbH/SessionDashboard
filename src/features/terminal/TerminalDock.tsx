@@ -2,11 +2,12 @@
 // what is on screen (the session's folder) and follows you to the next session; shells keep running
 // while it is closed. Drag its top edge to resize.
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { SquareTerminal, X, Trash2 } from "lucide-react"
+import { Check, ChevronDown, SquareTerminal, X, Trash2 } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { useApp } from "@/store/app"
 import { homePath } from "@/lib/format"
-import { closeTerminal, currentPlace, enableGpu, entryOf, hideTerminal, keyOf, loadXterm, setTerminalHeight, show, useTerminal } from "./terminals"
+import { closeTerminal, currentPlace, currentShellId, enableGpu, entryOf, hideTerminal, keyOf, loadShells, loadXterm, setTerminalHeight, show, switchShell, useTerminal, type ShellChoice } from "./terminals"
 
 // xterm is preloaded while the app is idle, so the first Ctrl+` opens at once
 if (typeof window !== "undefined") {
@@ -99,6 +100,7 @@ function Dock() {
           {homePath(place.cwd)}
         </span>
         <span className="ml-auto" />
+        {!place.host && key && <ShellPicker termKey={key} />}
         <Button size="icon-xs" variant="ghost" aria-label="Kill this shell" title="Kill this shell" onClick={() => key && void closeTerminal(key)}>
           <Trash2 />
         </Button>
@@ -145,5 +147,35 @@ function Resizer({ height, onDrag }: { height: number; onDrag: (h: number | null
         target.addEventListener("pointerup", up)
       }}
     />
+  )
+}
+
+/** Which shell this terminal runs (bash, zsh, fish… or PowerShell, Git Bash, WSL, cmd on Windows). */
+function ShellPicker({ termKey }: { termKey: string }) {
+  const [list, setList] = useState<ShellChoice[]>([])
+  const picked = useApp((s) => s.settings.terminalShell)
+  useEffect(() => {
+    void loadShells().then(setList)
+  }, [])
+  if (list.length < 2) return null
+  const current = currentShellId(list, picked)
+  const label = list.find((s) => s.id === current)?.label ?? "Shell"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="xs" variant="ghost" className="gap-1 font-normal" title="The shell this terminal runs" aria-label={`Shell: ${label}`}>
+          {label}
+          <ChevronDown className="size-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {list.map((s) => (
+          <DropdownMenuItem key={s.id} onSelect={() => s.id !== current && void switchShell(termKey, s.id)}>
+            {s.label}
+            {s.id === current && <Check className="ml-auto size-3.5" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

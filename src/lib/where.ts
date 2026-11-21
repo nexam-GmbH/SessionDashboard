@@ -42,7 +42,7 @@ export function whereItIs(s: Session, req?: PendingRequest, childWaiting?: Subag
   }
 }
 
-const OUTCOME_WHERE: Record<OutcomeTone, WhereTone> = { red: "error", yellow: "open", green: "done" }
+const OUTCOME_WHERE: Record<OutcomeTone, WhereTone> = { red: "error", orange: "perm", yellow: "open", green: "done" }
 
 export const WHERE_TONE_CLASS: Record<WhereTone, string> = {
   perm: "text-st-perm-fg",

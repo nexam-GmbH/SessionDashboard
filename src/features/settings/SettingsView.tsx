@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { homePath } from "@/lib/format"
-import { IN_TAURI, OS } from "@/lib/platform"
+import { IN_TAURI } from "@/lib/platform"
 import { cn } from "@/lib/utils"
 import { AddReposDialog } from "./AddReposDialog"
 import { REAL } from "@/backend/mode"
@@ -207,6 +207,8 @@ export function ReposPage() {
       </div>
       {adding && <AddReposDialog onClose={() => setAdding(false)} />}
       <div className="mb-10" />
+      {/* the browser preview has no Sessions page: "Edit workspaces" (top-left menu) lands here */}
+      <Workspace />
     </>
   )
 }
@@ -216,26 +218,6 @@ export function ReposPage() {
  * Terminal sync: `claude` in your shells runs through the app's wrapper, so a session in any terminal
  * (Zed's, GNOME Terminal, …) takes replies from the app as if you typed them there.
  */
-/** The built-in terminal's shell: zsh or bash or fish here, PowerShell, Git Bash, WSL or cmd on Windows. */
-function TerminalShellRow() {
-  const live = IN_TAURI && REAL
-  const value = useApp((s) => s.settings.terminalShell)
-  const [list, setList] = useState<{ id: string; label: string }[] | null>(null)
-  useEffect(() => {
-    if (!live) return
-    void import("@/features/terminal/terminals").then((t) => t.loadShells()).then(setList)
-  }, [live])
-  if (!live || !list?.length) return null
-  // the usual one: PowerShell on Windows, your login shell (listed first) elsewhere
-  const usual = OS === "windows" ? "PowerShell" : list[0].label
-  const options = [{ value: "", label: `Default (${usual})` }, ...list.map((s) => ({ value: s.id, label: s.label }))]
-  return (
-    <SettingRow title="Terminal shell" description="The shell the built-in terminal opens in a session's folder (Ctrl+` and ! commands that need a terminal). New terminals use it; open ones keep theirs.">
-      <SmallSelect value={options.some((o) => o.value === value) ? value : ""} onChange={(v) => patchSettings({ terminalShell: v })} options={options} width="w-48" />
-    </SettingRow>
-  )
-}
-
 function TerminalSync() {
   const [st, setSt] = useState<{ on: boolean; files?: string[]; note?: string | null } | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -404,7 +386,6 @@ export function SourcesPage() {
       <SettingsSection>
         <RegistryRows page="sessions" />
         <TerminalSync />
-        <TerminalShellRow />
         <KeepChats />
         <Accounts />
         <AutoSwitchAccount />

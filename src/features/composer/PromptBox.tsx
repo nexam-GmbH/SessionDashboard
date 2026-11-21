@@ -602,7 +602,7 @@ export function PromptBox(props: PromptBoxProps) {
                     onClick={guarded(() => onStop?.())}
                     className={ICON}
                   >
-                    {props.stopping ? <LoaderCircle size={14} className="animate-spin-steps" /> : <Square size={12} fill="currentColor" strokeWidth={0} />}
+                    {props.stopping ? <span className="animate-spin-steps"><LoaderCircle size={14} /></span> : <Square size={12} fill="currentColor" strokeWidth={0} />}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top">

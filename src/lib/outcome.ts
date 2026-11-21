@@ -6,8 +6,8 @@
 import type { RepoGit } from "./model"
 import { plural } from "./format"
 
-export type OutcomeTone = "red" | "yellow" | "green"
-export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked"
+export type OutcomeTone = "red" | "orange" | "yellow" | "green"
+export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked" | "asks"
 
 export interface Outcome {
   tone: OutcomeTone
@@ -20,6 +20,8 @@ export interface OutcomeInput {
   endedTurn: boolean
   lastRole?: string
   madeChanges?: boolean
+  /** its last answer leaves you something (a question, a command to run, what is left for you) */
+  asksUser?: boolean
   prUrl?: string
   prNumber?: number
   /** the branch it worked on (its transcript's last) */
@@ -34,6 +36,8 @@ export function outcomeOf(i: OutcomeInput): Outcome {
   if (i.apiError) return /limit/i.test(i.apiError) ? { tone: "red", kind: "limit", label: "Hit the usage limit" } : { tone: "red", kind: "error", label: i.apiError }
   // the last word is the prompt's or a tool's: Claude never answered it (stopped, killed, crashed)
   if (!i.endedTurn && (i.lastRole === "user" || i.lastRole === "tool")) return { tone: "red", kind: "aborted", label: "Stopped before it finished" }
+  // Claude left you a question or steps to do: waiting for you, even when its PR is merged
+  if (i.asksUser) return { tone: "orange", kind: "asks", label: "Waiting for you" }
   if (i.prUrl) return { tone: "green", kind: "pr", label: i.prNumber ? `PR #${i.prNumber}` : "PR opened" }
   if (!i.madeChanges) return { tone: "green", kind: "done", label: "Done" }
   const g = i.git
@@ -58,16 +62,19 @@ export const MARKED_DONE: Outcome = { tone: "green", kind: "marked", label: "Mar
 
 export const OUTCOME_COLOR: Record<OutcomeTone, string> = {
   red: "var(--st-error)",
+  orange: "var(--st-perm)",
   yellow: "var(--st-input)",
   green: "var(--st-done)",
 }
 export const OUTCOME_FG: Record<OutcomeTone, string> = {
   red: "var(--st-error-fg)",
+  orange: "var(--st-perm-fg)",
   yellow: "var(--st-input-fg)",
   green: "var(--st-done-fg)",
 }
 export const OUTCOME_TINT: Record<OutcomeTone, string> = {
   red: "var(--st-error-tint)",
+  orange: "var(--st-perm-tint)",
   yellow: "var(--st-input-tint)",
   green: "var(--st-done-tint)",
 }

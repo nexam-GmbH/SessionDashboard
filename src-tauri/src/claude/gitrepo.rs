@@ -49,13 +49,7 @@ struct Wt {
 struct Repo {
     common: PathBuf,
     main_top: PathBuf,
-    remotes: Vec<(String, String)>,
-    /// for-each-ref rows (name, upstream, track, date) and the tip
-    branches: Vec<(String, String)>,
-    /// commits on no remote → their parents
-    graph: HashMap<String, Vec<String>>,
-    /// commit → its time (the worktrees' HEADs)
-    when: HashMap<String, String>,
+    refs: Refs,
     wts: Vec<Wt>,
     /// `.git/worktrees/<name>` → the worktree's top
     names: HashMap<String, PathBuf>,
@@ -154,10 +148,7 @@ fn repo_for(common: &Path, main_top: &Path) -> Arc<Mutex<Repo>> {
             Arc::new(Mutex::new(Repo {
                 common: common.to_path_buf(),
                 main_top: main_top.to_path_buf(),
-                remotes: vec![],
-                branches: vec![],
-                graph: HashMap::new(),
-                when: HashMap::new(),
+                refs: Refs::default(),
                 wts: vec![],
                 names: HashMap::new(),
                 list_at: None,
@@ -304,54 +295,25 @@ impl Repo {
 
     fn read_refs(&mut self) {
         let top = self.main_top.to_string_lossy().to_string();
-        self.remotes.clear();
-        for l in git(&top, &["remote", "-v"]).unwrap_or_default().lines() {
-            let mut f = l.split_whitespace();
-            if let (Some(n), Some(u)) = (f.next(), f.next()) {
-                if !self.remotes.iter().any(|(m, _)| m == n) {
-                    self.remotes.push((n.to_string(), u.to_string()));
-                }
-            }
-        }
-        let refs = git(&top, &["for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:unix)%09%(objectname)", "refs/heads"]).unwrap_or_default();
-        self.branches = refs.lines().filter_map(|l| l.rsplit_once('\t')).map(|(row, tip)| (row.to_string(), tip.to_string())).collect();
+        let r = &mut self.refs;
+        r.remotes = Refs::remotes_from(&git(&top, &["remote", "-v"]).unwrap_or_default());
+        r.branches = Refs::branches_from(&git(&top, &["for-each-ref", &format!("--format={REF_FORMAT}"), "refs/heads"]).unwrap_or_default());
         let heads: Vec<String> = self.wts.iter().map(|w| w.head.clone()).filter(|h| !h.is_empty() && !h.bytes().all(|b| b == b'0')).collect();
         // every commit on no remote, with its parents: one rev-list for all branches and worktrees
-        self.graph.clear();
-        if !self.remotes.is_empty() {
+        r.graph = HashMap::new();
+        if !r.remotes.is_empty() {
             let mut args = vec!["rev-list", "--parents", "--branches"];
             args.extend(heads.iter().map(String::as_str));
             args.extend(["--not", "--remotes"]);
-            for l in git(&top, &args).unwrap_or_default().lines() {
-                let mut f = l.split_whitespace();
-                if let Some(c) = f.next() {
-                    self.graph.insert(c.to_string(), f.map(str::to_string).collect());
-                }
-            }
+            r.graph = Refs::graph_from(&git(&top, &args).unwrap_or_default());
         }
-        self.when.clear();
+        r.when = HashMap::new();
         if !heads.is_empty() {
             let mut args = vec!["log", "--no-walk=unsorted", "--format=%H %ct"];
             args.extend(heads.iter().map(String::as_str));
-            for l in git(&top, &args).unwrap_or_default().lines() {
-                if let Some((h, t)) = l.split_once(' ') {
-                    self.when.insert(h.to_string(), t.to_string());
-                }
-            }
+            r.when = Refs::when_from(&git(&top, &args).unwrap_or_default());
         }
         self.refs_at = Some(Instant::now());
-    }
-
-    fn count(&self, tip: &str) -> u32 {
-        let mut seen = HashSet::new();
-        let mut stack = vec![tip];
-        while let Some(c) = stack.pop() {
-            let Some(parents) = self.graph.get(c) else { continue };
-            if seen.insert(c) {
-                stack.extend(parents.iter().map(String::as_str));
-            }
-        }
-        seen.len() as u32
     }
 
     /// Read what changed (watched) or what this poll has not read yet (not watched). False: not a
@@ -407,6 +369,86 @@ impl Repo {
     }
 
     fn report(&self, top: &Path, quick: bool) -> String {
+        // quick: this folder's worktree only, as before (the others' counts come with the full reads)
+        self.refs.render(self.wts.iter().map(|w| WtRow { path: &w.path, head: &w.head, flags: &w.flags, status: w.status.as_deref().filter(|_| !quick || key(&w.top) == key(top)) }), quick)
+    }
+}
+
+/// The for-each-ref format the branches are read with: the rows `git::parse` reads, and the tip.
+pub(super) const REF_FORMAT: &str = "%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:unix)%09%(objectname)";
+
+/// What one repository's refs say, read here or on a machine over ssh (claude/gitremote.rs).
+#[derive(Default)]
+pub(super) struct Refs {
+    pub remotes: Vec<(String, String)>,
+    /// for-each-ref rows (name, upstream, track, date) and the tip
+    pub branches: Vec<(String, String)>,
+    /// commits on no remote → their parents
+    pub graph: HashMap<String, Vec<String>>,
+    /// commit → its time (the worktrees' HEADs)
+    pub when: HashMap<String, String>,
+}
+
+/// A worktree as the report shows it; `status` only where it is shown.
+pub(super) struct WtRow<'a> {
+    pub path: &'a str,
+    pub head: &'a str,
+    pub flags: &'a [&'static str],
+    pub status: Option<&'a [String]>,
+}
+
+impl Refs {
+    /// `git remote -v`: (name, url), the first url of each name
+    pub fn remotes_from(text: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = vec![];
+        for l in text.lines() {
+            let mut f = l.split_whitespace();
+            if let (Some(n), Some(u)) = (f.next(), f.next()) {
+                if !out.iter().any(|(m, _)| m == n) {
+                    out.push((n.to_string(), u.to_string()));
+                }
+            }
+        }
+        out
+    }
+
+    /// for-each-ref with REF_FORMAT: (row, tip)
+    pub fn branches_from(text: &str) -> Vec<(String, String)> {
+        text.lines().filter_map(|l| l.rsplit_once('\t')).map(|(row, tip)| (row.to_string(), tip.to_string())).collect()
+    }
+
+    /// `rev-list --parents`: commit → parents
+    pub fn graph_from(text: &str) -> HashMap<String, Vec<String>> {
+        let mut g = HashMap::new();
+        for l in text.lines() {
+            let mut f = l.split_whitespace();
+            if let Some(c) = f.next() {
+                g.insert(c.to_string(), f.map(str::to_string).collect());
+            }
+        }
+        g
+    }
+
+    /// `log --format=%H %ct`: commit → time
+    pub fn when_from(text: &str) -> HashMap<String, String> {
+        text.lines().filter_map(|l| l.split_once(' ')).map(|(h, t)| (h.to_string(), t.to_string())).collect()
+    }
+
+    /// Commits reachable from `tip` that are on no remote.
+    pub fn count(&self, tip: &str) -> u32 {
+        let mut seen = HashSet::new();
+        let mut stack = vec![tip];
+        while let Some(c) = stack.pop() {
+            let Some(parents) = self.graph.get(c) else { continue };
+            if seen.insert(c) {
+                stack.extend(parents.iter().map(String::as_str));
+            }
+        }
+        seen.len() as u32
+    }
+
+    /// The report `git::parse` reads (the sections the shell script printed).
+    pub fn render<'a>(&self, wts: impl Iterator<Item = WtRow<'a>>, quick: bool) -> String {
         use std::fmt::Write;
         let has_remote = !self.remotes.is_empty();
         let url = self.remotes.iter().find(|(n, _)| n == "origin").or(self.remotes.first()).map(|(_, u)| u.as_str()).unwrap_or("");
@@ -429,20 +471,18 @@ impl Repo {
                 let _ = writeln!(out, "{}\t{}", row.split('\t').next().unwrap_or(""), self.count(tip));
             }
         }
-        for w in &self.wts {
+        for w in wts {
             let _ = writeln!(out, "@@worktree {}", w.path);
-            // quick: this folder's worktree only, as before (the others' counts come with the full reads)
-            let show = !quick || key(&w.top) == key(top);
-            if let Some(st) = w.status.as_ref().filter(|_| show) {
+            if let Some(st) = w.status {
                 for l in st {
                     let _ = writeln!(out, "{l}");
                 }
-                let _ = writeln!(out, "@@last {}", self.when.get(&w.head).map(String::as_str).unwrap_or(""));
+                let _ = writeln!(out, "@@last {}", self.when.get(w.head).map(String::as_str).unwrap_or(""));
                 if has_remote {
-                    let _ = writeln!(out, "@@wtunpushed {}", if w.head.is_empty() { 0 } else { self.count(&w.head) });
+                    let _ = writeln!(out, "@@wtunpushed {}", if w.head.is_empty() { 0 } else { self.count(w.head) });
                 }
             }
-            for f in &w.flags {
+            for f in w.flags {
                 let _ = writeln!(out, "@@{f}");
             }
         }

@@ -20,6 +20,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ensureTranscript } from "@/backend/transcript"
@@ -63,6 +64,7 @@ import { cn } from "@/lib/utils"
 import type { ID } from "@/lib/model"
 
 export function AppSidebar() {
+  useCloseSheetOnNavigate()
   return (
     <Sidebar variant="inset" collapsible="offcanvas">
       <SidebarHeader data-tauri-drag-region>
@@ -91,6 +93,21 @@ export function AppSidebar() {
       </SidebarFooter>
     </Sidebar>
   )
+}
+
+/**
+ * A narrow window shows the list as a sheet over the screen: going somewhere (a session, New
+ * session, History) closes it, or the screen you picked stays hidden under it.
+ */
+function useCloseSheetOnNavigate() {
+  const { isMobile, setOpenMobile } = useSidebar()
+  useEffect(() => {
+    if (!isMobile) return
+    return useApp.subscribe(
+      (s) => s.route,
+      () => setOpenMobile(false),
+    )
+  }, [isMobile, setOpenMobile])
 }
 
 /** Workspaces (Work, Games, Projects…). Another workspace that waits for you shows its count here. */

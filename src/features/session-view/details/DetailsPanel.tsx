@@ -762,7 +762,7 @@ function CiChip({ pr, ci }: { pr: Pr; ci: Ci }) {
             `${ci.failed} failing`
           ) : status === "pending" ? (
             <>
-              <LoaderCircle className="size-3.5 animate-spin-steps" />
+              <span className="animate-spin-steps"><LoaderCircle className="size-3.5" /></span>
               {done}/{total}
             </>
           ) : status === "passed" ? (
@@ -852,7 +852,7 @@ const Checks = memo(function Checks({ sessionId }: { sessionId: ID }) {
       : v.state === "stale"
         ? { icon: <CircleAlert />, text: `${plural(v.edits, "edit")} since the last check${v.passed ? "" : ", which failed"}`, summary: "Out of date" }
         : v.state === "running"
-          ? { icon: <LoaderCircle className="animate-spin-steps" />, text: "Checking now", summary: "Running" }
+          ? { icon: <span className="animate-spin-steps"><LoaderCircle /></span>, text: "Checking now", summary: "Running" }
           : v.state === "passed"
             ? { icon: <CircleCheck className="text-cc-add" />, text: "Passed after the last edit", summary: "Passed" }
             : { icon: <CircleX className="text-cc-danger" />, text: "Failed after the last edit", summary: "Failed" }

@@ -80,7 +80,7 @@ function PlanCard({ sessionId }: { sessionId: ID }) {
             {t.status === "completed" ? (
               <CircleCheck size={14} className="mt-0.5 shrink-0 text-muted-foreground/70" />
             ) : t.status === "in_progress" ? (
-              <LoaderCircle size={14} className="mt-0.5 shrink-0 animate-spin-steps text-st-working" />
+              <span className="mt-0.5 shrink-0 animate-spin-steps text-st-working"><LoaderCircle size={14} /></span>
             ) : (
               <Circle size={14} className="mt-0.5 shrink-0 text-muted-foreground/70" />
             )}

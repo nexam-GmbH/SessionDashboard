@@ -24,8 +24,16 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
 
 /// glibc keeps one malloc arena per thread and hardly gives freed memory back: reading big chats
 /// on the async pool's many threads left ~290 MB resident after everything was freed (measured);
-/// with two arenas and a trim it was 6 MB. Linux (glibc) only: Windows and macOS have their own
-/// allocators. Called first thing, before any thread starts.
+/// with two arenas and a trim it was 6 MB.
+///
+/// macOS's malloc kept 650-890 MB of freed large blocks dirty after the same reads (phys_footprint,
+/// Activity Monitor's figure; `malloc_zone_pressure_relief` released none of it), so there the app
+/// runs on mimalloc (lib.rs), told to decommit freed pages at once: its default delay held up to
+/// 1 GB between reads; with no delay 7 MB, at the same speed (measured on GitHub's macOS runner).
+/// Linux runs on mimalloc too (22-31 MB kept and reads ~10% faster, against 57-65 MB with glibc
+/// tuned); the glibc tuning stays for the C libraries in the process (GTK, WebKit's UI side).
+/// Windows' heap gave everything back by itself (10-13 MB private bytes): unchanged. Called first
+/// thing, before any thread starts.
 pub fn tame_malloc() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
@@ -38,9 +46,22 @@ pub fn tame_malloc() {
             mallopt(M_ARENA_MAX, 2);
         }
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        unsafe extern "C" {
+            fn mi_option_set(option: i32, value: std::ffi::c_long);
+        }
+        // mi_option_purge_delay in mimalloc.h (v2 and v3): 0 = decommit freed pages right away
+        const MI_OPTION_PURGE_DELAY: i32 = 15;
+        // SAFETY: mimalloc's own setting, any time from any thread
+        unsafe {
+            mi_option_set(MI_OPTION_PURGE_DELAY, 0);
+        }
+    }
 }
 
-/// Give memory freed since the last call back to the system (glibc keeps it otherwise).
+/// Give memory freed since the last call back to the system (glibc keeps it otherwise; mimalloc on
+/// macOS and Linux: what threads that have gone idle still hold).
 pub fn release_memory() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
@@ -50,6 +71,16 @@ pub fn release_memory() {
         // SAFETY: glibc's own call, safe at any time from any thread
         unsafe {
             malloc_trim(0);
+        }
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        unsafe extern "C" {
+            fn mi_collect(force: bool);
+        }
+        // SAFETY: mimalloc's own call, safe at any time from any thread
+        unsafe {
+            mi_collect(true);
         }
     }
 }

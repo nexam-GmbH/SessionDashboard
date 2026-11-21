@@ -53,6 +53,8 @@ interface Meta {
   endedTurn: boolean
   /** it changed code (an edit, a commit, a push, a PR) */
   madeChanges?: boolean
+  /** its last answer leaves you something to do */
+  asksUser?: boolean
   /** it ended on an API error or a usage limit */
   apiError?: string
   lastText?: string
@@ -594,7 +596,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     archived: persist.archived.includes(id),
     // how its work ended: marked done by you (until it does something new), else from the
     // transcript and the folder's git, so it stays after you look
-    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
+    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, asksUser: meta.asksUser, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git: gitByFolder.get(folderKey(undefined, cwd)) })) : undefined,
   }
 }
 
@@ -2204,7 +2206,9 @@ function queueDelta(key: ID, msgId: string, text: string) {
   const d = deltas.get(k)
   if (d) d.text += text
   else deltas.set(k, { key, msgId, text })
-  deltaFrame ||= requestAnimationFrame(() => flushDeltas())
+  // about 12 updates a second, not one per frame: the streamed reply is parsed as markdown on each
+  // update (a profile showed the parser on top while a session streamed), and reading needs no more
+  deltaFrame ||= window.setTimeout(() => flushDeltas(), 80)
 }
 let lastHiddenFlush = 0
 function flushDeltas(force?: ID) {
@@ -2221,7 +2225,7 @@ function flushDeltas(force?: ID) {
     patchTranscript(d.key, (t, m) => applyTextDelta(t, m, d.msgId, d.text))
   }
   // what waits is flushed by the next frame that comes after the second is up
-  if (deltas.size && !deltaFrame) deltaFrame = requestAnimationFrame(() => setTimeout(() => flushDeltas(), 250))
+  if (deltas.size && !deltaFrame) deltaFrame = window.setTimeout(() => flushDeltas(), 250)
 }
 
 function onEvent({ key, event, exit }: EventPayload) {

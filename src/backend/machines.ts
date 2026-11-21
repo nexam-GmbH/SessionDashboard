@@ -26,6 +26,7 @@ interface RemoteMeta {
   endedTurn: boolean
   lastRole?: string
   madeChanges?: boolean
+  asksUser?: boolean
   apiError?: string
   prUrl?: string
   prNumber?: number
@@ -59,7 +60,7 @@ async function pollHistory(host: string) {
         model: m.model,
         branch: m.gitBranch,
         live: false,
-        facts: { apiError: m.apiError, endedTurn: m.endedTurn, lastRole: m.lastRole, madeChanges: m.madeChanges, prUrl: m.prUrl, prNumber: m.prNumber, branch: m.gitBranch },
+        facts: { apiError: m.apiError, endedTurn: m.endedTurn, lastRole: m.lastRole, madeChanges: m.madeChanges, asksUser: m.asksUser, prUrl: m.prUrl, prNumber: m.prNumber, branch: m.gitBranch },
       })
     }
     historyByMachine.set(host, map)

@@ -48,12 +48,15 @@ function thinkingLabel(ms: number) {
  */
 export function WorkingMark({ still, className }: { still?: boolean; className?: string }) {
   return (
-    <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden className={className} data-spin={still ? undefined : ""} style={{ transformOrigin: "center" }}>
-      <circle cx="3.5" cy="3.5" r="1.6" fill="currentColor" />
-      <circle cx="10.5" cy="3.5" r="1.6" fill="currentColor" opacity="0.55" />
-      <circle cx="10.5" cy="10.5" r="1.6" fill="currentColor" />
-      <circle cx="3.5" cy="10.5" r="1.6" fill="currentColor" opacity="0.55" />
-    </svg>
+    // the box turns, not the <svg> (see index.css: an SVG transform animates on the main thread)
+    <span aria-hidden className={className} data-spin={still ? undefined : ""}>
+      <svg viewBox="0 0 14 14" width="14" height="14">
+        <circle cx="3.5" cy="3.5" r="1.6" fill="currentColor" />
+        <circle cx="10.5" cy="3.5" r="1.6" fill="currentColor" opacity="0.55" />
+        <circle cx="10.5" cy="10.5" r="1.6" fill="currentColor" />
+        <circle cx="3.5" cy="10.5" r="1.6" fill="currentColor" opacity="0.55" />
+      </svg>
+    </span>
   )
 }
 

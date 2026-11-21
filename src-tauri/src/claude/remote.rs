@@ -17,7 +17,25 @@ use super::transcript::{parse_bytes, TranscriptChunk};
 pub const REMOTE_HOOK_PORT: u16 = 47321;
 
 pub fn ssh_bin() -> String {
+    #[cfg(test)]
+    if let Some(b) = SSH_BIN.with(|b| b.borrow().clone()) {
+        return b;
+    }
     std::env::var("SD_SSH").unwrap_or_else(|_| "ssh".into())
+}
+
+#[cfg(test)]
+thread_local! {
+    static SSH_BIN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with another ssh on this thread (a test's own fake one).
+#[cfg(test)]
+pub fn with_ssh<T>(bin: &str, f: impl FnOnce() -> T) -> T {
+    SSH_BIN.with(|b| *b.borrow_mut() = Some(bin.to_string()));
+    let v = f();
+    SSH_BIN.with(|b| *b.borrow_mut() = None);
+    v
 }
 
 fn control_path() -> String {

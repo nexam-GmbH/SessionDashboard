@@ -11,6 +11,10 @@ export const customChrome = (native: boolean) => IN_TAURI && (OS === "windows" |
 async function apply(native: boolean) {
   if (!IN_TAURI || OS === "macos") return
   try {
+    // remembered for the next start: the window is made with or without the frame from the start
+    // (on KDE Wayland a frame cannot be taken away later)
+    const { invoke } = await import("@tauri-apps/api/core")
+    void invoke("prefs_write", { name: "window", value: { nativeTitlebar: native } }).catch(() => undefined)
     const { getCurrentWindow } = await import("@tauri-apps/api/window")
     await getCurrentWindow().setDecorations(!customChrome(native))
   } catch (e) {

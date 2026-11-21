@@ -275,6 +275,26 @@ async function restart(key: string) {
   await show(old.place)
 }
 
+/** Pick the shell (as VS Code's terminal does): this folder's terminal starts again in it, and new
+ * terminals open in it from now on. */
+export async function switchShell(key: string, id: string) {
+  setApp((s) => ({ settings: { ...s.settings, terminalShell: id } }))
+  if (!entries.has(key)) return
+  if (IN_TAURI && REAL) {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("term_close", { key }).catch(() => undefined)
+  }
+  await restart(key)
+}
+
+/** The shell new terminals here open in: the one picked, else the usual one (PowerShell 7 or Windows
+ * PowerShell on Windows, the login shell, listed first, elsewhere). */
+export function currentShellId(list: ShellChoice[], picked: string): string | undefined {
+  if (picked && list.some((s) => s.id === picked)) return picked
+  if (OS === "windows") return list.find((s) => s.id === "pwsh")?.id ?? list.find((s) => s.id === "powershell")?.id
+  return list[0]?.id
+}
+
 const pending = new Map<string, Promise<Entry>>()
 
 /** The terminal for a folder, started on first use. */

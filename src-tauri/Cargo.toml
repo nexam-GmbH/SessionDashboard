@@ -1,6 +1,6 @@
 [package]
 name = "session-dashboard"
-version = "0.8.11"
+version = "0.8.12"
 description = "Session Dashboard: one place for all your Claude Code sessions"
 authors = ["you"]
 edition = "2024"
@@ -28,6 +28,8 @@ tauri-plugin-notification = "2"
 tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# full-text search over every transcript (claude/search.rs): FTS5 trigram index, SQLite built in
+rusqlite = { version = "0.43", features = ["bundled"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 uuid = { version = "1", features = ["v4"] }
 portable-pty = "0.9"
@@ -52,6 +54,10 @@ tauri-plugin-window-state = "2"
 # the web view's memory level (WebView2 ICoreWebView2_19), same versions tauri/wry use
 webview2-com = "0.39"
 windows-core = "0.62"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# the Rust side's allocator on macOS and Linux (lib.rs, sys::tame_malloc): their malloc kept freed memory
+mimalloc = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "0.28", default-features = false }

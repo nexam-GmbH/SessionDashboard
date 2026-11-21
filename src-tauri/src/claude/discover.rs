@@ -546,6 +546,9 @@ pub struct SessionMeta {
     /// the next prompt or answer
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_error: Option<String>,
+    /// its last answer leaves you something: a question, a command for you to run, or what is left
+    /// for you to do ("Что осталось", "You need to…"); not done, whatever else says so
+    pub asks_user: bool,
     pub last_text: Option<String>,
     /// what the session did last: "Edit src/x.ts", "Bash: npm test", …
     pub last_activity: Option<String>,
@@ -863,6 +866,11 @@ fn continued_from(v: &Value) -> Option<String> {
 }
 
 fn assistant_text(v: &Value) -> Option<String> {
+    assistant_full(v).map(|t| t.chars().take(700).collect())
+}
+
+/// The whole text of an assistant message.
+fn assistant_full(v: &Value) -> Option<String> {
     let parts = v.get("message")?.get("content")?.as_array()?;
     let mut out = String::new();
     for p in parts {
@@ -873,7 +881,30 @@ fn assistant_text(v: &Value) -> Option<String> {
         }
     }
     let t = out.trim();
-    if t.is_empty() { None } else { Some(t.chars().take(700).collect()) }
+    if t.is_empty() { None } else { Some(t.to_string()) }
+}
+
+/// Claude's answer leaves you something to do: it ends on a question, offers a command for you to
+/// run (a `! cmd` line, shown with a Run button), or lists what is left for you (in Russian, English
+/// or German). Read from the end of the answer, where that goes.
+pub fn asks_user(text: &str) -> bool {
+    let chars: Vec<char> = text.trim().chars().collect();
+    let tail: String = chars[chars.len().saturating_sub(1500)..].iter().collect();
+    let last = tail.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if last.ends_with('?') || last.ends_with('？') {
+        return true;
+    }
+    let offers_command = tail.contains("`! ") || tail.lines().any(|l| l.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '*' | '•' | '>')).starts_with("! "));
+    if offers_command {
+        return true;
+    }
+    const LEFT: &[&str] = &[
+        "что осталось", "осталось сделать", "осталось:", "тебе нужно", "от тебя нужно", "нужно, чтобы ты", "нужно чтобы ты", "проверь сам", "сделай сам", "запусти сам",
+        "you need to", "you'll need to", "you will need to", "left for you", "what's left", "what is left", "remaining:", "still open:", "next steps for you", "action needed", "action required", "requires your", "please run", "please check", "please confirm",
+        "was noch fehlt", "noch offen", "du musst", "musst du", "bitte prüf", "bitte bestätig",
+    ];
+    let low = tail.to_lowercase();
+    LEFT.iter().any(|p| low.contains(p))
 }
 
 fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
@@ -932,6 +963,7 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                     m.api_error = None;
                     m.last_role = Some("user".into());
                     m.ended_turn = false;
+                    m.asks_user = false;
                 } else if v.get("message").and_then(|x| x.get("content")).and_then(Value::as_array).is_some() {
                     // tool results keep the turn going
                     m.last_role = Some("tool".into());
@@ -980,6 +1012,8 @@ fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
                 }
                 m.last_role = Some("assistant".into());
                 m.ended_turn = !has_tool && stop != Some("tool_use");
+                // only an answer that ends the turn can leave you something (a step in between does not)
+                m.asks_user = m.ended_turn && assistant_full(v).is_some_and(|t| asks_user(&t));
             }
         }
         _ => {}
@@ -1345,5 +1379,27 @@ mod outcome_tests {
         // stopped mid-task: the last word is the tool's, the turn never ended
         let m = meta_of(&[ask, edit]);
         assert!(!m.ended_turn && m.made_changes);
+    }
+}
+
+#[cfg(test)]
+mod asks_tests {
+    use super::asks_user;
+
+    #[test]
+    fn knows_when_claude_leaves_you_something() {
+        // the case that showed green: a summary ending in what is left for you, with a command to run
+        let left = "PWA на dev проверил: всё работает.\n\n**Что осталось:**\n- Firebase CLI не залогинен. Нужен\n  `! npx firebase login --reauth`.\n- Пуш на телефоне проверь сам.\n- Прод не трогал.";
+        assert!(asks_user(left));
+        assert!(asks_user("Done. Should I also open the PR?"));
+        assert!(asks_user("Deployed to dev.\n\nYou need to rotate the key in the console before prod."));
+        assert!(asks_user("Fertig. Was noch fehlt: der Login auf dem Server."));
+        assert!(asks_user("Run this once:\n\n! gcloud auth application-default login"));
+        // finished: nothing for you
+        assert!(!asks_user("Fixed the bug, added a test, all 42 pass. Committed and pushed to main."));
+        assert!(!asks_user("Готово: PR #12 смержен, CI зелёный."));
+        assert!(!asks_user("Merged. Let me know if anything else comes up."));
+        // a question in the middle, a conclusion at the end
+        assert!(!asks_user("Was the cache the cause? Yes: clearing it fixed the build. Done."));
     }
 }

@@ -37,6 +37,8 @@ export interface World {
 }
 
 const HOME = "/home/dev/code"
+/** A repository's id as the desktop app keys it (backend/git.ts repoKey): "repo:" + its remote. */
+export const mockRepoId = (name: string) => `repo:github.com/acme/${name}`
 const MIN = 60_000
 const HOUR = 60 * MIN
 const DAY = 24 * HOUR
@@ -102,13 +104,14 @@ export function generateWorld(now = Date.now()): World {
   // ---------- repos ----------
   const specs: RepoSpec[] = REPOS.map((name) => REPO_CATALOG.find((r) => r.name === name)!)
   for (const spec of specs) {
-    const id = `repo_${spec.name}`
+    const id = mockRepoId(spec.name)
     const rootPath = `${HOME}/${spec.name}`
     const defaultBranch = spec.language === "Go" ? "master" : "main"
     const mainGit = makeGit(rng, now, rng.chance(0.6) ? "clean" : "modified", true)
     repos[id] = {
       id,
       name: spec.name,
+      slug: `acme/${spec.name}`,
       rootPath,
       defaultBranch,
       language: spec.language,
@@ -140,7 +143,7 @@ export function generateWorld(now = Date.now()): World {
 
   // ---------- main agent ----------
   const mainSessionId = "s_main"
-  const delegatedRepos = ["ticketing", "web-app", "api-gateway"].map((n) => `repo_${n}`)
+  const delegatedRepos = ["ticketing", "web-app", "api-gateway"].map(mockRepoId)
   sessions[mainSessionId] = {
     id: mainSessionId,
     provider: "claude-code",
@@ -330,7 +333,7 @@ export function generateWorld(now = Date.now()): World {
 
   {
     for (const s of SCRIPT) {
-      const repoId = `repo_${s.repo}`
+      const repoId = mockRepoId(s.repo)
       const session = makeSession(repoId, s.task, s.status, {
         ...s,
         createdAgo: rng.int(20, 300) * MIN,
@@ -409,7 +412,7 @@ export function generateWorld(now = Date.now()): World {
 
   // a "yesterday" session to find and resume (usability walkthrough task)
   {
-    makeSession("repo_api-gateway", "Rate limiting for /v1/chat", "stopped", { history: true, createdAgo: 26 * HOUR })
+    makeSession(mockRepoId("api-gateway"), "Rate limiting for /v1/chat", "stopped", { history: true, createdAgo: 26 * HOUR })
   }
 
   // unread: Claude wrote after you last looked (as the desktop app works it out from transcripts)

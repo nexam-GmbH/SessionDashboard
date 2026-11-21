@@ -6,6 +6,12 @@ mod usage;
 #[cfg(test)]
 mod bench;
 
+/// macOS and Linux: mimalloc for the Rust side (see `sys::tame_malloc`); their system malloc kept
+/// hundreds of MB after big transcript reads (Windows' heap gives it back by itself).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
@@ -216,6 +222,19 @@ pub fn run() {
             usage::usage_limits,
         ])
         .setup(|app| {
+            // the window is created without the system frame: on KDE Wayland a frame cannot be
+            // taken away from a window that has one (tao #899, KDE bug 484800), so the app's own
+            // bar is the default and the system frame is added, before the window shows, where it is
+            // wanted (macOS always; Linux when Settings → Window → Native title bar is on, saved in
+            // window.json since the web view's storage is not readable yet)
+            if let Some(w) = app.get_webview_window("main") {
+                let native = cfg!(target_os = "macos")
+                    || (cfg!(target_os = "linux")
+                        && std::fs::read(sys::config_dir().join("window.json")).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).and_then(|v| v.get("nativeTitlebar").and_then(serde_json::Value::as_bool)).unwrap_or(false));
+                if native {
+                    let _ = w.set_decorations(true);
+                }
+            }
             // hook posts from Claude Code (this computer, and VPS machines through their tunnels)
             let port = claude::hooks::serve(app.handle().clone()).unwrap_or(0);
             // sessions idle for a while give their process back (resumed on the next message)

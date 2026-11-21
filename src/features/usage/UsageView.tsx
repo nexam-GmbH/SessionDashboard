@@ -68,7 +68,7 @@ export default function UsageView() {
             ))}
           </ToggleGroup>
           <Button size="sm" variant="outline" disabled={scanning} onClick={() => void refreshUsage()}>
-            <RefreshCw className={cn(scanning && "animate-spin-steps")} /> {scanning ? "Reading…" : "Refresh"}
+            <span className={cn("inline-flex", scanning && "animate-spin-steps")}><RefreshCw /></span> {scanning ? "Reading…" : "Refresh"}
           </Button>
         </div>
         {!ledger ? (

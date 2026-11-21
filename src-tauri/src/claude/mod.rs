@@ -5,6 +5,7 @@ pub mod accounts;
 pub mod control;
 pub mod discover;
 pub mod git;
+pub mod gitremote;
 pub mod gitrepo;
 pub mod hooks;
 pub mod inject;
