@@ -22,6 +22,8 @@ mkdir -p "$APP/share/icons/hicolor/256x256/apps" "$APP/share/icons/hicolor/512x5
 cp src-tauri/icons/128x128@2x.png "$APP/share/icons/hicolor/256x256/apps/session-dashboard.png"
 cp src-tauri/icons/icon.png "$APP/share/icons/hicolor/512x512/apps/session-dashboard.png"
 ln -sf "$APP/bin/session-dashboard" "$HOME/.local/bin/session-dashboard"
+# `sd`: the same binary as a command line (sd new / send / list …, and `sd mcp` for Claude Code)
+ln -sf "$APP/bin/session-dashboard" "$HOME/.local/bin/sd"
 cat > "$HOME/.local/share/applications/dev.sessiondashboard.app.desktop" <<DESKTOP
 [Desktop Entry]
 Version=1.0

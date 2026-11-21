@@ -1376,7 +1376,10 @@ export function realStart(opts: StartOpts): ID {
     if (!getApp().transcripts[id] && metas.has(id)) ensureRealTranscript(id)
     patchTranscript(id, (t, m) => addPendingUser(t, m, opts.prompt!, undefined, opts.images, promptUuid))
   }
-  const flags = settingsOf(opts)
+  // other Claude sessions on this computer may message the app's sessions (SendMessage): a `-p`
+  // session cannot show the approval a held message waits for, so it would be dropped after five
+  // minutes; a project's or the user's "refuse" still wins (Claude Code applies it over this)
+  const flags = { ...(settingsOf(opts) ?? {}), ...(host ? {} : { crossSessionInbound: "accept" }) }
   const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, keepEffort: _k, ...rest } = opts
   void _k
   void _p
@@ -1385,7 +1388,7 @@ export function realStart(opts: StartOpts): ID {
   void _o
   void _m
   // a new session and a fork run under the id the app shows them by (a fork gets a new one)
-  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, promptUuid, host, settings: flags ? JSON.stringify(flags) : undefined } }).catch((e) => {
+  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, promptUuid, host, settings: Object.keys(flags).length ? JSON.stringify(flags) : undefined } }).catch((e) => {
     // "already running": it is, keep listening to it
     if (/already running/i.test(String(e))) return
     owned.delete(id)
@@ -2445,6 +2448,8 @@ export async function startReal() {
   }
   registerSync(sync)
   if (!POPOUT) void import("./ports").then((p) => p.startPorts())
+  // `sd` and its MCP server: other Claude sessions and scripts drive the app's sessions
+  if (!POPOUT) void import("./sdcommands").then((m) => m.startSdCommands())
   if (!POPOUT) keepQueuesAcrossQuit()
   // other accounts' folders are read too (set before the first scan)
   await invoke("claude_set_config_dirs", { dirs: getApp().settings.claudeConfigDirs ?? [] }).catch(() => undefined)

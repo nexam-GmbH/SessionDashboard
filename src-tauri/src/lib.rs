@@ -3,6 +3,8 @@ mod term;
 pub mod sys;
 pub mod wrap;
 mod usage;
+mod sdcli;
+mod mcp;
 #[cfg(test)]
 mod bench;
 
@@ -60,7 +62,16 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
 /// `session-dashboard wrap claude …` (the terminal sync wrapper): handled before the app starts.
 /// Returns the exit code when this run was one.
 pub fn cli() -> Option<i32> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let argv: Vec<String> = std::env::args().collect();
+    // `sd …` (the binary linked or copied as sd) or `session-dashboard sd …`: drive the running app
+    // from a terminal, a script or Claude Code (sdcli.rs; `sd mcp` is the MCP server, mcp.rs)
+    if argv.first().is_some_and(|a| sdcli::prog_name(a) == "sd") {
+        return Some(sdcli::main(&argv[1..]));
+    }
+    if argv.get(1).map(String::as_str) == Some("sd") {
+        return Some(sdcli::main(&argv[2..]));
+    }
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     // `session-dashboard sync on|off|status`: the terminal sync shell functions, from a terminal
     if args.first().map(String::as_str) == Some("sync") {
         let r = match args.get(1).map(String::as_str) {
@@ -210,6 +221,9 @@ pub fn run() {
             claude::remote_probe,
             claude::remote_agents,
             claude::remote_history,
+            claude::sd_reply,
+            claude::sd_mcp_status,
+            claude::sd_mcp_set,
             claude::remote_transcript,
             claude::remote_transcript_since,
             claude::remote_tunnels,

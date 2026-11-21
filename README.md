@@ -73,6 +73,22 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
 - **Fast.** Sessions switch instantly, chats load from the end of their transcript, and nothing polls
   harder than it has to.
 
+## Drive it from Claude Code and scripts
+
+Settings → Sessions → **Let Claude Code drive the app** gives every Claude Code session the app's tools (an MCP server named `session-dashboard`): start a session the app runs, message it, read it, wait for it, stop it, show it. A session started this way is an ordinary session of the app: listed, restored after a restart, its permission prompts answered by you. Sessions the app runs also accept messages from your other sessions (Claude Code's SendMessage).
+
+The same from a terminal or a script, with the `sd` command (the app binary under that name):
+
+```
+sd new --dir ~/repo --name "Fix login" --prompt "Find why the login loops"
+sd send "Fix login" "Also add a test"
+sd wait "Fix login"        # 0 done, 2 waiting for you, 1 error
+sd read "Fix login" --last 5
+sd list
+```
+
+A session is named by its id, an id prefix or a unique part of its title.
+
 ## Keyboard
 
 | Keys | Action |

@@ -218,6 +218,45 @@ export function ReposPage() {
  * Terminal sync: `claude` in your shells runs through the app's wrapper, so a session in any terminal
  * (Zed's, GNOME Terminal, …) takes replies from the app as if you typed them there.
  */
+/** Claude Code's MCP server `session-dashboard`: any Claude session can start, message, read and wait for
+ * the app's sessions (and `sd` does the same from a terminal). */
+function ClaudeConnect() {
+  const live = IN_TAURI && REAL
+  const [on, setOn] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    if (!live) return
+    void import("@tauri-apps/api/core").then(({ invoke }) => invoke<{ connected: boolean }>("sd_mcp_status").then((v) => setOn(v.connected)))
+  }, [live])
+  if (!live || on === null) return null
+  const set = (v: boolean) => {
+    setBusy(true)
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<{ connected: boolean }>("sd_mcp_set", { install: v }))
+      .then((r) => {
+        setOn(r.connected)
+        setErr(null)
+      })
+      .catch((e) => setErr(String(e)))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <SettingRow
+      title="Let Claude Code drive the app"
+      hint={on ? "on" : undefined}
+      description={
+        <>
+          Every Claude Code session gets the app's tools: start a session here, message it, read it, wait for it (the MCP server <Code>session-dashboard</Code>). From a terminal: <Code>sd new --dir ~/repo --prompt "…"</Code>, <Code>sd send</Code>, <Code>sd list</Code>. Sessions the app runs also take messages from your other sessions (SendMessage).
+          {err && <span className="mt-1 block text-st-error-fg">{err}</span>}
+        </>
+      }
+    >
+      <RowSwitch checked={on} disabled={busy} onCheckedChange={set} />
+    </SettingRow>
+  )
+}
+
 function TerminalSync() {
   const [st, setSt] = useState<{ on: boolean; files?: string[]; note?: string | null } | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -386,6 +425,7 @@ export function SourcesPage() {
       <SettingsSection>
         <RegistryRows page="sessions" />
         <TerminalSync />
+        <ClaudeConnect />
         <KeepChats />
         <Accounts />
         <AutoSwitchAccount />

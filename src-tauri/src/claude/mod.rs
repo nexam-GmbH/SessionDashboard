@@ -274,6 +274,59 @@ pub async fn hooks_set(hook_port: State<'_, HookPort>, install: bool, host: Opti
 
 /// Answer a permission prompt the hook offered (a session in a terminal): `decision` is
 /// {behavior: "allow", updatedInput?, updatedPermissions?} or {behavior: "deny", message}.
+/// Claude Code's own config file: where `claude mcp add -s user` writes (`~/.claude.json`, or inside
+/// CLAUDE_CONFIG_DIR when that is set).
+fn claude_json() -> std::path::PathBuf {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(d) => std::path::PathBuf::from(d).join(".claude.json"),
+        None => crate::sys::home().join(".claude.json"),
+    }
+}
+
+/// Whether Claude Code has the app's MCP server (`session-dashboard`, user scope).
+#[tauri::command]
+pub async fn sd_mcp_status() -> Result<Value, String> {
+    blocking(|| {
+        let v: Value = std::fs::read(claude_json()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        let entry = v.get("mcpServers").and_then(|m| m.get("session-dashboard")).cloned();
+        Ok(serde_json::json!({"connected": entry.is_some(), "entry": entry}))
+    })
+    .await
+}
+
+/// Give every Claude Code session the app's tools (start, message, read and watch the app's
+/// sessions), or take them away: `claude mcp add -s user session-dashboard -- <this app> sd mcp`.
+#[tauri::command]
+pub async fn sd_mcp_set(install: bool) -> Result<Value, String> {
+    blocking(move || {
+        let claude = discover::claude_bin();
+        let cmd = |args: &[&str]| {
+            let mut c = crate::sys::command(&claude);
+            discover::clean_env(&mut c);
+            c.args(args);
+            c
+        };
+        // a stale entry (an older path of the app) goes first
+        let _ = crate::sys::output_timeout(&mut cmd(&["mcp", "remove", "-s", "user", "session-dashboard"]), 30);
+        if install {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let exe = exe.to_string_lossy().to_string();
+            let o = crate::sys::output_timeout(&mut cmd(&["mcp", "add", "-s", "user", "session-dashboard", "--", &exe, "sd", "mcp"]), 30).ok_or("claude did not answer")?;
+            if !o.status.success() {
+                return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+            }
+        }
+        Ok(serde_json::json!({"connected": install}))
+    })
+    .await
+}
+
+/// The UI's answer to a command from `sd` (claude/hooks.rs).
+#[tauri::command]
+pub async fn sd_reply(id: String, result: Value) -> Result<(), String> {
+    hooks::sd_reply(&id, result)
+}
+
 #[tauri::command]
 pub async fn hooks_answer(id: String, decision: Value) -> Result<(), String> {
     hooks::answer(&id, decision)

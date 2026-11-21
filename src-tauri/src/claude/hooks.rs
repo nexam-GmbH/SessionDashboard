@@ -148,8 +148,36 @@ pub fn answer(id: &str, decision: Value) -> Result<(), String> {
     tx.send(decision).map_err(|_| "this prompt was already answered".to_string())
 }
 
+/// Commands from `sd` (the CLI and its MCP server), by id: the UI's answer goes back on the channel.
+static SD_PENDING: Mutex<Option<HashMap<String, Sender<Value>>>> = Mutex::new(None);
+
+/// The UI's answer to an `sd` command.
+pub fn sd_reply(id: &str, result: Value) -> Result<(), String> {
+    let tx = SD_PENDING.lock().unwrap().as_mut().and_then(|m| m.remove(id)).ok_or("no such command waits")?;
+    tx.send(result).map_err(|_| "the command no longer waits".to_string())
+}
+
 fn handle(emit: impl Fn(&str, Value), stream: TcpStream) {
     let Some((path, post)) = read_post(&stream) else { return };
+    // `sd` on this computer (a script, or another Claude through the MCP server): the UI runs the
+    // command the way its own buttons do, so a session started here is one of the app's
+    if path == "/sd" {
+        if post["local"] != true {
+            reply(&stream, "403 Forbidden", r#"{"error":"only from this computer"}"#);
+            return;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = channel::<Value>();
+        SD_PENDING.lock().unwrap().get_or_insert_with(HashMap::new).insert(id.clone(), tx);
+        emit("sd-command", json!({"id": id, "cmd": post["event"]["cmd"], "args": post["event"]["args"]}));
+        let answer = rx.recv_timeout(Duration::from_secs(60));
+        SD_PENDING.lock().unwrap().as_mut().map(|m| m.remove(&id));
+        match answer {
+            Ok(v) => reply(&stream, "200 OK", &v.to_string()),
+            Err(_) => reply(&stream, "504 Gateway Timeout", r#"{"error":"Session Dashboard did not answer"}"#),
+        }
+        return;
+    }
     if path == "/hook" {
         reply(&stream, "204 No Content", "");
         emit("hook-event", post);
