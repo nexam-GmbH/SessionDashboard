@@ -489,6 +489,48 @@ check("usage limit card: Continue now on another account moves the parked sessio
   await row.waitFor({ timeout: 3000 })
 })
 
+check("search: a long title keeps the list in place; Restore brings an archived session back", async () => {
+  await load("#/")
+  const id = await app((s) => Object.values(s.sessions).find((x) => !x.archived && x.control === "history")?.id)
+  expect(id, "no past session in the demo world")
+  const title = `zzlong ${"a very long first prompt that runs on and on ".repeat(4)}`
+  await action("renameSession", id, title)
+  await action("archiveSessions", [id])
+  await page.keyboard.press("Control+k")
+  const input = visible("[cmdk-input]").first()
+  await input.waitFor({ timeout: 2000 })
+  await input.type("zzlong")
+  const row = visible("[cmdk-item]").filter({ hasText: "zzlong" }).first()
+  await row.waitFor({ timeout: 3000 })
+  await wait(300)
+  // nothing in the dialog is wider than the dialog, so nothing scrolls sideways: rows keep their padding
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("ArrowUp")
+  const wide = await page.evaluate(() =>
+    [document.querySelector("[role=dialog]"), document.querySelector("[cmdk-root]"), document.querySelector("[cmdk-list]")].map((el) => ({ left: el.scrollLeft, over: el.scrollWidth - el.clientWidth })),
+  )
+  expect(wide.every((w) => w.left === 0 && w.over <= 1), `the search scrolls sideways: ${JSON.stringify(wide)}`)
+  expect(await row.getByRole("button", { name: /Restore/ }).isVisible(), "the row's end (Restore) is cut off")
+  // Restore on the row: back from the archive, the palette stays open on the same screen
+  await row.getByRole("button", { name: /Restore/ }).click()
+  expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "Restore in the search didn't restore")
+  expect((await hash()) === "#/", "Restore opened the session")
+  await page.keyboard.press("Escape")
+  // an archived session's chat says so and restores from its banner and its menu
+  await action("archiveSessions", [id])
+  await go(`#/session/${id}`)
+  const banner = visible("[role=status]").filter({ hasText: "Archived" }).first()
+  await banner.waitFor({ timeout: 3000 })
+  await banner.getByRole("button", { name: "Restore" }).click()
+  expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "the banner's Restore didn't restore")
+  // archiving the open session goes back to the overview: open it again
+  await action("archiveSessions", [id])
+  await go(`#/session/${id}`)
+  await visible('button[aria-label="More actions"]').first().click()
+  await page.getByRole("menuitem", { name: "Restore from archive" }).click()
+  expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "the menu's Restore didn't restore")
+})
+
 check("search: Ctrl+K finds a past session; Resume brings it back to life", async () => {
   await load("#/")
   const ids = await discover()

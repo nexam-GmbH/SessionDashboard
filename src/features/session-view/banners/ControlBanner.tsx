@@ -3,10 +3,12 @@
 // terminal (take over = stop there, resume here); history sessions offer
 // Resume and Fork.
 import { memo } from "react"
-import { Cloud, ExternalLink, GitFork, History, Play, Server, SquareTerminal } from "lucide-react"
+import { Archive, ArchiveRestore, ArrowRight, Cloud, ExternalLink, GitFork, History, Play, Server, SquareTerminal } from "lucide-react"
 import type { ID } from "@/lib/model"
 import { useApp } from "@/store/app"
-import { forkSession, resumeSession, takeOverSession, openSettings } from "@/store/actions"
+import { forkSession, resumeSession, takeOverSession, openSettings, openSession } from "@/store/actions"
+import { restoreWithUndo } from "@/features/notifications/undo"
+import { accountLabel } from "@/lib/accounts"
 import { useRelTime } from "@/components/common/RelativeTime"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -14,6 +16,35 @@ import { CONTROL_LABEL } from "@/lib/status"
 import { REAL } from "@/backend/mode"
 
 const BAR = "flex h-8 shrink-0 items-center gap-2 border-b border-border bg-card px-3 text-xs text-muted-foreground"
+
+/**
+ * An archived session: kept, only out of the lists. Restore brings it back; one that went on on
+ * another account points to where it continues.
+ */
+export const ArchivedBanner = memo(function ArchivedBanner({ sessionId }: { sessionId: ID }) {
+  const archived = useApp((s) => !!s.sessions[sessionId]?.archived)
+  const next = useApp((s) => (s.sessions[sessionId]?.archived ? Object.values(s.sessions).find((x) => x.movedFrom?.sessionId === sessionId) : undefined))
+  if (!archived) return null
+  return (
+    <div className={BAR} role="status">
+      <Archive size={13} className="shrink-0 text-muted-foreground/70" />
+      <span className="min-w-0 flex-1 truncate">
+        Archived{" "}
+        <span className="text-muted-foreground/70">
+          {next ? `· continued on ${accountLabel(next.configDir)}` : "· kept with its whole conversation, only left out of the lists"}
+        </span>
+      </span>
+      {next && (
+        <Button size="xs" variant="ghost" onClick={() => openSession(next.id)}>
+          Open the continued session <ArrowRight />
+        </Button>
+      )}
+      <Button size="xs" variant="outline" onClick={() => restoreWithUndo([sessionId])}>
+        <ArchiveRestore /> Restore
+      </Button>
+    </div>
+  )
+})
 
 export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessionId: ID }) {
   const control = useApp((s) => s.sessions[sessionId]?.control)

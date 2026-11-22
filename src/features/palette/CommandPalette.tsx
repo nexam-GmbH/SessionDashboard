@@ -6,14 +6,15 @@
 // the chat at that message), then repos (new session there) and a few commands.
 import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
-import { ArrowUpDown, CornerDownLeft, LoaderCircle, MessageSquareText, Plus, Search } from "lucide-react"
+import { ArchiveRestore, ArrowUpDown, CornerDownLeft, LoaderCircle, MessageSquareText, Plus, Search } from "lucide-react"
 import type { SearchHit } from "@/backend/real"
 import { useContentSearch } from "@/features/history/contentSearch"
 import { openSessionAt } from "@/features/session-view/find/find"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { getApp } from "@/store/app"
+import { getApp, useApp } from "@/store/app"
 import { selectNeedsYou, selectSessionOrder, useShownStatus } from "@/store/selectors"
 import { closePalette, openNewSession, openSession, takePaletteTypeAhead } from "@/store/actions"
+import { restoreWithUndo } from "@/features/notifications/undo"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Kbd, Shortcut } from "@/components/common/bits"
 import { relTime } from "@/lib/format"
@@ -108,7 +109,9 @@ export default function CommandPalette() {
         className="top-[12%] bottom-auto max-w-[680px] translate-y-0 gap-0 overflow-hidden rounded-xl border-border bg-muted p-0 shadow-[0_16px_48px_rgba(0,0,0,0.55)] sm:max-w-[680px]"
       >
         <DialogTitle className="sr-only">Search</DialogTitle>
-        <Cmdk shouldFilter={false} loop value={selected} onValueChange={setValue} className="flex flex-col" label="Search">
+        {/* min-w-0: the dialog is a grid, and a long title would widen its column past the dialog, which
+            cmdk then scrolled sideways to show the selected row (every row lost its left padding) */}
+        <Cmdk shouldFilter={false} loop value={selected} onValueChange={setValue} className="flex min-w-0 flex-col" label="Search">
           <div className="flex h-11 items-center gap-2.5 border-b border-border px-3.5">
             <Search size={15} className="shrink-0 text-muted-foreground/70" />
             <Cmdk.Input
@@ -119,7 +122,8 @@ export default function CommandPalette() {
               className="h-full flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             />
           </div>
-          <Cmdk.List className="max-h-[min(560px,66vh)] overflow-y-auto p-1.5">
+          {/* never sideways: a row wider than the list would scroll it (cmdk scrolls the selected row into view) */}
+          <Cmdk.List className="max-h-[min(560px,66vh)] overflow-x-hidden overflow-y-auto p-1.5">
             <Cmdk.Empty className="px-3 py-6 text-center text-xs text-muted-foreground/70">Nothing matches.</Cmdk.Empty>
             {live.length > 0 && (
               <Group heading={query ? "Sessions" : "Sessions, most urgent first"}>
@@ -152,7 +156,7 @@ export default function CommandPalette() {
                 {repos.map((r) => (
                   <Item key={r.id} value={`r:${r.id}`} onSelect={() => run(() => openNewSession(r.id))}>
                     <Plus size={14} className="text-muted-foreground/70" />
-                    <span className="truncate text-foreground">New session in {r.name}</span>
+                    <span className="min-w-0 truncate text-foreground">New session in {r.name}</span>
                   </Item>
                 ))}
               </Group>
@@ -161,7 +165,7 @@ export default function CommandPalette() {
               <Group heading="Commands">
                 {commands.map((c) => (
                   <Item key={c.id} value={`c:${c.id}`} onSelect={() => run(c.run)}>
-                    <span className="truncate text-foreground">{c.title}</span>
+                    <span className="min-w-0 truncate text-foreground">{c.title}</span>
                     {c.shortcut && <Shortcut keys={c.shortcut} className="ml-auto" />}
                   </Item>
                 ))}
@@ -190,12 +194,31 @@ export default function CommandPalette() {
 
 function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; past?: boolean; onSelect: () => void }) {
   const status = useShownStatus(x.id)
+  // live: restoring it here shows at once
+  const archived = useApp((s) => !!s.sessions[x.id]?.archived)
   return (
     <Item value={`s:${x.id}`} onSelect={onSelect}>
       <StatusGlyph status={status} outcome={x.outcome} unread={!!x.unreadSince} size="sm" title={null} />
-      <span className={past && !x.unreadSince ? "truncate text-muted-foreground" : cn("truncate text-foreground", x.unreadSince && "font-medium")}>{x.title}</span>
+      <span className={past && !x.unreadSince ? "min-w-0 truncate text-muted-foreground" : cn("min-w-0 truncate text-foreground", x.unreadSince && "font-medium")}>{x.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
-      <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{x.archived ? "archived" : relTime(x.updatedAt)}</span>
+      <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{archived ? "archived" : relTime(x.updatedAt)}</span>
+      {archived && (
+        <button
+          type="button"
+          aria-label={`Restore ${x.title} from the archive`}
+          title="Restore from the archive (stays here, doesn't open it)"
+          // its own click: the row (open the chat) does not get it
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            restoreWithUndo([x.id])
+          }}
+          className="-mr-1 inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <ArchiveRestore size={13} /> Restore
+        </button>
+      )}
     </Item>
   )
 }

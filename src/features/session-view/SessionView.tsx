@@ -6,7 +6,7 @@ import type { ID } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { EmptyState } from "@/components/common/bits"
 import { ensureTranscript } from "@/backend/transcript"
-import { ControlBanner } from "./banners/ControlBanner"
+import { ArchivedBanner, ControlBanner } from "./banners/ControlBanner"
 import { Transcript } from "./transcript/Transcript"
 import { ActivityBar } from "./activity/ActivityBar"
 import { AttentionDock } from "./attention/AttentionDock"
@@ -36,6 +36,7 @@ const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID
     <div data-session-view={sessionId} data-chat className="flex h-full min-h-0 bg-background [contain:strict]">
       <div className="flex min-w-0 flex-1 flex-col">
         <StatusAnnouncer sessionId={sessionId} />
+        <ArchivedBanner sessionId={sessionId} />
         <ControlBanner sessionId={sessionId} />
         {/* the active request takes the composer's place (Claude Code desktop); a terminal session's sits at the conversation's end */}
         <Transcript sessionId={sessionId} requests={<AttentionDock sessionId={sessionId} />} />

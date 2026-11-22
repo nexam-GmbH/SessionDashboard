@@ -5,7 +5,7 @@
 // Vibe Kanban session header (no code copied).
 import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { RewindDialog } from "./RewindDialog"
-import { AppWindow, Archive, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil, Rows3 } from "lucide-react"
+import { AppWindow, Archive, ArchiveRestore, Copy, Ellipsis, FileDiff, GitBranch, GitFork, History, PanelRight, Pencil, Rows3 } from "lucide-react"
 import { IN_TAURI } from "@/lib/platform"
 import { POPOUT } from "@/backend/mode"
 import type { ID, Session } from "@/lib/model"
@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { STATUS_LABEL, capabilities } from "@/lib/status"
 import { homePath, plural } from "@/lib/format"
 import { useChangedFiles, useDelegatedCount, useStopping } from "../sessionStore"
-import { archiveWithUndo } from "@/features/notifications/undo"
+import { archiveWithUndo, restoreWithUndo } from "@/features/notifications/undo"
 import { ContinueOnAccountSub } from "@/features/accounts/ContinueOnAccount"
 
 /** Tooltip that also works on disabled controls (disabled buttons emit no pointer events). */
@@ -208,9 +208,15 @@ export const SessionHeader = memo(function SessionHeader({ sessionId }: { sessio
               <Copy /> Copy resume command
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={s.role === "main"} onSelect={() => archiveWithUndo([sessionId])}>
-              <Archive /> Archive
-            </DropdownMenuItem>
+            {s.archived ? (
+              <DropdownMenuItem onSelect={() => restoreWithUndo([sessionId])}>
+                <ArchiveRestore /> Restore from archive
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled={s.role === "main"} onSelect={() => archiveWithUndo([sessionId])}>
+                <Archive /> Archive
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
