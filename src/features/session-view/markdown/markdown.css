@@ -450,6 +450,13 @@
   background: var(--sd-well);
   animation: sd-pinned-in 220ms cubic-bezier(0.215, 0.61, 0.355, 1);
 }
+/* its last lines under the pointer: cut at the top, fading out there instead of a half line */
+.sd-pinned-more {
+  overflow: hidden;
+}
+.sd-pinned-more[data-cut] {
+  mask-image: linear-gradient(to bottom, transparent, #000 2.5rem);
+}
 
 /* "Scroll to bottom": the panel colour under the secondary fill */
 .sd-pill {

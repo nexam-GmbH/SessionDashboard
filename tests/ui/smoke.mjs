@@ -450,6 +450,28 @@ test("chat: a quote in Claude's answer copies on its own, lists with their dashe
   await expectValue(() => page.evaluate(() => window.__copied), "Shipped today:\n\n- the retry fix\n- its regression test", "the quote's Copy copied something else")
 })
 
+test("chat: reading up a reply pins its prompt as one whole line, more of it under the pointer", async (page) => {
+  await openSession(page, IDLE)
+  const scroller = transcript(page)
+  const pinned = page.getByRole("button", { name: "Scroll to your message" })
+  // read an earlier reply: its prompt scrolled out above, the end of the chat out below
+  await expectValue(async () => {
+    await scroller.evaluate((el) => {
+      const prompts = [...el.querySelectorAll('[data-msg="user"]')]
+      const p = prompts.at(-2) ?? prompts.at(-1)
+      if (p) el.scrollTop += p.getBoundingClientRect().bottom - el.getBoundingClientRect().top + 60
+      el.dispatchEvent(new Event("scroll"))
+    })
+    return pinned.isVisible()
+  }, true, "the prompt is not pinned while its reply is read")
+  const h = await pinned.evaluate((el) => el.getBoundingClientRect().height)
+  assert(h <= 34, `the pinned prompt is ${h}px tall, more than one line`)
+  if (process.env.UI_SHOTS) await page.screenshot({ path: process.env.UI_SHOTS + "/pinned.png", clip: { x: 300, y: 0, width: 1140, height: 200 } })
+  await pinned.hover()
+  await expectValue(() => pinned.evaluate((el) => el.getBoundingClientRect().height), (v) => v >= h, "the pinned prompt shrank under the pointer")
+  if (process.env.UI_SHOTS) await page.screenshot({ path: process.env.UI_SHOTS + "/pinned-hover.png", clip: { x: 300, y: 0, width: 1140, height: 200 } })
+})
+
 test("chat: a message sent while Claude works waits in the queue, and can be removed", async (page) => {
   await openSession(page, IDLE)
   const box = composer(page)

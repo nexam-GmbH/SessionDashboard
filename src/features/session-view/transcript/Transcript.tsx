@@ -389,22 +389,30 @@ function JumpToLatest({ sessionId, show, onClick }: { sessionId: ID; show: boole
   )
 }
 
-/** "Scroll to your message": the end of the prompt whose reply you are reading; 4 more lines under the pointer. */
+/**
+ * "Scroll to your message": the prompt whose reply you are reading, hanging from the top. One whole
+ * line (its last, cut with … when long), never half a line clipped at the top edge; under the
+ * pointer its last few lines, fading out at the top where they are cut.
+ */
 function PinnedPrompt({ sessionId, itemId, onClick }: { sessionId: ID; itemId: ID; onClick: () => void }) {
   const text = useApp((s) => {
     const it = s.transcripts[sessionId]?.items[itemId]
-    return it?.type === "user_message" ? it.text.slice(-800) : ""
+    return it?.type === "user_message" ? it.text.trim().slice(-800) : ""
   })
   if (!text) return null
+  const last = text.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? text
   return (
     <div className={cn(COLUMN, "pointer-events-none absolute inset-x-0 top-0 z-10")}>
       <button
         type="button"
         aria-label="Scroll to your message"
         onClick={onClick}
-        className="sd-pinned pointer-events-auto flex max-h-8 max-w-[85%] flex-col justify-end overflow-hidden rounded-b-xl px-4 pb-3 text-left text-sm leading-5 text-foreground shadow-[var(--cc-shadow-medium)] outline-none hover:max-h-28 focus-visible:max-h-28 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent"
+        className="sd-pinned group pointer-events-auto flex max-w-[85%] min-w-0 flex-col justify-end overflow-hidden rounded-b-xl px-4 py-1.5 text-left text-sm leading-5 text-cc-fg2 shadow-[var(--cc-shadow-medium)] outline-none hover:text-foreground focus-visible:text-foreground focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent"
       >
-        <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</span>
+        <span className="truncate group-hover:hidden group-focus-visible:hidden">{last}</span>
+        <span data-cut={text.split("\n").length > 5 || text.length > 360 || undefined} className="sd-pinned-more hidden max-h-28 whitespace-pre-wrap [overflow-wrap:anywhere] group-hover:flex group-hover:flex-col group-hover:justify-end group-focus-visible:flex group-focus-visible:flex-col group-focus-visible:justify-end">
+          {text}
+        </span>
       </button>
     </div>
   )
