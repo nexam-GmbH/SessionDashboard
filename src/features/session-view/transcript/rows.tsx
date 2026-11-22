@@ -312,15 +312,26 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
   )
 }
 
-export const AgentRow = memo(function AgentRow({ sessionId, itemId, eager }: { sessionId: ID; itemId: ID; eager?: boolean }) {
+/** The turn is over with this as Claude's only message: its Copy all copies exactly this. */
+function soleAnswer(t: ReturnType<typeof getApp>["transcripts"][ID] | undefined, turnId: ID): boolean {
+  const turn = t?.turns.find((x) => x.id === turnId)
+  if (!t || !turn || turn.status === "in_progress" || turn.receipt || turn.durationMs === undefined) return false
+  return turn.itemIds.filter((id) => t.items[id]?.type === "agent_message").length === 1
+}
+
+export const AgentRow = memo(function AgentRow({ sessionId, itemId, turnId, eager }: { sessionId: ID; itemId: ID; turnId?: ID; eager?: boolean }) {
   const item = useItem(sessionId, itemId)
+  // one copy button per answer: a second one beside Copy all would copy the same text
+  const sole = useApp((s) => !!turnId && soleAnswer(s.transcripts[sessionId], turnId))
   if (item?.type !== "agent_message") return null
   return (
     <div className="sd-msg relative">
       <CachedMarkdown cacheKey={itemId} content={item.text} eager={eager} className="sd-reply" />
-      <div className="sd-msg-actions absolute -top-1 -right-2">
-        <CopyButton text={item.text} />
-      </div>
+      {!sole && (
+        <div className="sd-msg-actions absolute -top-1 -right-2">
+          <CopyButton text={item.text} />
+        </div>
+      )}
     </div>
   )
 })

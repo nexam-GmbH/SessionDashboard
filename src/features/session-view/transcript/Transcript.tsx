@@ -47,7 +47,7 @@ const RowView = memo(function RowView({ sessionId, row, liveItemId, inTail, view
       return row.itemId === liveItemId ? (
         <LiveAgentRow sessionId={sessionId} itemId={row.itemId} />
       ) : (
-        <AgentRow sessionId={sessionId} itemId={row.itemId} eager={inTail} />
+        <AgentRow sessionId={sessionId} itemId={row.itemId} turnId={row.turnId} eager={inTail} />
       )
     case "thought":
       return <ThoughtRow sessionId={sessionId} itemId={row.itemId} durationMs={row.durationMs} live={row.live} view={view} />
