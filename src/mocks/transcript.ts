@@ -152,7 +152,7 @@ const SUMMARIES = (file: string, symbol: string, test: string) => [
   ...(symbol !== "withRetry" ? [] : [`Fixed. \`${symbol}\` counted one attempt twice on failure, so the default of 3 attempts really meant 2.\n\n**Changes**\n- \`${file}\`: one increment per attempt, plus a \`retry_attempts_total\` counter\n- \`${test}\`: regression test — one failure now produces exactly two calls\n\nAll 10 tests pass. The public signature is unchanged, so callers in other repos are unaffected.`]),
   `Done. Summary of what changed:\n\n1. \`${file}\` — updated \`${symbol}\` to the new shape\n2. Added a test in \`${test}\` covering the edge case from the issue\n3. Ran the package tests: **all green**\n\nOne thing to decide: the old field is still read in two places behind a feature flag. I left them as-is; tell me if you want them removed in this PR.`,
   `I made the change in \`${file}\` and verified it:\n\n\`\`\`text\nTests  10 passed (10)\n\`\`\`\n\nNext steps I'd suggest:\n- push the branch and open a draft PR\n- ask the owners of the two downstream services to bump the client`,
-]
+].map((t) => `${t}\n\nThe issue: [#42](https://example.com/acme/web-app/issues/42).`)
 
 // ---------- builders ----------
 interface Ctx {

@@ -90,10 +90,22 @@ export function ExternalLinkGuard() {
       void openExternalLink(anchor.href)
     }
 
+    // the web view's own menu (Back, Forward, Stop, Reload) means nothing in an app: it shows only
+    // where it helps, in a text field and on selected text (Copy, Paste)
+    function handleMenu(event: MouseEvent) {
+      if (event.defaultPrevented) return
+      const t = event.target
+      if (t instanceof Element && t.closest("input, textarea, [contenteditable=''], [contenteditable='true'], .xterm")) return
+      if (window.getSelection()?.toString()) return
+      event.preventDefault()
+    }
+
     document.addEventListener("click", handleClick, true)
+    document.addEventListener("contextmenu", handleMenu)
 
     return () => {
       document.removeEventListener("click", handleClick, true)
+      document.removeEventListener("contextmenu", handleMenu)
     }
   }, [])
 

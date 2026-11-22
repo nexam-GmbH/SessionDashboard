@@ -424,6 +424,19 @@ test("chat: a message sent to a session at rest shows in the chat and Claude's r
   await expectValue(async () => (await reply.innerText()).length, (n) => n > first, "the reply does not stream")
 })
 
+test("chat: a link asks before it opens, and Esc closes that; no web view menu on a right-click", async (page) => {
+  await openSession(page, IDLE)
+  const link = transcript(page).getByRole("button", { name: "#42" }).last()
+  await expectVisible(link, "no link in Claude's answer")
+  await link.click()
+  const dialog = page.getByRole("dialog", { name: "Open link?" })
+  await expectText(dialog, "https://example.com/acme/web-app/issues/42", "the dialog does not show where the link goes")
+  await page.keyboard.press("Escape")
+  await expectHidden(dialog, "Esc did not close the link dialog")
+  const prevented = await link.evaluate((el) => !el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })))
+  assert(prevented, "a right-click on the chat shows the web view's own menu")
+})
+
 test("chat: a message sent while Claude works waits in the queue, and can be removed", async (page) => {
   await openSession(page, IDLE)
   const box = composer(page)

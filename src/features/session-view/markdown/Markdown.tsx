@@ -6,16 +6,18 @@
 // first use, LRU-cached); no mermaid; quiet single-box code blocks via markdown.css.
 import { memo, type ComponentProps } from "react"
 import { Play } from "lucide-react"
-import { Streamdown, type ControlsConfig } from "streamdown"
+import { Streamdown, type ControlsConfig, type LinkSafetyConfig } from "streamdown"
 import type { CodeHighlighterPlugin, HighlightOptions, HighlightResult } from "@streamdown/code"
 import { cn } from "@/lib/utils"
 import { currentSessionId } from "@/store/actions"
 import { terminalCommandFor } from "@/features/terminal/slash"
 import { CLAUDE_DARK, CLAUDE_LIGHT } from "./claudeTheme"
+import { LinkDialog } from "./LinkDialog"
 import "./markdown.css"
 
 /** Copy on code blocks; no downloads, no table/mermaid chrome (Cline agentMarkdownControls). */
 const CONTROLS = { code: { copy: true, download: false }, mermaid: false, table: false } satisfies ControlsConfig
+const LINKS: LinkSafetyConfig = { enabled: true, renderModal: (p) => <LinkDialog {...p} /> }
 const THEMES: HighlightOptions["themes"] = [CLAUDE_LIGHT, CLAUDE_DARK]
 
 // @streamdown/code brings Shiki and its regex engine (about 200 KB) into the first bundle. Its
@@ -103,6 +105,7 @@ export const Markdown = memo(function Markdown({
       isAnimating={streaming}
       parseIncompleteMarkdown={streaming}
       lineNumbers={false}
+      linkSafety={LINKS}
       // no box with its own scrollbar inside the chat (streamdown caps tables at 300 px and code at
       // 400 px): the wheel scrolls the chat, and WebKitGTK has no nested scroller with a sticky
       // header to repaint on every step
