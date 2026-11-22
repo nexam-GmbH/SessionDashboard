@@ -437,6 +437,19 @@ test("chat: a link asks before it opens, and Esc closes that; no web view menu o
   assert(prevented, "a right-click on the chat shows the web view's own menu")
 })
 
+test("chat: a quote in Claude's answer copies on its own, lists with their dashes", async (page) => {
+  await openSession(page, IDLE)
+  await page.evaluate(() => {
+    window.__copied = ""
+    navigator.clipboard.writeText = async (t) => void (window.__copied = t)
+  })
+  const quote = transcript(page).locator("blockquote").last()
+  await expectVisible(quote, "no quote in Claude's answer")
+  await quote.hover()
+  await quote.getByRole("button", { name: "Copy quote" }).click()
+  await expectValue(() => page.evaluate(() => window.__copied), "Shipped today:\n\n- the retry fix\n- its regression test", "the quote's Copy copied something else")
+})
+
 test("chat: a message sent while Claude works waits in the queue, and can be removed", async (page) => {
   await openSession(page, IDLE)
   const box = composer(page)

@@ -4,8 +4,8 @@
 // streams in as in Claude Code desktop);
 // code highlighting through @streamdown/code (Shiki, languages loaded lazily on
 // first use, LRU-cached); no mermaid; quiet single-box code blocks via markdown.css.
-import { memo, type ComponentProps } from "react"
-import { Play } from "lucide-react"
+import { memo, useRef, useState, type ComponentProps } from "react"
+import { Check, Copy, Play } from "lucide-react"
 import { Streamdown, type ControlsConfig, type LinkSafetyConfig } from "streamdown"
 import type { CodeHighlighterPlugin, HighlightOptions, HighlightResult } from "@streamdown/code"
 import { cn } from "@/lib/utils"
@@ -84,7 +84,45 @@ function InlineCode(all: ComponentProps<"code"> & { node?: unknown }) {
     </span>
   )
 }
-const COMPONENTS = { inlineCode: InlineCode }
+/** A quote's text as you would paste it: its paragraphs, and its lists with their "- " or "1. ". */
+function quoteText(el: HTMLElement): string {
+  return [...el.children]
+    .filter((c) => !(c as HTMLElement).dataset.quoteCopy)
+    .map((c) => {
+      if (c.tagName !== "UL" && c.tagName !== "OL") return (c as HTMLElement).innerText.trim()
+      return [...c.children].map((li, i) => `${c.tagName === "OL" ? `${i + 1}.` : "-"} ${(li as HTMLElement).innerText.trim()}`).join("\n")
+    })
+    .filter(Boolean)
+    .join("\n\n")
+}
+
+/** A quote (often the text Claude wrote for you to send on) with its own Copy, shown on hover. */
+function Blockquote(all: ComponentProps<"blockquote"> & { node?: unknown }) {
+  const { node: _node, children, ...props } = all
+  const ref = useRef<HTMLQuoteElement>(null)
+  const [done, setDone] = useState(false)
+  return (
+    <blockquote {...props} ref={ref} className="sd-quote relative">
+      {children}
+      <button
+        type="button"
+        data-quote-copy="1"
+        aria-label={done ? "Copied" : "Copy quote"}
+        title="Copy quote"
+        onClick={() => {
+          if (!ref.current) return
+          void navigator.clipboard?.writeText(quoteText(ref.current)).catch(() => undefined)
+          setDone(true)
+          setTimeout(() => setDone(false), 1200)
+        }}
+        className="sd-quote-copy absolute top-0 right-0 inline-flex size-7 items-center justify-center rounded-md text-cc-fg3 hover:bg-cc-ghost hover:text-foreground"
+      >
+        {done ? <Check size={14} /> : <Copy size={14} />}
+      </button>
+    </blockquote>
+  )
+}
+const COMPONENTS = { inlineCode: InlineCode, blockquote: Blockquote }
 
 export const Markdown = memo(function Markdown({
   content,

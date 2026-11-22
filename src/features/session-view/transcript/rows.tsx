@@ -635,7 +635,7 @@ export const DoneLine = memo(function DoneLine({
 }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className="flex h-7 items-center gap-1.5 text-[13px] leading-[17px] text-cc-fg3" title={at ? `Finished ${DATE_FULL.format(new Date(at))}` : undefined}>
+    <div className="flex h-7 items-center gap-1.5 text-[13px] leading-[17px] text-cc-fg3">
       <span className="tabular">{formatWorkDuration(durationMs)}</span>
       {!!tokens && (
         <>
@@ -646,7 +646,7 @@ export const DoneLine = memo(function DoneLine({
       {at && (
         <>
           <span aria-hidden>·</span>
-          <time dateTime={at} className="tabular">
+          <time dateTime={at} className="tabular" title={`Finished ${DATE_FULL.format(new Date(at))}`}>
             {TIME.format(new Date(at))}
           </time>
         </>

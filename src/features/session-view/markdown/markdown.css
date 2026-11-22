@@ -165,6 +165,14 @@
   font-style: normal;
 }
 
+/* Copy on a quote: over its top right while the pointer is on it */
+.sd-quote-copy {
+  opacity: 0;
+}
+.sd-quote:is(:hover, :focus-within) .sd-quote-copy {
+  opacity: 1;
+}
+
 .sd-markdown kbd {
   padding: 0.0625em 0.375em;
   border: 1px solid var(--cc-wash-2);
