@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { matchScore } from "@/lib/match"
 import { prepareQuery, scoreSession } from "@/lib/sessionSearch"
 import type { Session } from "@/lib/model"
-import { COMMANDS } from "./commands"
+import { COMMANDS, accountCommands } from "./commands"
 
 type Hit = { x: Session; repo: string }
 
@@ -74,7 +74,8 @@ export default function CommandPalette() {
           .filter((r) => matchScore(query, r.name) > 0)
           .slice(0, 3)
       : []
-    const commands = COMMANDS.filter((c) => !c.when || c.when())
+    // accounts only when asked for (typing "account" or an e-mail)
+    const commands = [...COMMANDS.filter((c) => !c.when || c.when()), ...(query ? accountCommands() : [])]
       .map((c) => ({ c, score: matchScore(query, `${c.title} ${c.keywords ?? ""}`) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)

@@ -30,16 +30,15 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
   waits. Dev servers a session started show as `:5173` chips that open in the browser, and a working
   session that has written nothing for five minutes says so.
 - **After a restart.** The sessions that were running when the app closed are offered back in one go.
-- **At the usage limit.** Sessions that stopped at the plan's limit are listed with the reset time (each
-  from its own account); tick the ones that should go on and they continue one by one after the reset,
-  or right away on another account ("Continue now on…", the account with the most room first).
-- **Side by side.** Any session opens in its own window (session menu or `Ctrl+K`), for a second screen.
-- **More than one account.** Other Claude Code config folders (`CLAUDE_CONFIG_DIR`) are read too, a
-  workspace can start its new sessions in one of them, and each account's 5-hour and weekly limits show
-  side by side. Any session on this computer continues on another account with one click (session menu
-  or the Account row in its details): the conversation goes on there as a fork, the old session is
-  archived and stays readable. Optionally, sessions the app runs switch by themselves when they hit
-  the limit (Settings → Sessions → Switch accounts at the limit).
+- **At the usage limit.** Sessions that stopped at the plan's limit are listed with the reset time;
+  tick the ones that should go on and they continue one by one after the reset, or right away on
+  another account ("Switch and continue", the account with the most room first).
+- **Accounts by e-mail.** Bottom left shows the account the app runs on, its plan and 5-hour use; one
+  click switches the whole app to another one (Ctrl+K too). New sessions start on it, and a session
+  continues on it with your next message: same session, same history, all in `~/.claude`. Settings →
+  Accounts adds one with no command to type (`claude setup-token` runs in the built-in terminal; the
+  token goes to the system's credential store, never into the app's settings), shows each account's
+  limits and when its token ends, and can switch accounts by itself at the limit.
 - **Pull requests.** Status and checks in the details panel; a red check's failing log lines go to the
   session with one click.
 - **Permissions you granted.** Settings → Permissions lists every "always allow" rule from your user and

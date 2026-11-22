@@ -1,44 +1,72 @@
-// Claude accounts: the main Claude Code config folder (~/.claude) and the others listed in
-// Settings → Sessions → Other Claude accounts (CLAUDE_CONFIG_DIR folders like ~/.claude-work).
-// The same folder reaches the app written in several ways ("~/.claude-work" in Settings,
-// "C:\Users\me\.claude-work" from a transcript's location), so accounts are compared by a key.
-import { homePath, normPath } from "./format"
+// Claude accounts, by e-mail. Your normal Claude Code login (~/.claude) is the account with id "";
+// every other one runs on a token (`claude setup-token`) that Rust keeps in the system's credential
+// store (src-tauri/src/claude/tokens.rs). One account is active for the whole app: new sessions and
+// every message that continues a session run on it. Sessions of all accounts share ~/.claude.
+import type { ClaudeAccount } from "@/store/app"
+import { REAL } from "@/backend/mode"
 
-export const MAIN_LABEL = "~/.claude"
+/** Your normal Claude Code login. */
+export const DEFAULT_ACCOUNT = ""
 
-/** One account: `dir` as Settings has it ("" = the main one), `key` to compare, `label` to show. */
-export interface Account {
-  key: string
-  dir: string
-  label: string
+/** A setup-token is valid for a year; a warning shows this long before it ends. */
+export const TOKEN_DAYS = 365
+export const WARN_DAYS = 14
+
+/** An account as the UI lists it: the normal login first. */
+export interface AccountView {
+  id: string
+  email?: string
+  plan?: string
+  label?: string
+  /** your normal login (no token) */
+  login: boolean
+  expiresAt?: string
 }
 
-/** The same key for every way of writing one folder; "" for the main account. */
-export function accountKey(dir?: string | null): string {
-  const d = dir?.trim()
-  if (!d) return ""
-  const k = homePath(normPath(d)).replace(/[/\\]+$/, "").toLowerCase()
-  return k === MAIN_LABEL ? "" : k
+interface AccountSource {
+  settings: { accounts?: ClaudeAccount[]; activeAccount?: string }
+  caps?: { account?: { email?: string; subscriptionType?: string } } | null
 }
 
-/** How an account's folder shows: "~/.claude-work", "~/.claude" for the main one. */
-export function accountLabel(dir?: string | null): string {
-  const d = dir?.trim()
-  return d ? homePath(normPath(d)).replace(/[/\\]+$/, "") : MAIN_LABEL
+/** "Claude Max" / "max" / "team" → "Max" / "Team". */
+export function planName(p?: string | null): string | undefined {
+  if (!p) return undefined
+  const s = p.replace(/^claude\s+/i, "").trim()
+  return s ? s[0].toUpperCase() + s.slice(1) : undefined
 }
 
-/** Every account, the main one first (Settings → Sessions → Other Claude accounts). */
-export function accountsOf(dirs: readonly string[]): Account[] {
-  const out: Account[] = [{ key: "", dir: "", label: MAIN_LABEL }]
-  for (const d of dirs) {
-    const key = accountKey(d)
-    if (key && !out.some((a) => a.key === key)) out.push({ key, dir: d, label: accountLabel(d) })
-  }
-  return out
+export function accountsOf(st: AccountSource): AccountView[] {
+  const me = st.caps?.account
+  return [
+    // the browser preview has no login: a stand-in address
+    { id: DEFAULT_ACCOUNT, email: me?.email ?? (REAL ? undefined : "you@example.com"), plan: planName(me?.subscriptionType) ?? (REAL ? undefined : "Max"), login: true },
+    ...(st.settings.accounts ?? []).map((a) => ({ id: a.id, email: a.email, plan: a.plan, label: a.label, login: false, expiresAt: a.expiresAt })),
+  ]
 }
 
-/** The accounts a session could move to: every one but its own. */
-export function otherAccounts(dirs: readonly string[], configDir?: string | null): Account[] {
-  const own = accountKey(configDir)
-  return accountsOf(dirs).filter((a) => a.key !== own)
+/** The account the app runs on now ("" = your normal login); one that was removed falls back to it. */
+export function activeAccountOf(st: AccountSource): string {
+  const id = st.settings.activeAccount ?? ""
+  return id && (st.settings.accounts ?? []).some((a) => a.id === id) ? id : DEFAULT_ACCOUNT
 }
+
+/** How an account shows: its e-mail ("Your Claude login" while the normal login's is not known yet). */
+export function accountName(st: AccountSource, id: string | undefined): string {
+  const a = accountsOf(st).find((x) => x.id === (id ?? ""))
+  if (!a) return "a removed account"
+  return a.email ?? (a.login ? "your Claude login" : "an account")
+}
+
+/** Name with its label: "Work · name@firm.de". */
+export function accountTitle(a: AccountView): string {
+  const mail = a.email ?? (a.login ? "Your Claude login" : "Account")
+  return a.label ? `${a.label} · ${mail}` : mail
+}
+
+/** Days until a token ends (negative: ended), or null for the normal login. */
+export function daysLeft(a: { expiresAt?: string }, now = Date.now()): number | null {
+  if (!a.expiresAt) return null
+  return Math.floor((Date.parse(a.expiresAt) - now) / 864e5)
+}
+
+export const initialOf = (a: AccountView) => (a.label?.[0] ?? a.email?.[0] ?? "?").toUpperCase()

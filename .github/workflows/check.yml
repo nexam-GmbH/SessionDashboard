@@ -16,7 +16,7 @@ jobs:
       - name: Linux libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libdbus-1-dev
 
       - uses: oven-sh/setup-bun@v2
 
@@ -36,3 +36,9 @@ jobs:
       - name: cargo test --lib
         working-directory: src-tauri
         run: cargo test --lib -- --skip probe_reads_marked_lines --skip sees_a_new_transcript_and_a_pid_file --skip lists_installed_shells
+      # the lockfile as cargo resolved it (a new dependency can be added without a local toolchain)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cargo-lock
+          path: src-tauri/Cargo.lock

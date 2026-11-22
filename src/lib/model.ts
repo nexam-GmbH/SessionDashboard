@@ -171,6 +171,8 @@ export interface Session {
    * its account (unset: the main one), when, and whether the app moved it by itself.
    */
   movedFrom?: { sessionId: ID; configDir?: string; at: string; auto?: boolean }
+  /** the Claude account it last ran on in this app ("" = your normal login; Settings → Accounts) */
+  accountId?: string
   lastStopReason?: "end_turn" | "max_tokens" | "refusal" | "cancelled" | "error"
   errorMessage?: string
   model: string

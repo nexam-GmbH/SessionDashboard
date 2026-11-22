@@ -457,36 +457,57 @@ check("archive from the session menu → Undo toast → History · Archived → 
   return title
 })
 
-check("usage limit card: Continue now on another account moves the parked session there", async () => {
+const WORK = { id: "a1", email: "work@firm.de", plan: "Max", createdAt: "2026-11-22T00:00:00.000Z", expiresAt: "2027-11-22T00:00:00.000Z" }
+
+check("accounts: the footer shows the active e-mail; the switcher makes another account active, Undo goes back", async () => {
+  await load("#/")
+  const footer = () => visible("[data-slot=sidebar-footer]").first()
+  // only your login: its e-mail bottom left
+  const row = footer().getByRole("button", { name: /^Account: you@example\.com/ })
+  await row.waitFor({ timeout: 3000 })
+  await action("patchSettings", { accounts: [WORK] })
+  await row.click()
+  const menu = visible('[role=menu][aria-label="Accounts"]').first()
+  await menu.waitFor({ timeout: 2000 })
+  // every account with its plan and limits; the active one checked
+  expect((await menu.getByRole("menuitem", { name: /you@example\.com, .*active$/ }).count()) === 1, "the active account is not marked")
+  await menu.getByRole("menuitem", { name: /^work@firm\.de, 5 h \d+% · week \d+%$/ }).click()
+  expect(await until(() => app((s) => s.settings.activeAccount === "a1")), "the account did not become active")
+  await footer().getByRole("button", { name: /^Account: work@firm\.de/ }).waitFor({ timeout: 2000 })
+  const toast = visible("[role=status]").filter({ hasText: "work@firm.de" }).first()
+  await toast.waitFor({ timeout: 2000 })
+  await toast.getByRole("button", { name: "Undo" }).click()
+  expect(await until(() => app((s) => s.settings.activeAccount === "")), "Undo did not switch back")
+  // Ctrl+K lists the other accounts
+  await page.keyboard.press("Control+k")
+  await visible("[cmdk-input]").first().type("account")
+  await visible("[cmdk-item]").filter({ hasText: "Switch account: work@firm.de" }).first().waitFor({ timeout: 2000 })
+  await page.keyboard.press("Escape")
+  // Settings → Accounts lists both by e-mail, no folder anywhere
+  await action("openSettings", "accounts")
+  const page2 = visible('[role=group][aria-label="work@firm.de"]').first()
+  await page2.waitFor({ timeout: 3000 })
+  expect(!(await visible("[role=dialog]").first().innerText()).includes(".claude-"), "a folder shows as an account")
+})
+
+check("usage limit card: Switch and continue makes another account active and continues there", async () => {
   await load("#/")
   const card = () => visible('section[aria-label="Sessions at the usage limit"]').first()
   await card().waitFor({ timeout: 3000 })
   // one account only: the card stays as it was
-  expect((await card().getByRole("button", { name: /Continue now on/ }).count()) === 0, "account button shown without a second account")
+  expect((await card().getByRole("button", { name: /Switch and continue/ }).count()) === 0, "switch button shown without a second account")
   const parked = await app((s) => Object.values(s.sessions).find((x) => !x.archived && /hit your 5-hour limit/.test(x.lastText ?? ""))?.id)
   expect(parked, "no parked session in the demo world")
-  const before = await app((s, id) => ({ model: s.sessions[id].model, effort: s.sessions[id].effort, mode: s.sessions[id].permissionMode, title: s.sessions[id].title }), parked)
-  await action("patchSettings", { claudeConfigDirs: ["~/.claude-work"] })
-  const btn = card().getByRole("button", { name: /Continue now on/ })
+  await action("patchSettings", { accounts: [WORK] })
+  const btn = card().getByRole("button", { name: /Switch and continue/ })
   await btn.waitFor({ timeout: 2000 })
   await btn.click()
-  // the other account, with its 5-hour and weekly use
-  const item = page.getByRole("menuitem", { name: /~\/\.claude-work, 5 h \d+% · week \d+%/ })
-  await item.waitFor({ timeout: 2000 })
-  await item.click()
-  const moved = await until(() => app((s, id) => Object.values(s.sessions).find((x) => x.movedFrom?.sessionId === id && !x.archived)?.id, parked))
-  expect(moved, "no session continued on the other account")
-  const after = await app((s, ids) => ({ old: s.sessions[ids[0]].archived, dir: s.sessions[ids[1]].configDir, model: s.sessions[ids[1]].model, effort: s.sessions[ids[1]].effort, mode: s.sessions[ids[1]].permissionMode, title: s.sessions[ids[1]].title }), [parked, moved])
-  expect(after.old, "the old session was not archived")
-  expect(after.dir === "~/.claude-work", `new session on ${after.dir}`)
-  expect(after.model === before.model && after.effort === before.effort && after.mode === before.mode, "model, effort or mode changed")
-  // listed once: the old one is archived, the new one on the overview
-  const shown = await app((s, title) => Object.values(s.sessions).filter((x) => !x.archived && x.title === title).length, before.title)
-  expect(shown === 1, `the session is listed ${shown} times`)
-  // its details say which account it runs on now
-  await go(`#/session/${moved}`)
-  const row = visible("div").filter({ hasText: /^~\/\.claude-workfrom ~\/\.claudeAccount$/ }).first()
-  await row.waitFor({ timeout: 3000 })
+  await page.getByRole("menuitem", { name: /^work@firm\.de, 5 h \d+% · week \d+%/ }).click()
+  expect(await until(() => app((s) => s.settings.activeAccount === "a1")), "the account did not become active")
+  // the same session goes on (not archived, no copy)
+  expect(await until(() => app((s, id) => s.sessions[id].status === "working" || s.sessions[id].status === "done_unseen" || !/limit/.test(s.sessions[id].lastText ?? ""), parked), 4000), "the session did not continue")
+  const same = await app((s, id) => ({ archived: s.sessions[id].archived, copies: Object.values(s.sessions).filter((x) => x.title === s.sessions[id].title && !x.archived).length }), parked)
+  expect(!same.archived && same.copies === 1, `archived ${same.archived}, listed ${same.copies} times`)
 })
 
 check("search: a long title keeps the list in place; Restore brings an archived session back", async () => {

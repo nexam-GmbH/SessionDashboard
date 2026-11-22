@@ -45,8 +45,15 @@ export interface Settings {
   mutedRepos: ID[]
   defaults: { model: string; effort: "low" | "medium" | "high" | "xhigh" | "max"; permissionMode: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions"; worktree: boolean }
   claudeConfigDir: string
-  /** other Claude Code config folders (accounts) whose sessions and usage are read too */
+  /**
+   * Older account folders (CLAUDE_CONFIG_DIR, before v0.8.16): their sessions are still read, and can
+   * be taken over into ~/.claude (Settings → Accounts). Accounts are now `accounts`.
+   */
   claudeConfigDirs: string[]
+  /** Claude accounts beside your normal login (their tokens are in the system's credential store) */
+  accounts: ClaudeAccount[]
+  /** the account the app runs on: "" = your normal Claude Code login, else an id from `accounts` */
+  activeAccount: string
   /**
    * A session the app runs that stops at the usage limit continues on another account by itself,
    * when that account's 5-hour window is under this percentage; 0 = off (you choose on the limit card).
@@ -82,6 +89,19 @@ export interface Settings {
   chatWidth: "readable" | "wide"
   /** the built-in terminal's shell (an id from term_shells: zsh, gitbash, wsl…); "" = the usual one */
   terminalShell: string
+}
+
+/** A Claude account that runs on a token (`claude setup-token`). Only these facts are kept here. */
+export interface ClaudeAccount {
+  id: string
+  email: string
+  /** Pro, Max, Team… as you entered it (a token cannot tell) */
+  plan?: string
+  /** "Work", "Private": shown before the e-mail */
+  label?: string
+  createdAt: string
+  /** when its token ends (a year after it was made) */
+  expiresAt?: string
 }
 
 export interface Workspace {

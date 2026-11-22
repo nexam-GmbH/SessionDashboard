@@ -42,6 +42,7 @@ import {
   type Range,
 } from "./usageData"
 import { useAccountChoices } from "@/features/accounts/AccountItems"
+import { accountName, accountTitle } from "@/lib/accounts"
 
 // the starter dashboard's monochrome chart palette (stock --chart-1…5), lightest first
 const FAMILY_COLOR: Record<string, string> = { Opus: "var(--chart-1)", Sonnet: "var(--chart-2)", Haiku: "var(--chart-3)", Fable: "var(--chart-4)" }
@@ -105,6 +106,7 @@ function Dashboard({ range }: { range: Range }) {
   const peak = useMemo(() => [...days.entries()].sort((a, b) => b[1].tokens - a[1].tokens)[0], [days])
   // the other accounts' plans (Settings → Sessions → Other Claude accounts), each its own block
   const others = useAccountChoices([""]).filter((a) => a.limits)
+  const mainName = useApp((s) => accountName(s, ""))
   const session = limits?.limits.find((l) => l.group === "session")
   const week = limits?.limits.find((l) => l.kind === "weekly_all") ?? limits?.limits.find((l) => l.group === "weekly")
   const now = useNow()
@@ -123,7 +125,7 @@ function Dashboard({ range }: { range: Range }) {
             </CardAction>
           </CardHeader>
           <CardFooter className="flex-col items-stretch gap-2 text-sm">
-            {others.length > 0 && <span className="font-mono text-xs text-muted-foreground">~/.claude</span>}
+            {others.length > 0 && <span className="text-xs text-muted-foreground">{mainName}</span>}
             {session && <Meter label="Current session (5 h)" percent={session.percent} sub={until(session.resets_at, now)} />}
             {week && <Meter label="This week" percent={week.percent} sub={until(week.resets_at, now)} />}
             {!limits && <span className="text-muted-foreground">Asking Claude Code…</span>}
@@ -131,8 +133,8 @@ function Dashboard({ range }: { range: Range }) {
               const five = fiveHourOf(a.limits)
               const wk = weeklyOf(a.limits)
               return (
-                <div key={a.key} role="group" aria-label={`Plan limits of ${a.label}`} className="flex flex-col gap-2 border-t pt-2">
-                  <span className="font-mono text-xs text-muted-foreground">{a.label}</span>
+                <div key={a.id} role="group" aria-label={`Plan limits of ${accountTitle(a)}`} className="flex flex-col gap-2 border-t pt-2">
+                  <span className="text-xs text-muted-foreground">{accountTitle(a)}</span>
                   {five && <Meter label="Current session (5 h)" percent={five.percent} sub={until(five.resets_at, now)} />}
                   {wk && <Meter label="This week" percent={wk.percent} sub={until(wk.resets_at, now)} />}
                 </div>

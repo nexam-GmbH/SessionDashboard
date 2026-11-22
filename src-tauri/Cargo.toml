@@ -1,6 +1,6 @@
 [package]
 name = "session-dashboard"
-version = "0.8.15"
+version = "0.8.16"
 description = "Session Dashboard: one place for all your Claude Code sessions"
 authors = ["you"]
 edition = "2024"
@@ -36,6 +36,8 @@ portable-pty = "0.9"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 listeners = "0.6"
 sdwrap = { path = "crates/sdwrap" }
+# Claude account tokens in the system's credential store (claude/tokens.rs)
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

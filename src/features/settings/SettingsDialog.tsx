@@ -8,7 +8,8 @@ import { SECTIONS } from "./SettingsView"
 
 export function SettingsDialog() {
   const open = useApp((s) => s.settingsOpen)
-  const current = SECTIONS.find((x) => x.id === open) ?? SECTIONS[0]
+  // "accounts:add": the Accounts page with its Add dialog open
+  const current = SECTIONS.find((x) => x.id === open?.split(":")[0]) ?? SECTIONS[0]
   const Page = current.Page
   return (
     <Dialog open={!!open} onOpenChange={(o) => !o && closeSettings()}>

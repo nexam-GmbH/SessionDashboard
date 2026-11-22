@@ -148,8 +148,8 @@ pub fn host_requests(requests: Vec<(&str, Value)>, timeout: Duration) -> Result<
     host_requests_in(requests, timeout, None)
 }
 
-/// `host_requests` as another account (`config_dir`: its CLAUDE_CONFIG_DIR; None = the main one).
-pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, config_dir: Option<&Path>) -> Result<serde_json::Map<String, Value>, String> {
+/// `host_requests` as another account (its token; None = your normal login).
+pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, account: Option<&str>) -> Result<serde_json::Map<String, Value>, String> {
     use std::io::{BufRead, BufReader, Write};
     let mut cmd = crate::sys::command(claude_bin());
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"])
@@ -158,9 +158,7 @@ pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, config_
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     clean_env(&mut cmd);
-    if let Some(d) = config_dir {
-        cmd.env("CLAUDE_CONFIG_DIR", d);
-    }
+    super::tokens::apply(&mut cmd, account)?;
     let mut child = cmd.spawn().map_err(|e| format!("cannot run claude: {e}"))?;
     let pid = child.id();
     HELPERS.lock().unwrap().push(pid);

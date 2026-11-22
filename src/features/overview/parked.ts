@@ -5,8 +5,7 @@
 import { create } from "zustand"
 import type { ID, Session } from "@/lib/model"
 import { getApp } from "@/store/app"
-import { continueOnAccount, continueSession, pushNotification } from "@/store/actions"
-import { accountKey, accountLabel } from "@/lib/accounts"
+import { continueSession } from "@/store/actions"
 
 // Claude Code's own words when a plan limit stops a turn ("Claude usage limit reached…",
 // "You've hit your limit · resets 7pm", "5-hour limit reached ∙ resets 3pm"); not "rate limit",
@@ -24,36 +23,27 @@ export function parkedAtLimit(s: Session) {
 interface Plan {
   ids: ID[]
   at: number
-  /** continue on this account instead (as Settings has it, "" = the main one) */
-  dir?: string
 }
 export const useParkedPlan = create<Plan | null>(() => null)
 let timers: ReturnType<typeof setTimeout>[] = []
 
 /**
- * Continue `ids` in this order from `at` on, one every 45 s; with `dir`, each on that account (a
- * fork there, the old session archived), else where it is.
+ * Continue `ids` in this order from `at` on, one every 45 s, on the active account (a session whose
+ * process ran on another one restarts under it: lib/accounts).
  */
-export function scheduleContinue(ids: ID[], when: number, dir?: string) {
+export function scheduleContinue(ids: ID[], when: number) {
   cancelContinue()
   // 0: now
   const at = when || Date.now()
-  useParkedPlan.setState({ ids, at, ...(dir !== undefined ? { dir } : {}) }, true)
+  useParkedPlan.setState({ ids, at }, true)
   const start = Math.max(0, at - Date.now())
   timers = ids.map((id, i) =>
     setTimeout(() => {
       const s = getApp().sessions[id]
-      if (s && parkedAtLimit(s)) {
-        if (dir === undefined || accountKey(s.configDir) === accountKey(dir)) continueSession(id)
-        else void continueOnAccount(id, dir, { prompt: "continue" }).catch((e) => couldNotMove(s, dir, e))
-      }
+      if (s && parkedAtLimit(s)) continueSession(id)
       if (i === ids.length - 1) useParkedPlan.setState(null, true)
     }, start + i * STAGGER_MS),
   )
-}
-
-export function couldNotMove(s: Session, dir: string, e: unknown) {
-  pushNotification({ sessionId: s.id, kind: "error", title: s.title, body: `Could not continue on ${accountLabel(dir)}: ${String(e).replace(/^Error: /, "")}`, createdAt: new Date().toISOString() })
 }
 
 export function cancelContinue() {

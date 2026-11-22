@@ -142,6 +142,58 @@ pub fn remove_copy(session_id: &str, to_dir: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
+/// Take every session of an older account folder over into the main one (Settings → Accounts, once):
+/// transcripts (and the folders beside them) are copied into the same project folders, the
+/// originals stay. One already there is replaced only when the old folder's is newer and longer
+/// (it went on there since). Returns how many were copied.
+pub fn take_over(from_root: &Path, to_root: &Path) -> Result<usize, String> {
+    if from_root == to_root {
+        return Ok(0);
+    }
+    let mut n = 0;
+    let Ok(projects) = fs::read_dir(from_root.join("projects")) else { return Ok(0) };
+    for p in projects.flatten() {
+        if !p.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let dest_dir = to_root.join("projects").join(p.file_name());
+        let Ok(files) = fs::read_dir(p.path()) else { continue };
+        for f in files.flatten() {
+            let src = f.path();
+            if src.extension().and_then(|e| e.to_str()) != Some("jsonl") || is_copy(&src) {
+                continue;
+            }
+            let dest = dest_dir.join(f.file_name());
+            let newer = |a: &Path, b: &Path| {
+                let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else { return true };
+                ma.len() > mb.len() && ma.modified().ok() > mb.modified().ok()
+            };
+            if dest.exists() && !newer(&src, &dest) {
+                continue;
+            }
+            fs::create_dir_all(&dest_dir).map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
+            fs::copy(&src, &dest).map_err(|e| format!("cannot copy {}: {e}", src.display()))?;
+            let side = src.with_extension("");
+            let side_dest = dest.with_extension("");
+            if side.is_dir() {
+                let _ = copy_dir(&side, &side_dest);
+            }
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// How many sessions an older account folder holds that the main one does not have yet.
+pub fn not_taken_over(from_root: &Path, to_root: &Path) -> usize {
+    let Ok(projects) = fs::read_dir(from_root.join("projects")) else { return 0 };
+    projects
+        .flatten()
+        .filter_map(|p| fs::read_dir(p.path()).ok().map(|files| (p.file_name(), files)))
+        .map(|(name, files)| files.flatten().filter(|f| f.path().extension().and_then(|e| e.to_str()) == Some("jsonl") && !is_copy(&f.path()) && !to_root.join("projects").join(&name).join(f.file_name()).exists()).count())
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +229,41 @@ mod tests {
         // a second copy finds it there and makes nothing new
         let again = copy_between(&from, &to, "s1").unwrap();
         assert!(again.made.is_empty());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn takes_an_old_folder_over_and_keeps_the_originals() {
+        let base = tmp("takeover");
+        let (from, to) = (base.join(".claude-work"), base.join(".claude"));
+        let p = from.join("projects").join("-home-me-api");
+        fs::create_dir_all(p.join("s1").join("subagents")).unwrap();
+        fs::write(p.join("s1.jsonl"), "one
+two
+").unwrap();
+        fs::write(p.join("s1").join("subagents").join("a.jsonl"), "{}
+").unwrap();
+        fs::write(p.join("s2.jsonl"), "x
+").unwrap();
+        // s2 is in the main folder already and went on there: it stays as it is
+        let q = to.join("projects").join("-home-me-api");
+        fs::create_dir_all(&q).unwrap();
+        fs::write(q.join("s2.jsonl"), "x
+and more
+").unwrap();
+        assert_eq!(not_taken_over(&from, &to), 1);
+        assert_eq!(take_over(&from, &to).unwrap(), 1);
+        assert_eq!(fs::read_to_string(q.join("s1.jsonl")).unwrap(), "one
+two
+");
+        assert!(q.join("s1").join("subagents").join("a.jsonl").is_file());
+        assert_eq!(fs::read_to_string(q.join("s2.jsonl")).unwrap(), "x
+and more
+");
+        assert!(p.join("s1.jsonl").is_file(), "the original stays");
+        assert_eq!(not_taken_over(&from, &to), 0);
+        // again: nothing new
+        assert_eq!(take_over(&from, &to).unwrap(), 0);
         let _ = fs::remove_dir_all(&base);
     }
 

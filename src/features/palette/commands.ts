@@ -16,6 +16,8 @@ import { getApp } from "@/store/app"
 import { REAL } from "@/backend/mode"
 import { archiveWithUndo } from "@/features/notifications/undo"
 import { openShortcutsHelp } from "@/app/ShortcutsHelp"
+import { accountsOf, accountTitle, activeAccountOf } from "@/lib/accounts"
+import { setActiveAccount } from "@/features/accounts/accountState"
 
 /**
  * The few commands the palette offers next to sessions. `when` hides the ones that don't apply.
@@ -66,3 +68,17 @@ export const COMMANDS: Command[] = [
     },
   },
 ]
+
+/** Ctrl+K → "Switch account": every account but the active one (and Manage accounts). */
+export function accountCommands(): Command[] {
+  const st = getApp()
+  const active = activeAccountOf(st)
+  const list = accountsOf(st)
+  if (list.length < 2) return [{ id: "account-add", title: "Add a Claude account", keywords: "account login email switch token", run: () => openSettings("accounts:add") }]
+  return [
+    ...list
+      .filter((a) => a.id !== active)
+      .map((a) => ({ id: `account:${a.id || "login"}`, title: `Switch account: ${accountTitle(a)}`, keywords: `account login email switch ${a.email ?? ""} ${a.label ?? ""}`, run: () => setActiveAccount(a.id) })),
+    { id: "accounts", title: "Manage accounts", keywords: "account login email switch token", run: () => openSettings("accounts") },
+  ]
+}

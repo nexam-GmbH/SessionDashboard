@@ -1,24 +1,29 @@
-// Sessions stopping at the usage limit: the limits are asked again at once (which account has room
-// just changed), and with Settings → Sessions → Switch accounts at the limit on, the app's own
-// sessions carry on with the account that has the most room, one every 45 s. A session moves by
-// itself at most once in 5 hours (no ping-pong); with no account under the threshold nothing moves
+// Sessions stopping at the usage limit: the limits are asked again at once, and with Settings →
+// Accounts → Switch accounts at the limit on, the whole app switches to the account with the most
+// room (under the threshold, not at a limit itself), then continues the sessions that stopped, one
+// every 45 s. At most one switch in 30 minutes (no ping-pong); with no account free nothing changes
 // and the limit card offers "Continue at reset" as before.
 import { getApp, useApp } from "@/store/app"
-import type { ID, Session } from "@/lib/model"
-import { accountKey, accountLabel, accountsOf } from "@/lib/accounts"
-import { plural } from "@/lib/format"
-import { continueOnAccount, pushNotification } from "@/store/actions"
-import { atLimit, fiveHourOf, limitsFor, refreshLimitsSoon, useUsage } from "@/features/usage/usageData"
-import { couldNotMove, parkedAtLimit } from "@/features/overview/parked"
+import type { Session } from "@/lib/model"
+import { accountName, accountsOf, activeAccountOf } from "@/lib/accounts"
+import { pushNotification } from "@/store/actions"
+import {
+  atLimit,
+  fiveHourOf,
+  limitsFor,
+  refreshLimitsSoon,
+  useUsage,
+} from "@/features/usage/usageData"
+import { parkedAtLimit, scheduleContinue } from "@/features/overview/parked"
+import { setActiveAccount } from "./accountState"
 
-const WINDOW_MS = 5 * 3600_000
-const STAGGER_MS = 45_000
-/** a session just stopped: a moment for its state to settle (and fresh limits to arrive) */
+const QUIET_MS = 30 * 60_000
+/** a session just stopped: a moment for its state to settle (and others that stop with it) */
 const SETTLE_MS = 3000
 
-let parked = new Set<ID>()
-const queue: ID[] = []
-let running = false
+let parked = new Set<string>()
+let lastSwitch = 0
+let timer: ReturnType<typeof setTimeout> | undefined
 let started = false
 
 export function startAccountWatch() {
@@ -29,15 +34,9 @@ export function startAccountWatch() {
   })
 }
 
-/** Moved by itself in the last 5 hours: stays where it is now. */
-function movedLately(s: Session) {
-  return !!s.movedFrom?.auto && Date.now() - Date.parse(s.movedFrom.at) < WINDOW_MS
-}
-
-/** A session the app started, on this computer: the ones that may move by themselves. */
-function mayMove(s: Session) {
-  return s.control === "owned" && !s.machine && s.role !== "main" && !movedLately(s)
-}
+/** Sessions the app runs on this computer: the ones that continue on another account. */
+const mine = (s: Session) =>
+  s.control === "owned" && !s.machine && s.role !== "main"
 
 function check() {
   const st = getApp()
@@ -46,63 +45,64 @@ function check() {
   parked = new Set(now.map((s) => s.id))
   if (!fresh.length) return
   refreshLimitsSoon()
-  if (!(st.settings.autoSwitchAccount > 0) || !(st.settings.claudeConfigDirs ?? []).length) return
-  for (const s of fresh) if (mayMove(s) && !queue.includes(s.id)) queue.push(s.id)
-  void pump()
+  if (
+    !(st.settings.autoSwitchAccount > 0) ||
+    !(st.settings.accounts ?? []).length ||
+    !fresh.some(mine)
+  )
+    return
+  clearTimeout(timer)
+  timer = setTimeout(switchNow, SETTLE_MS)
 }
 
-/** The account with the most room under the threshold, not at a limit itself; none: stay. */
-export function pickAccount(s: Session, threshold: number) {
-  const own = accountKey(s.configDir)
+/**
+ * The account with the most room in its 5-hour window, under `threshold` and at no limit, not the
+ * active one. An account whose limits are not known yet (no message sent on it so far) comes after
+ * the known ones.
+ */
+export function pickAccount(threshold: number): string | undefined {
+  const st = getApp()
   const usage = useUsage.getState()
-  return accountsOf(getApp().settings.claudeConfigDirs ?? [])
-    .filter((a) => a.key !== own)
-    .map((a) => ({ a, l: limitsFor(usage, a.dir) }))
-    .filter((x) => x.l && !atLimit(x.l) && (fiveHourOf(x.l)?.percent ?? 100) < threshold)
-    .sort((x, y) => (fiveHourOf(x.l)?.percent ?? 100) - (fiveHourOf(y.l)?.percent ?? 100))[0]?.a
+  const active = activeAccountOf(st)
+  return accountsOf(st)
+    .filter((a) => a.id !== active)
+    .map((a) => ({ id: a.id, l: limitsFor(usage, a.id) }))
+    .filter(
+      (x) =>
+        !x.l || (!atLimit(x.l) && (fiveHourOf(x.l)?.percent ?? 0) < threshold)
+    )
+    .sort(
+      (x, y) =>
+        Number(!x.l) - Number(!y.l) ||
+        (fiveHourOf(x.l)?.percent ?? 0) - (fiveHourOf(y.l)?.percent ?? 0)
+    )[0]?.id
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-async function pump() {
-  if (running) return
-  running = true
-  const moved = new Map<string, { dir: string; ids: ID[] }>()
-  try {
-    await sleep(SETTLE_MS)
-    let first = true
-    while (queue.length) {
-      const id = queue.shift()!
-      const s = getApp().sessions[id]
-      const threshold = getApp().settings.autoSwitchAccount
-      if (!s || !threshold || !parkedAtLimit(s) || !mayMove(s)) continue
-      const to = pickAccount(s, threshold)
-      if (!to) continue
-      if (!first) await sleep(STAGGER_MS)
-      first = false
-      try {
-        const nid = await continueOnAccount(id, to.dir, { prompt: "continue", auto: true })
-        if (nid) {
-          const m = moved.get(to.key) ?? { dir: to.dir, ids: [] }
-          m.ids.push(nid)
-          moved.set(to.key, m)
-        }
-      } catch (e) {
-        couldNotMove(s, to.dir, e)
-      }
-    }
-  } finally {
-    running = false
-  }
-  // one quiet line per account: "3 sessions continued on ~/.claude-work"
-  for (const m of moved.values()) {
-    pushNotification({
-      sessionId: m.ids[0],
-      kind: "finished",
-      title: "Usage limit",
-      body: `${plural(m.ids.length, "session")} continued on ${accountLabel(m.dir)}`,
-      createdAt: new Date().toISOString(),
-    })
-  }
-  if (queue.length) void pump()
+function switchNow() {
+  const st = getApp()
+  const threshold = st.settings.autoSwitchAccount
+  if (!threshold || Date.now() - lastSwitch < QUIET_MS) return
+  const stopped = Object.values(st.sessions).filter(
+    (s) => parkedAtLimit(s) && mine(s)
+  )
+  if (!stopped.length) return
+  const to = pickAccount(threshold)
+  if (to === undefined) return
+  lastSwitch = Date.now()
+  const name = accountName(st, to)
+  setActiveAccount(to, { note: "Limit reached, switched to" })
+  // each continues on the new account with "continue" (its process restarts under the new token)
+  scheduleContinue(
+    stopped
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .map((s) => s.id),
+    0
+  )
+  pushNotification({
+    sessionId: stopped[0].id,
+    kind: "finished",
+    title: "Usage limit",
+    body: `Limit reached, switched to ${name}`,
+    createdAt: new Date().toISOString(),
+  })
 }

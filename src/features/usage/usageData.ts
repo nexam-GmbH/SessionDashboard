@@ -5,7 +5,6 @@ import { create } from "zustand"
 import { IN_TAURI } from "@/lib/platform"
 import { REAL } from "@/backend/mode"
 import { getApp } from "@/store/app"
-import { accountKey } from "@/lib/accounts"
 
 export interface Tokens {
   i: number
@@ -370,7 +369,10 @@ interface UsageState {
   ledger: Ledger | null
   /** the main account's limits */
   limits: Limits | null
-  /** every account's limits by account key (lib/accounts: "" = the main one) */
+  /**
+   * every account's limits by account id ("" = your normal login, asked with get_usage; accounts on a
+   * token report theirs with every model call: rate_limit_event)
+   */
   accounts: Record<string, Limits>
   scanning: boolean
   error?: string
@@ -391,10 +393,38 @@ export function resetOf(l?: Limits | null): number | null {
   return pick.length ? Math.max(...pick.map((x) => Date.parse(x.resets_at!))) : null
 }
 
-/** An account's limits (`dir` as anywhere: Settings, a session's configDir; "" = the main one). */
-export function limitsFor(st: UsageState, dir?: string | null): Limits | undefined {
-  const key = accountKey(dir)
+/** An account's limits ("" = your normal login); none while not known yet. */
+export function limitsFor(st: UsageState, id?: string | null): Limits | undefined {
+  const key = id ?? ""
   return st.accounts[key] ?? (key === "" ? (st.limits ?? undefined) : !(IN_TAURI && REAL) ? mockOther(key) : undefined)
+}
+
+/** What a session's model call said about its account's limits (`rate_limit_event`, utilization 0–1). */
+export interface RateLimitInfo {
+  status?: string
+  resetsAt?: number
+  rateLimitType?: string
+  unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number; status?: string } | undefined>
+}
+
+/** Keep the limits a session just reported for its account (the freshest there are). */
+export function noteRateLimit(id: string, info: RateLimitInfo) {
+  const w = info.unifiedWindows ?? {}
+  const at = (s?: number) => (s ? new Date(s * 1000).toISOString() : null)
+  const pct = (x?: { utilization?: number; status?: string }) => (x?.status === "rejected" ? 100 : Math.round((x?.utilization ?? 0) * 1000) / 10)
+  const limits: Limit[] = []
+  if (w.five_hour) limits.push({ kind: "session", group: "session", percent: pct(w.five_hour), resets_at: at(w.five_hour.resetsAt) })
+  if (w.seven_day) limits.push({ kind: "weekly_all", group: "weekly", percent: pct(w.seven_day), resets_at: at(w.seven_day.resetsAt) })
+  // only the window that stopped it, no others
+  if (!limits.length && info.rateLimitType && info.status === "rejected") limits.push({ kind: info.rateLimitType === "five_hour" ? "session" : "weekly_all", group: info.rateLimitType === "five_hour" ? "session" : "weekly", percent: 100, resets_at: at(info.resetsAt) })
+  if (!limits.length) return
+  useUsage.setState((s) => {
+    const prev = s.accounts[id]
+    // keep what this report does not say (a model-scoped weekly window from get_usage)
+    const rest = (prev?.limits ?? []).filter((l) => !limits.some((n) => n.group === l.group && (n.kind === l.kind || l.kind === "five_hour")))
+    const next: Limits = { limits: [...limits, ...rest], plan: prev?.plan, samples: prev?.samples ?? [], at: Date.now() }
+    return { accounts: { ...s.accounts, [id]: next }, ...(id === "" ? { limits: next } : {}) }
+  })
 }
 
 let started = false
@@ -416,16 +446,17 @@ export async function refreshUsage(what: { ledger?: boolean; limits?: boolean } 
   const { invoke } = await import("@tauri-apps/api/core")
   if (what.limits) {
     lastLimits = Date.now()
-    invoke<{ accounts: { configDir: string | null; usage: Record<string, unknown> | null; samples: LimitSample[]; error?: string }[] }>("usage_limits")
+    invoke<{ accounts: { accountId: string; usage: Record<string, unknown> | null; samples: LimitSample[]; error?: string }[] }>("usage_limits")
       .then((r) => {
-        const accounts: Record<string, Limits> = {}
+        // your normal login answers get_usage; the token accounts keep what their sessions reported
+        const accounts: Record<string, Limits> = { ...useUsage.getState().accounts }
         for (const a of r.accounts ?? []) {
           const rl = a.usage?.rate_limits as { limits?: Limit[] } | undefined
-          // an account that did not answer (signed out, offline): nothing to show for it
+          // signed out, offline: nothing to show for it
           if (!rl?.limits && !a.samples?.length) continue
-          accounts[accountKey(a.configDir)] = { limits: rl?.limits ?? [], plan: a.usage?.subscription_type as string | undefined, samples: a.samples ?? [], at: Date.now() }
+          accounts[a.accountId ?? ""] = { limits: rl?.limits ?? [], plan: a.usage?.subscription_type as string | undefined, samples: a.samples ?? [], at: Date.now() }
         }
-        useUsage.setState({ limits: accounts[""] ?? null, accounts })
+        useUsage.setState({ limits: accounts[""] ?? useUsage.getState().limits, accounts })
       })
       .catch((e) => useUsage.setState({ error: String(e) }))
   }

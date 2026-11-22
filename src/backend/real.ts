@@ -21,7 +21,8 @@ import { CLOUD, cloudSend, cloudTranscript, pollCloud, applyCloudList } from "./
 import { readGit } from "./git"
 import { MARKED_DONE, outcomeOf, type Outcome } from "@/lib/outcome"
 import { startNotify } from "./notify"
-import { accountKey, accountLabel } from "@/lib/accounts"
+import { accountName, activeAccountOf } from "@/lib/accounts"
+import { noteRateLimit, type RateLimitInfo } from "@/features/usage/usageData"
 
 export { REAL }
 
@@ -95,7 +96,7 @@ const metas = new Map<ID, Meta>()
 let pidLive = new Map<ID, Live>()
 let bgLive = new Map<ID, Live>()
 /** sessions the app runs: key = session id */
-const owned = new Map<ID, { cwd: string; turnMsgId?: string; sending: boolean; host?: string; fresh?: boolean; state?: "idle" | "running" | "requires_action"; baseCost?: number; interrupting?: boolean }>()
+const owned = new Map<ID, { cwd: string; turnMsgId?: string; sending: boolean; host?: string; account?: string; fresh?: boolean; state?: "idle" | "running" | "requires_action"; baseCost?: number; interrupting?: boolean }>()
 /** sessions the app could not start, or whose process failed: kept on screen with the reason (sync would drop a session with no transcript and no process) */
 const failed = new Map<ID, { cwd: string; message: string; seen?: boolean }>()
 /** records read when a chat opens (the newest ones) */
@@ -125,6 +126,8 @@ type Persist = {
   moved?: Record<ID, { from: ID; dir?: string; at: number; auto?: boolean }>
   /** transcripts copied to another account for a fork, removed once the fork has its own: fork id → copy */
   copies?: Record<ID, { src: ID; to?: string }>
+  /** the account each session last ran on here (Settings → Accounts; "" = your normal login) */
+  ranOn?: Record<ID, string>
 }
 function loadPersist(): Persist {
   try {
@@ -575,6 +578,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     editedPaths: meta?.edited && prev?.editedPaths && sameList(prev.editedPaths, meta.edited) ? prev.editedPaths : meta?.edited,
     configDir: meta?.configDir ?? live?.configDir ?? prev?.configDir,
     movedFrom: movedFrom(id, prev),
+    accountId: persist.ranOn?.[id],
     // the app's own session: what you picked here wins; a terminal's: what the transcript says now
     // (Shift+Tab or /model there shows up here)
     model: own ? (prev?.model ?? meta?.model ?? DEFAULT_MODEL) : (meta?.model ?? prev?.model ?? DEFAULT_MODEL),
@@ -943,7 +947,13 @@ async function pollScan(): Promise<boolean> {
       for (const id of [...metas.keys()]) if (!now.has(id)) metas.delete(id)
     }
     for (const id of d.removed) metas.delete(id)
-    for (const m of d.changed) metas.set(m.sessionId, m)
+    for (const m of d.changed) {
+      // the same session in ~/.claude and in an older account folder (taken over, Settings →
+      // Accounts): the newer one, ~/.claude when they are alike
+      const had = metas.get(m.sessionId)
+      if (had && had.path !== m.path && (had.updatedMs > m.updatedMs || (had.updatedMs === m.updatedMs && !had.configDir))) continue
+      metas.set(m.sessionId, m)
+    }
     scanVersion = d.version
     dropCopies()
     return d.full || d.changed.length > 0 || d.removed.length > 0
@@ -1327,6 +1337,8 @@ interface StartOpts {
   configDir?: string
   /** pass `effort` even when the resumed session never had one chosen (it moves to another account) */
   keepEffort?: boolean
+  /** the Claude account to run on (default: the active one; Settings → Accounts) */
+  accountId?: string
   model?: string
   effort?: string
   permissionMode?: string
@@ -1363,7 +1375,13 @@ export function realStart(opts: StartOpts): ID {
   failed.delete(id)
   // total_cost_usd counts this process only: a resumed session adds it to what it cost before
   const baseCost = opts.resume && !opts.fork ? (getApp().sessions[id]?.usage.costUsd ?? 0) : 0
-  owned.set(id, { cwd: opts.cwd, sending: false, host, fresh: !opts.resume || !!opts.fork, baseCost })
+  // the account it runs on: the active one (a server's or the cloud's own login stays theirs)
+  const account = host ? undefined : (opts.accountId ?? activeAccountOf(getApp()))
+  owned.set(id, { cwd: opts.cwd, sending: false, host, account, fresh: !opts.resume || !!opts.fork, baseCost })
+  if (account !== undefined && persist.ranOn?.[id] !== account) {
+    persist.ranOn = { ...persist.ranOn, [id]: account }
+    save()
+  }
   if (host) {
     // shows up under the machine's project at once (the poll there confirms it)
     const map = extByMachine.get(host) ?? new Map<ID, ExtSession>()
@@ -1388,8 +1406,9 @@ export function realStart(opts: StartOpts): ID {
         fastMode: opts.fastMode ?? prev?.fastMode,
         ultracode: opts.ultracode ?? prev?.ultracode,
         outputStyle: opts.outputStyle ?? prev?.outputStyle,
-        // the account it runs on, before its transcript says so ("" = the main one)
+        // the folder it runs in, before its transcript says so ("" = ~/.claude)
         ...(opts.configDir !== undefined ? { configDir: opts.configDir || undefined } : {}),
+        ...(account !== undefined ? { accountId: account } : {}),
       },
     },
     structVersion: s.structVersion + 1,
@@ -1405,7 +1424,8 @@ export function realStart(opts: StartOpts): ID {
   // session cannot show the approval a held message waits for, so it would be dropped after five
   // minutes; a project's or the user's "refuse" still wins (Claude Code applies it over this)
   const flags = { ...(settingsOf(opts) ?? {}), ...(host ? {} : { crossSessionInbound: "accept" }) }
-  const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, keepEffort: _k, ...rest } = opts
+  const { fastMode: _f, ultracode: _u, outputStyle: _o, machine: _m, promptShown: _p, keepEffort: _k, accountId: _a, ...rest } = opts
+  void _a
   void _k
   void _p
   void _f
@@ -1413,7 +1433,7 @@ export function realStart(opts: StartOpts): ID {
   void _o
   void _m
   // a new session and a fork run under the id the app shows them by (a fork gets a new one)
-  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, promptUuid, host, settings: Object.keys(flags).length ? JSON.stringify(flags) : undefined } }).catch((e) => {
+  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, accountId: account || undefined, promptUuid, host, settings: Object.keys(flags).length ? JSON.stringify(flags) : undefined } }).catch((e) => {
     // "already running": it is, keep listening to it
     if (/already running/i.test(String(e))) return
     owned.delete(id)
@@ -1449,6 +1469,17 @@ function setStatusLocal(id: ID, status: SessionStatus, patch: Partial<Session> =
 export function realSend(id: ID, text: string, attachments?: string[]) {
   const s = getApp().sessions[id]
   if (!s) return
+  // its process runs on another account than the active one (you switched): it ends, and the
+  // session goes on under the active account with this message (same session, same history). A
+  // turn still running finishes on the old account first; the message waits for it as usual.
+  const own = owned.get(id)
+  if (own && !own.host && (own.account ?? "") !== activeAccountOf(getApp()) && !isRunning(id) && !own.sending) {
+    void stopAndWait(id).then(() => {
+      noticeInfo(id, `Continues on ${accountName(getApp(), activeAccountOf(getApp()))}.`)
+      realSend(id, text, attachments)
+    })
+    return
+  }
   // pasted pictures go as images; other files by name
   const { images, rest } = takeImages(attachments)
   const body = `${text}${attachmentsText(rest)}`
@@ -1692,7 +1723,7 @@ export async function realRewind(id: ID, promptItemId: ID, scope: "both" | "conv
     try {
       // the session's own process is stopped first (two writers on one session's files never)
       if (owned.has(id) && isRunning(id)) realInterrupt(id)
-      const out = await invoke<string>("claude_rewind_files", { cwd: s.startCwd ?? s.cwd, sessionId: id, uuid, configDir: s.configDir })
+      const out = await invoke<string>("claude_rewind_files", { cwd: s.startCwd ?? s.cwd, sessionId: id, uuid, configDir: s.configDir, accountId: s.machine ? undefined : activeAccountOf(getApp()) || undefined })
       noticeInfo(id, `Files restored to before “${promptText.slice(0, 60)}”${out ? ` · ${out.split("\n").filter(Boolean).slice(-1)[0].slice(0, 160)}` : ""}`)
     } catch (e) {
       noticeError(id, `Could not restore the files: ${String(e)}`, false)
@@ -1735,50 +1766,6 @@ export function realForkAt(id: ID, promptItemId: ID): ID | undefined {
 }
 
 /**
- * Continue a session on another account (another Claude Code config folder; `dir` as Settings has
- * it, "" = the main one): its transcript is copied into the same project folder there, and the
- * conversation goes on as a fork under a new id (one session id never lives in two folders). The
- * old session is archived; its transcript stays as history. Model, effort and permission mode go
- * along. Only sessions on this computer. Returns the new session's id.
- */
-export async function realContinueOnAccount(id: ID, dir: string, opts: { prompt?: string; auto?: boolean } = {}): Promise<ID> {
-  const s = getApp().sessions[id]
-  if (!s) throw new Error("The session is gone")
-  if (s.machine) throw new Error("Only sessions on this computer can move to another account")
-  if (accountKey(s.configDir) === accountKey(dir)) throw new Error(`The session already runs on ${accountLabel(dir)}`)
-  // one conversation, one writer: the app's own process stops first
-  if (owned.has(id)) {
-    if (isRunning(id)) realInterrupt(id)
-    await stopAndWait(id)
-  }
-  await invoke<string>("claude_copy_transcript", { sessionId: id, fromDir: s.configDir || null, toDir: dir || null })
-  const nid = realStart({
-    cwd: s.startCwd ?? s.cwd,
-    resume: id,
-    fork: true,
-    configDir: dir,
-    keepEffort: true,
-    prompt: opts.prompt,
-    name: s.title,
-    model: s.model,
-    effort: s.effort,
-    permissionMode: s.permissionMode,
-    fastMode: s.fastMode,
-    ultracode: s.ultracode,
-    outputStyle: s.outputStyle,
-  })
-  persist.moved = { ...persist.moved, [nid]: { from: id, ...(s.configDir ? { dir: s.configDir } : {}), at: Date.now(), ...(opts.auto ? { auto: true } : {}) } }
-  persist.copies = { ...persist.copies, [nid]: { src: id, ...(dir ? { to: dir } : {}) } }
-  if (s.title) persist.titles = { ...persist.titles, [nid]: s.title }
-  save()
-  setApp((st) => (st.sessions[nid] ? { sessions: { ...st.sessions, [nid]: { ...st.sessions[nid], title: s.title || st.sessions[nid].title, movedFrom: movedFrom(nid) } } } : st))
-  noticeInfo(nid, `Continued from account ${accountLabel(s.configDir)} on ${accountLabel(dir)}. The first message reads the whole conversation again, on this account's limit.`)
-  const a = await import("@/store/actions")
-  a.archiveSessions([id])
-  return nid
-}
-
-/**
  * Copies made for forks on another account: once the fork has a transcript of its own (it holds the
  * whole conversation), the copy goes. A fork that could not start, or whose process ended before it
  * wrote anything (the app closed right after the move), never took the conversation over: the old
@@ -1798,7 +1785,7 @@ function dropCopies() {
       if (persist.moved) delete persist.moved[nid]
       failed.delete(nid)
       void import("@/store/actions").then((a) => a.restoreSessions([x.src]))
-      if (fail) noticeError(x.src, `Could not continue on ${accountLabel(x.to)}: ${fail.message}`, false)
+      if (fail) noticeError(x.src, `Could not continue on the other account: ${fail.message}`, false)
       sync()
     }
   }
@@ -2287,6 +2274,11 @@ function onEvent({ key, event, exit }: EventPayload) {
   }
   if (!event || !own) return
   switch (event.type) {
+    case "rate_limit_event": {
+      // the account's limits as this call saw them (accounts on a token report them only this way)
+      if (!own.host && event.rate_limit_info) noteRateLimit(own.account ?? "", event.rate_limit_info as RateLimitInfo)
+      break
+    }
     case "stream_event": {
       // a subagent's streamed text belongs to its Task call, not to the main chat's live message
       if (event.parent_tool_use_id) break

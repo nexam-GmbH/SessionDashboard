@@ -21,6 +21,52 @@ struct Term {
 }
 
 static TERM_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Terminals running `claude setup-token` for an account (key → account id): the token it prints is
+/// saved to the credential store and shown as `sk-ant-oat01-****`, so it never reaches the web view.
+static CAPTURE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+/// wide while a token is read: claude wraps long lines at the terminal's width, which would cut it
+const CAPTURE_COLS: u16 = 400;
+
+fn capturing(key: &str) -> Option<String> {
+    CAPTURE.lock().unwrap().as_ref().and_then(|m| m.get(key).cloned())
+}
+
+/// Save a token found in this output (and mask it there); true once one was saved.
+fn take_token(key: &str, chunk: &mut [u8]) -> bool {
+    let Some(account) = capturing(key) else { return false };
+    let Some(r) = crate::claude::tokens::find_token(chunk) else { return false };
+    let token = String::from_utf8_lossy(&chunk[r.0..r.1]).to_string();
+    crate::claude::tokens::mask(chunk, r);
+    if crate::claude::tokens::save(&account, &token).is_ok() {
+        if let Some(m) = CAPTURE.lock().unwrap().as_mut() {
+            m.remove(key);
+        }
+        return true;
+    }
+    false
+}
+
+/// Read the next token this terminal prints into `account`'s place in the credential store.
+pub fn capture(terms: &Terms, key: &str, account: &str) -> Result<(), String> {
+    if account.is_empty() {
+        return Err("no account".into());
+    }
+    {
+        let map = terms.0.lock().unwrap();
+        let t = map.get(key).ok_or("terminal is closed")?;
+        let _ = t.master.resize(size(CAPTURE_COLS, 40));
+    }
+    CAPTURE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key.to_string(), account.to_string());
+    Ok(())
+}
+
+/// Stop waiting for a token in this terminal (the dialog closed).
+pub fn capture_cancel(key: &str) {
+    if let Some(m) = CAPTURE.lock().unwrap().as_mut() {
+        m.remove(key);
+    }
+}
 const SCROLLBACK: usize = 256 * 1024;
 
 /// Open terminals by the UI's key (one per folder).
@@ -238,6 +284,8 @@ pub fn open(terms: &Terms, key: String, cwd: String, host: Option<String>, shell
                     Err(_) => break,
                 }
             }
+            // `claude setup-token` for an account: its token goes to the credential store, dots to the UI
+            take_token(&key, &mut chunk);
             {
                 let mut back = scrollback.lock().unwrap();
                 back.extend_from_slice(&chunk);
@@ -303,6 +351,10 @@ pub fn key_of_descendant(terms: &Terms, pid: u32) -> Option<String> {
 }
 
 pub fn resize(terms: &Terms, key: &str, cols: u16, rows: u16) -> Result<(), String> {
+    // stays wide while a token is read
+    if capturing(key).is_some() {
+        return Ok(());
+    }
     let map = terms.0.lock().unwrap();
     let t = map.get(key).ok_or("terminal is closed")?;
     t.master.resize(size(cols, rows)).map_err(|e| e.to_string())
@@ -320,6 +372,19 @@ pub fn close_all(terms: &Terms) {
     for (_, mut t) in terms.0.lock().unwrap().drain() {
         let _ = t.child.kill();
     }
+}
+
+/// Settings → Accounts → Add: the token `claude setup-token` prints in this terminal is saved for
+/// the account (never sent to the UI).
+#[tauri::command]
+pub async fn term_capture_token(terms: tauri::State<'_, Terms>, key: String, account_id: String) -> Result<(), String> {
+    capture(&terms, &key, &account_id)
+}
+
+#[tauri::command]
+pub async fn term_capture_cancel(key: String) -> Result<(), String> {
+    capture_cancel(&key);
+    Ok(())
 }
 
 // async: off the main thread, so typing in the terminal never holds up the window

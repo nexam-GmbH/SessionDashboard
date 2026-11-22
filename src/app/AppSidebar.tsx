@@ -4,7 +4,9 @@
 // move while a session lives, so muscle memory (and Ctrl+1–9) stays valid.
 import { memo, useEffect, useRef, useState } from "react"
 import { Archive, ChartColumn, Check, ChevronsUpDown, GitFork, History, MoreHorizontal, Network, Pencil, Pin, PinOff, Plus, Search, Settings, SquareArrowOutUpRight } from "lucide-react"
-import { useUsage } from "@/features/usage/usageData"
+import { fiveHourOf, limitsFor, useUsage } from "@/features/usage/usageData"
+import { AccountSwitcher } from "@/features/accounts/AccountSwitcher"
+import { useActiveAccount } from "@/features/accounts/accountState"
 import { useShallow } from "zustand/react/shallow"
 import {
   Sidebar,
@@ -442,7 +444,9 @@ function NumberHint({ n }: { n: number }) {
 
 function Footer() {
   const route = useApp((s) => s.route)
-  const session = useUsage((s) => s.limits?.limits.find((l) => l.group === "session")?.percent)
+  // the active account's 5-hour window
+  const acct = useActiveAccount()
+  const session = useUsage((s) => fiveHourOf(limitsFor(s, acct))?.percent)
   const settingsShown = useApp((s) => !!s.settingsOpen)
   return (
     <SidebarMenu>
@@ -468,6 +472,9 @@ function Footer() {
           <Settings />
           <span>Settings</span>
         </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <AccountSwitcher />
       </SidebarMenuItem>
     </SidebarMenu>
   )

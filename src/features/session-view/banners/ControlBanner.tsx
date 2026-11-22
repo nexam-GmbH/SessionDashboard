@@ -8,7 +8,6 @@ import type { ID } from "@/lib/model"
 import { useApp } from "@/store/app"
 import { forkSession, resumeSession, takeOverSession, openSettings, openSession } from "@/store/actions"
 import { restoreWithUndo } from "@/features/notifications/undo"
-import { accountLabel } from "@/lib/accounts"
 import { useRelTime } from "@/components/common/RelativeTime"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -31,7 +30,7 @@ export const ArchivedBanner = memo(function ArchivedBanner({ sessionId }: { sess
       <span className="min-w-0 flex-1 truncate">
         Archived{" "}
         <span className="text-muted-foreground/70">
-          {next ? `· continued on ${accountLabel(next.configDir)}` : "· kept with its whole conversation, only left out of the lists"}
+          {next ? "· it continued as another session" : "· kept with its whole conversation, only left out of the lists"}
         </span>
       </span>
       {next && (

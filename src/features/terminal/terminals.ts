@@ -356,16 +356,22 @@ export function toggleTerminal() {
   } else void show().then((e) => e.term.focus())
 }
 
-/** Run a command in the terminal of what is on screen (a `! command` in the prompt box or in a reply). */
-export async function runInTerminal(command: string, place: Place = currentPlace()) {
+/**
+ * Run a command in the terminal of what is on screen (a `! command` in the prompt box or in a reply).
+ * `before` runs once the shell is up, before the command is typed (it gets the terminal's key).
+ * Returns that key.
+ */
+export async function runInTerminal(command: string, place: Place = currentPlace(), before?: (key: string) => Promise<void>): Promise<string | undefined> {
   const e = await show(place)
   await e.ready
   if (!e.alive) return
   e.term.focus()
   if (IN_TAURI && REAL) {
     const { invoke } = await import("@tauri-apps/api/core")
+    if (before) await before(e.key)
     await invoke("term_write", { key: e.key, data: `${command}\r` }).catch(() => undefined)
   } else e.term.paste(`${command}\r`)
+  return e.key
 }
 
 /** Close a folder's shell for good. */

@@ -24,10 +24,12 @@ import { pollCloud } from "@/backend/cloud"
 import { Input } from "@/components/ui/input"
 import { NOTICES } from "./notices"
 import { PermissionsPage } from "./PermissionsPage"
+import { AccountsPage } from "@/features/accounts/AccountsPage"
 
 /** The settings sections, in the order the dialog lists them. */
 export const SECTIONS = [
   { id: "sessions", label: REAL ? "Sessions" : "Repos", Page: REAL ? SourcesPage : ReposPage },
+  { id: "accounts", label: "Accounts", Page: AccountsPage },
   { id: "new", label: "New sessions", Page: ClaudePage },
   { id: "permissions", label: "Permissions", Page: PermissionsPage },
   { id: "notifications", label: "Notifications", Page: NotificationsPage },
@@ -54,7 +56,7 @@ function Code({ children }: { children: ReactNode }) {
 }
 
 /** Page heading. Long explanations live in the tooltip, not on screen. */
-function PageTitle({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+export function PageTitle({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="mb-2 flex h-7 items-center gap-3">
       <h2 className="text-base font-medium text-foreground" title={description}>
@@ -65,7 +67,7 @@ function PageTitle({ title, description, actions }: { title: string; description
   )
 }
 
-function SettingsSection({ title, description, children }: { title?: string; description?: string; children: ReactNode }) {
+export function SettingsSection({ title, description, children }: { title?: string; description?: string; children: ReactNode }) {
   return (
     <section className="mb-10">
       {title && (
@@ -85,7 +87,7 @@ function SettingsSection({ title, description, children }: { title?: string; des
 /** Id of the enclosing SettingRow's title: its switch / select is named by it (aria-labelledby). */
 const RowLabel = createContext<string | undefined>(undefined)
 
-function SettingRow({ title, description, hint, children, disabled }: { title: ReactNode; description?: ReactNode; hint?: string; children: ReactNode; disabled?: boolean }) {
+export function SettingRow({ title, description, hint, children, disabled }: { title: ReactNode; description?: ReactNode; hint?: string; children: ReactNode; disabled?: boolean }) {
   const labelId = useId()
   return (
     <div className={cn("grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border py-2", disabled && "opacity-50")}>
@@ -117,7 +119,7 @@ function RowSwitch(props: ComponentProps<typeof Switch>) {
   return <Switch aria-labelledby={labelledBy} {...props} />
 }
 
-function SmallSelect<T extends string>({ value, onChange, options, width = "w-44" }: { value: T; onChange: (v: T) => void; options: readonly { value: T; label: string }[]; width?: string }) {
+export function SmallSelect<T extends string>({ value, onChange, options, width = "w-44" }: { value: T; onChange: (v: T) => void; options: readonly { value: T; label: string }[]; width?: string }) {
   const labelledBy = useContext(RowLabel)
   const selfId = useId()
   return (
@@ -292,75 +294,6 @@ function TerminalSync() {
 }
 
 /**
- * Other Claude Code config folders (a second account: `CLAUDE_CONFIG_DIR=~/.claude-work claude`).
- * Their sessions, transcripts and usage are read beside the main one; a workspace can start its new
- * sessions in one of them (Workspaces → edit).
- */
-function Accounts() {
-  const dirs = useApp((st) => st.settings.claudeConfigDirs ?? [])
-  const [draft, setDraft] = useState("")
-  const add = () => {
-    const d = draft.trim().replace(/\/+$/, "")
-    if (!d || dirs.includes(d) || d === "~/.claude") return
-    patchSettings({ claudeConfigDirs: [...dirs, d] })
-    setDraft("")
-  }
-  return (
-    <SettingRow
-      title="Other Claude accounts"
-      hint={dirs.length ? `${dirs.length}` : undefined}
-      description="Config folders of other Claude Code accounts (what CLAUDE_CONFIG_DIR points to, like ~/.claude-work). Their sessions and plan limits show here too, a workspace can start new sessions in one of them, and a session can continue on another account (session menu, or the usage limit card)."
-    >
-      <div className="flex flex-col items-end gap-1.5">
-        {dirs.map((d) => (
-          <span key={d} className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
-            {d}
-            <Button size="icon-xs" variant="ghost" aria-label={`Remove ${d}`} onClick={() => patchSettings({ claudeConfigDirs: dirs.filter((x) => x !== d) })}>
-              <Trash2 />
-            </Button>
-          </span>
-        ))}
-        <form
-          className="flex items-center gap-1.5"
-          onSubmit={(e) => {
-            e.preventDefault()
-            add()
-          }}
-        >
-          <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="~/.claude-work" aria-label="Another Claude config folder" className="h-7 w-44 font-mono text-xs" spellCheck={false} autoCapitalize="off" />
-          <Button size="sm" variant="outline" type="submit" disabled={!draft.trim()}>
-            Add
-          </Button>
-        </form>
-      </div>
-    </SettingRow>
-  )
-}
-
-const AUTO_SWITCH = [
-  { value: "0", label: "Off" },
-  { value: "50", label: "If under 50 %" },
-  { value: "80", label: "If under 80 %" },
-  { value: "95", label: "If under 95 %" },
-] as const
-
-/** At the usage limit, carry the app's sessions on with another account by themselves. */
-function AutoSwitchAccount() {
-  const dirs = useApp((st) => st.settings.claudeConfigDirs ?? [])
-  const value = useApp((st) => st.settings.autoSwitchAccount ?? 0)
-  if (!dirs.length) return null
-  const shown = AUTO_SWITCH.find((o) => Number(o.value) === value)?.value ?? "0"
-  return (
-    <SettingRow
-      title="Switch accounts at the limit"
-      description="A session the app runs that stops at the usage limit continues on the other account with the most room, if that account's 5-hour window is used less than this. At most once per session in 5 hours. The old session is archived; the first message reads the conversation again on the other account."
-    >
-      <SmallSelect value={shown} onChange={(v) => patchSettings({ autoSwitchAccount: Number(v) })} options={AUTO_SWITCH} width="w-36" />
-    </SettingRow>
-  )
-}
-
-/**
  * Claude Code deletes transcripts older than cleanupPeriodDays (30 by default). The usage ledger
  * survives that, the chats themselves don't: offer a longer period, written on a click.
  */
@@ -427,8 +360,6 @@ export function SourcesPage() {
         <TerminalSync />
         <ClaudeConnect />
         <KeepChats />
-        <Accounts />
-        <AutoSwitchAccount />
         <SettingRow
           title="Exact states from hooks"
           hint={err ? "failed" : hooks?.installed ? "on" : undefined}

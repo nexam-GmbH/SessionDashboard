@@ -13,7 +13,7 @@ import type { SettingRowEntry } from "./settingsSchema"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway, setNewSince } from "./away"
-import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realResolve, realSend, realSettings, realStart, realTakeOver, realInject, realContinueOnAccount } from "@/backend/real"
+import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
 import { MARKED_DONE } from "@/lib/outcome"
 
 /**
@@ -405,47 +405,6 @@ export function forkSession(id: ID, prompt?: string) {
 }
 
 /**
- * Continue a session on another Claude account (`dir` as Settings has it, "" = the main one): the
- * conversation goes on there as a fork, the old session is archived. With `prompt`, the new
- * session gets it at once ("continue" after a usage limit). Returns the new session's id.
- */
-export async function continueOnAccount(id: ID, dir: string, opts: { prompt?: string; open?: boolean; auto?: boolean } = {}): Promise<ID | undefined> {
-  const s = getApp().sessions[id]
-  if (!s) return
-  if (REAL) {
-    const nid = await realContinueOnAccount(id, dir, opts)
-    if (opts.open) openSession(nid)
-    return nid
-  }
-  // the browser preview: the same session on the other account, the old one archived
-  const nid = newId("s")
-  addSession({
-    ...s,
-    id: nid,
-    configDir: dir || undefined,
-    movedFrom: { sessionId: id, configDir: s.configDir, at: nowIso(), auto: opts.auto },
-    control: "owned",
-    status: opts.prompt ? "working" : "idle",
-    statusObservedAt: nowIso(),
-    activity: opts.prompt ? "Starting" : undefined,
-    lastText: undefined,
-    errorMessage: undefined,
-    waitingFor: undefined,
-    unreadSince: undefined,
-    providerSessionIds: [crypto.randomUUID()],
-    handle: nid.slice(0, 8),
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-    archived: false,
-    archivedAt: undefined,
-    pinned: false,
-  })
-  archiveSessions([id])
-  if (opts.open) openSession(nid)
-  return nid
-}
-
-/**
  * Start over with a brief: a new session in the same folder (same worktree, so its uncommitted work
  * is there) whose first message is the brief. The old session stays as it is.
  */
@@ -454,7 +413,7 @@ export function startFresh(id: ID, brief: string) {
   if (!s || !brief.trim()) return
   const name = `${s.title.replace(/ \(continued\)$/, "")} (continued)`
   if (REAL) {
-    openSession(realStart({ cwd: s.cwd, machine: s.machine, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, name, configDir: s.configDir }))
+    openSession(realStart({ cwd: s.cwd, machine: s.machine, prompt: brief, model: s.model, effort: s.effort, permissionMode: s.permissionMode, name }))
     return
   }
   if (!s.repoId) return
@@ -515,8 +474,7 @@ export function createSession(input: NewSessionInput): ID {
     return realStart({
       cwd: repo.rootPath,
       machine: repo.machine,
-      // the workspace's account, when it has its own
-      configDir: st.settings.workspaces.find((w) => w.id === repo.workspace)?.configDir,
+      // the active account (Settings → Accounts); every session lives in ~/.claude
       prompt: input.prompt,
       images: input.images,
       model: input.model,
