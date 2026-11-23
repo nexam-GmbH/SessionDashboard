@@ -21,6 +21,8 @@ export interface AccountView {
   /** your normal login (no token) */
   login: boolean
   expiresAt?: string
+  /** its token does not work (a 401): sign in again */
+  invalid?: boolean
 }
 
 interface AccountSource {
@@ -40,7 +42,7 @@ export function accountsOf(st: AccountSource): AccountView[] {
   return [
     // the browser preview has no login: a stand-in address
     { id: DEFAULT_ACCOUNT, email: me?.email ?? (REAL ? undefined : "you@example.com"), plan: planName(me?.subscriptionType) ?? (REAL ? undefined : "Max"), login: true },
-    ...(st.settings.accounts ?? []).map((a) => ({ id: a.id, email: a.email, plan: a.plan, label: a.label, login: false, expiresAt: a.expiresAt })),
+    ...(st.settings.accounts ?? []).map((a) => ({ id: a.id, email: a.email, plan: a.plan, label: a.label, login: false, expiresAt: a.expiresAt, invalid: a.invalid })),
   ]
 }
 

@@ -40,6 +40,7 @@ import {
   saveToken,
   setActiveAccount,
   signIn,
+  signInInput,
   useActiveAccount,
 } from "./accountState"
 
@@ -50,8 +51,13 @@ export function AccountsPage() {
   const choices = useAccountChoices()
   const active = useActiveAccount()
   // the Add dialog: new (no id), or signing an account in again (its id)
+  // "accounts:signin:<id>" (the footer, an invalid sign-in): that account signs in again
   const [adding, setAdding] = useState<{ again?: AccountChoice } | null>(() =>
-    open === "accounts:add" ? {} : null
+    open === "accounts:add"
+      ? {}
+      : open?.startsWith("accounts:signin:")
+        ? { again: choices.find((a) => a.id === open.slice("accounts:signin:".length)) }
+        : null
   )
   return (
     <>
@@ -132,6 +138,11 @@ function AccountRow({
           {a.full && (
             <span className="shrink-0 rounded-sm bg-st-error/15 px-1 text-xs text-st-error-fg">
               at limit
+            </span>
+          )}
+          {a.invalid && (
+            <span className="shrink-0 rounded-sm bg-st-error/15 px-1 text-xs text-st-error-fg" title="A session on this account got a 401: its token does not work. Sign in again.">
+              sign-in invalid
             </span>
           )}
         </div>
@@ -302,62 +313,84 @@ function OldFolders() {
   )
 }
 
-/** Add an account, or sign one in again: e-mail, then `claude setup-token` in the terminal below. */
-function AddAccount({
-  again,
-  onClose,
-}: {
-  again?: AccountChoice
-  onClose: () => void
-}) {
+/**
+ * Add an account, or sign one in again: its e-mail, then `claude setup-token` in a terminal of its
+ * own (your browser opens). "Signed in" shows only once the token was read and checked against the
+ * API. Until then a field takes a code the browser shows, or a token pasted by hand (checked too).
+ */
+function AddAccount({ again, onClose }: { again?: AccountChoice; onClose: () => void }) {
   const [email, setEmail] = useState(again?.email ?? "")
   const [label, setLabel] = useState(again?.label ?? "")
   const [plan, setPlan] = useState(again?.plan ?? "")
-  const [draft, setDraft] = useState<ReturnType<typeof draftAccount> | null>(
-    null
-  )
-  const [paste, setPaste] = useState("")
+  const [draft, setDraft] = useState<ReturnType<typeof draftAccount> | null>(null)
+  const [phase, setPhase] = useState<"waiting" | "checking" | "ended" | "done">("waiting")
+  const [output, setOutput] = useState("")
+  const [field, setField] = useState("")
   const [err, setErr] = useState<string>()
-  const [done, setDone] = useState(false)
   const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const finish = async (d: ReturnType<typeof draftAccount>) => {
     if (again) await replaceAccount(again.id, d)
     else keepAccount(d)
-    setDone(true)
+    setPhase("done")
   }
-  // waiting for the token stops when the dialog closes
+  // the sign-in stops when the dialog closes (its terminal goes with it)
   const stop = useRef<(() => void) | null>(null)
   useEffect(() => () => stop.current?.(), [])
   const start = () => {
     if (!ok) return
+    stop.current?.()
     setErr(undefined)
+    setOutput("")
+    setPhase("waiting")
     const d = draftAccount(email, label, plan || undefined)
     setDraft(d)
-    stop.current = signIn(d.id, () => void finish(d))
+    stop.current = signIn(d.id, (e) => {
+      if (e.type === "output") setOutput(e.text)
+      else if (e.type === "checking") setPhase("checking")
+      else if (e.type === "invalid") {
+        setErr(e.message)
+        setPhase("waiting")
+      } else if (e.type === "saved") void finish(d)
+      else if (e.type === "exit") setPhase((p) => (p === "done" ? p : "ended"))
+    })
   }
-  const pasted = async () => {
-    if (!draft) return
-    try {
-      await saveToken(draft.id, paste)
-      await finish(draft)
-    } catch (e) {
-      setErr(String(e).replace(/^Error: /, ""))
-    }
+  // a code from the browser goes to claude; a token is checked and saved
+  const submit = async () => {
+    if (!draft || !field.trim()) return
+    const v = field.trim()
+    setErr(undefined)
+    if (v.startsWith("sk-ant-")) {
+      setPhase("checking")
+      try {
+        await saveToken(draft.id, v)
+        stop.current?.()
+        await finish(draft)
+      } catch (e) {
+        setErr(String(e).replace(/^Error: /, ""))
+        setPhase("waiting")
+      }
+    } else await signInInput(draft.id, v).catch((e) => setErr(String(e)))
+    setField("")
   }
+  // the last lines claude printed (the link to open, if the browser did not open by itself)
+  const lines = output
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim())
+    .slice(-6)
+  const link = /https:\/\/\S+/.exec(output)?.[0]
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md gap-4">
-        <DialogTitle>
-          {again ? `Sign ${again.email} in again` : "Add a Claude account"}
-        </DialogTitle>
+      <DialogContent className="max-w-lg gap-4">
+        <DialogTitle>{again ? `Sign ${again.email} in again` : "Add a Claude account"}</DialogTitle>
         <DialogDescription>
-          {done
-            ? "Signed in. Its token is in your system's credential store."
+          {phase === "done"
+            ? "Signed in. The token works and is in your system's credential store."
             : draft
-              ? "Your browser opens (the terminal below runs claude setup-token). Sign in there with exactly this e-mail. The token is read from the terminal by itself."
+              ? "Your browser opens: sign in there with exactly this e-mail and allow access. The token is read and checked by itself."
               : "The e-mail of the account. Then your browser opens to sign in with it; no command to type."}
         </DialogDescription>
-        {done ? (
+        {phase === "done" ? (
           <div className="flex items-center justify-end gap-2">
             <Button
               variant="outline"
@@ -378,32 +411,10 @@ function AddAccount({
               start()
             }}
           >
-            <Input
-              autoFocus
-              type="email"
-              placeholder="name@firm.de"
-              aria-label="E-mail"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={!!again}
-            />
+            <Input autoFocus type="email" placeholder="name@firm.de" aria-label="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!again} />
             <div className="flex gap-2">
-              <Input
-                placeholder="Name (optional): Work, Private"
-                aria-label="Name"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                className="flex-1"
-              />
-              <SmallSelect
-                value={plan || "-"}
-                onChange={(v) => setPlan(v === "-" ? "" : v)}
-                options={[
-                  { value: "-", label: "Plan" },
-                  ...PLANS.map((p) => ({ value: p, label: p })),
-                ]}
-                width="w-28"
-              />
+              <Input placeholder="Name (optional): Work, Private" aria-label="Name" value={label} onChange={(e) => setLabel(e.target.value)} className="flex-1" />
+              <SmallSelect value={plan || "-"} onChange={(v) => setPlan(v === "-" ? "" : v)} options={[{ value: "-", label: "Plan" }, ...PLANS.map((p) => ({ value: p, label: p }))]} width="w-28" />
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={onClose}>
@@ -417,36 +428,45 @@ function AddAccount({
         ) : (
           <div className="flex flex-col gap-3">
             <p className="text-xs text-muted-foreground" aria-live="polite">
-              Waiting for the sign-in of{" "}
-              <span className="text-foreground">{draft.email}</span>…
+              {phase === "checking" ? (
+                "Checking the token…"
+              ) : phase === "ended" ? (
+                "claude setup-token ended without a working token. Try again, or paste a token."
+              ) : (
+                <>
+                  Waiting for the sign-in of <span className="text-foreground">{draft.email}</span>…
+                </>
+              )}
             </p>
-            <details className="text-xs text-muted-foreground">
-              <summary className="cursor-pointer">
-                The token did not arrive? Paste it
-              </summary>
-              <form
-                className="mt-2 flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void pasted()
-                }}
-              >
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  placeholder="sk-ant-oat01-…"
-                  aria-label="Token"
-                  value={paste}
-                  onChange={(e) => setPaste(e.target.value)}
-                  className="flex-1 font-mono text-xs"
-                />
-                <Button type="submit" size="sm" disabled={!paste.trim()}>
-                  Save
-                </Button>
-              </form>
-            </details>
+            {lines.length > 0 && (
+              <pre aria-label="claude setup-token" className="max-h-36 overflow-auto rounded-md bg-muted px-2.5 py-2 font-mono text-[11px] leading-4 whitespace-pre-wrap text-muted-foreground">
+                {lines.join("\n")}
+              </pre>
+            )}
+            {link && (
+              <a href={link} target="_blank" rel="noreferrer" className="self-start text-xs text-foreground underline underline-offset-2">
+                The browser did not open? Open the sign-in page
+              </a>
+            )}
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void submit()
+              }}
+            >
+              <Input type="password" autoComplete="off" placeholder="Code from the browser, or a token (sk-ant-…)" aria-label="Code or token" value={field} onChange={(e) => setField(e.target.value)} className="flex-1 font-mono text-xs" disabled={phase === "checking"} />
+              <Button type="submit" size="sm" disabled={!field.trim() || phase === "checking"}>
+                Send
+              </Button>
+            </form>
             {err && <p className="text-xs text-st-error-fg">{err}</p>}
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              {phase === "ended" && (
+                <Button variant="outline" onClick={start}>
+                  Try again
+                </Button>
+              )}
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>

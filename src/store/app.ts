@@ -104,6 +104,8 @@ export interface ClaudeAccount {
   createdAt: string
   /** when its token ends (a year after it was made) */
   expiresAt?: string
+  /** a session on it got a 401: the token does not work (sign in again) */
+  invalid?: boolean
 }
 
 export interface Workspace {

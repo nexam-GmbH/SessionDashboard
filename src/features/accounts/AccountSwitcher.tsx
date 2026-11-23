@@ -1,7 +1,7 @@
 // Bottom left of the sidebar: the account the app runs on (its e-mail, plan and 5-hour use). A
 // click lists every account with its limits; another one is active at once (a notice says so, with
 // Undo). Below them: add an account, manage accounts (Settings → Accounts).
-import { ChevronsUpDown, Plus, Settings2 } from "lucide-react"
+import { ChevronsUpDown, KeyRound, Plus, Settings2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,7 +68,11 @@ export function AccountSwitcher() {
             <span
               className={cn(
                 "truncate text-[11px]",
-                ending.length ? "text-st-input-fg" : "text-muted-foreground"
+                me.invalid
+                  ? "text-st-error-fg"
+                  : ending.length
+                    ? "text-st-input-fg"
+                    : "text-muted-foreground"
               )}
               title={
                 ending.length
@@ -76,7 +80,9 @@ export function AccountSwitcher() {
                   : undefined
               }
             >
-              {ending.length
+              {me.invalid
+                ? "Sign-in invalid · sign in again"
+                : ending.length
                 ? `A token ends in ${Math.max(0, daysLeft(ending[0]) ?? 0)} d`
                 : (me.plan ?? "Claude")}
             </span>
@@ -105,6 +111,14 @@ export function AccountSwitcher() {
         className="w-(--radix-dropdown-menu-trigger-width) min-w-72"
         aria-label="Accounts"
       >
+        {me.invalid && (
+          <>
+            <DropdownMenuItem onSelect={() => openSettings(`accounts:signin:${me.id}`)} className="text-st-error-fg">
+              <KeyRound /> Sign {me.email} in again
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuLabel>Run on</DropdownMenuLabel>
         <AccountItems choices={choices} onPick={(id) => setActiveAccount(id)} />
         <DropdownMenuSeparator />

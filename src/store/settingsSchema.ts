@@ -219,7 +219,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
   claudeConfigDir: { type: "string", default: "~/.claude" },
   claudeConfigDirs: { type: "list", default: [], item: isString },
   autoSwitchAccount: { type: "number", default: 0, min: 0, max: 100 },
-  accounts: { type: "list", default: [], item: (v) => isRecord(v) && isString(v.id) && isString(v.email) && isString(v.createdAt) && optional(v.plan, isString) && optional(v.label, isString) && optional(v.expiresAt, isString) },
+  accounts: { type: "list", default: [], item: (v) => isRecord(v) && isString(v.id) && isString(v.email) && isString(v.createdAt) && optional(v.plan, isString) && optional(v.label, isString) && optional(v.expiresAt, isString) && optional(v.invalid, (x) => typeof x === "boolean") },
   activeAccount: { type: "string", default: "" },
   machines: { type: "list", default: [], item: (m) => isRecord(m) && isString(m.host) },
   workspaces: { type: "list", default: [], item: isWorkspace },

@@ -490,6 +490,30 @@ check("accounts: the footer shows the active e-mail; the switcher makes another 
   expect(!(await visible("[role=dialog]").first().innerText()).includes(".claude-"), "a folder shows as an account")
 })
 
+check("accounts: Add waits for the checked token before Signed in; an invalid sign-in says so and leads to Sign in again", async () => {
+  await load("#/")
+  await action("openSettings", "accounts:add")
+  const dialog = () => visible("[role=dialog]").filter({ hasText: "Add a Claude account" }).first()
+  await dialog().waitFor({ timeout: 3000 })
+  await dialog().getByLabel("E-mail").fill("new@firm.de")
+  await dialog().getByRole("button", { name: "Sign in" }).click()
+  // waiting: not signed in yet, the field for a code or token is there
+  await dialog().getByText(/Waiting for the sign-in of/).waitFor({ timeout: 2000 })
+  expect(!(await dialog().innerText()).includes("Signed in."), "Signed in before the token was checked")
+  expect(await dialog().getByLabel("Code or token").isVisible(), "no field for a code or token while waiting")
+  await dialog().getByText("Signed in.", { exact: false }).waitFor({ timeout: 4000 })
+  expect(await until(() => app((s) => (s.settings.accounts ?? []).some((a) => a.email === "new@firm.de"))), "the account was not kept")
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("Escape")
+  // a 401 marked the active account: the footer says so, its menu offers Sign in again
+  await action("patchSettings", { accounts: [{ ...WORK, invalid: true }], activeAccount: "a1" })
+  const footer = visible("[data-slot=sidebar-footer]").first()
+  await footer.getByText("Sign-in invalid · sign in again").waitFor({ timeout: 3000 })
+  await footer.getByRole("button", { name: /^Account: work@firm\.de/ }).click()
+  await page.getByRole("menuitem", { name: /Sign work@firm\.de in again/ }).click()
+  await visible("[role=dialog]").filter({ hasText: "Sign work@firm.de in again" }).first().waitFor({ timeout: 3000 })
+})
+
 check("usage limit card: Switch and continue makes another account active and continues there", async () => {
   await load("#/")
   const card = () => visible('section[aria-label="Sessions at the usage limit"]').first()
