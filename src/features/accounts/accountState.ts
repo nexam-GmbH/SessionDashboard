@@ -144,46 +144,61 @@ export async function saveToken(id: string, token: string) {
   await invoke("account_token_save", { accountId: id, token })
 }
 
+/** What a sign-in reports while it runs (src-tauri/src/claude/signin.rs). */
+export type SignInEvent =
+  | { type: "output"; text: string }
+  | { type: "checking" }
+  | { type: "invalid"; message: string }
+  | { type: "saved" }
+  | { type: "exit" }
+
 /**
- * Sign an account in: `claude setup-token` in the built-in terminal (your browser opens; sign in with
- * that account's e-mail). The token it prints is saved by Rust and shown masked. Returns a stop
- * function; `onToken` runs once the token is saved.
+ * Sign an account in: `claude setup-token` in a terminal of its own (your browser opens; sign in
+ * with that account's e-mail). Rust reads the token it prints, checks it against the API and only
+ * then saves it; the output comes here with the token masked. Returns a stop function.
  */
-export function signIn(id: string, onToken: () => void): () => void {
+export function signIn(id: string, on: (e: SignInEvent) => void): () => void {
   let stopped = false
-  let key: string | undefined
   const stop = () => {
+    if (stopped) return
     stopped = true
-    if (key && desktop())
-      void import("@tauri-apps/api/core").then(({ invoke }) =>
-        invoke("term_capture_cancel", { key }).catch(() => undefined)
-      )
+    if (desktop()) void import("@tauri-apps/api/core").then(({ invoke }) => invoke("account_signin_cancel", { accountId: id }).catch(() => undefined))
   }
   void (async () => {
-    const t = await import("@/features/terminal/terminals")
     if (!desktop()) {
-      await t.runInTerminal("claude setup-token", { cwd: "~" })
+      // the browser preview: a sign-in that works after a moment
+      on({ type: "output", text: "Opening browser to sign in…" })
+      setTimeout(() => !stopped && on({ type: "saved" }), 800)
       return
     }
-    const { invoke } = await import("@tauri-apps/api/core")
-    key = await t.runInTerminal(
-      "claude setup-token",
-      { cwd: "~" },
-      async (k) => {
-        await invoke("term_capture_token", { key: k, accountId: id })
-      }
-    )
-    // the token arrives when you finished in the browser
-    while (!stopped) {
-      await new Promise((r) => setTimeout(r, 1000))
-      if (stopped) break
-      if (await hasToken(id)) {
-        stopped = true
-        onToken()
-      }
+    const { invoke, Channel } = await import("@tauri-apps/api/core")
+    const ch = new Channel<SignInEvent>()
+    ch.onmessage = (e) => {
+      if (!stopped) on(e)
+      if (e.type === "saved" || e.type === "exit") stopped = true
+    }
+    try {
+      await invoke("account_signin_start", { accountId: id, onData: ch })
+    } catch (e) {
+      on({ type: "invalid", message: `Could not start claude setup-token: ${String(e)}` })
     }
   })()
   return stop
+}
+
+/** Type into a running sign-in (a code the browser shows). */
+export async function signInInput(id: string, text: string) {
+  if (!desktop()) return
+  const { invoke } = await import("@tauri-apps/api/core")
+  await invoke("account_signin_input", { accountId: id, text })
+}
+
+/** A session on this account got a 401: its sign-in does not work any more. */
+export function markInvalid(id: string) {
+  if (!id) return
+  const list = getApp().settings.accounts ?? []
+  if (!list.some((x) => x.id === id && !x.invalid)) return
+  patchSettings({ accounts: list.map((x) => (x.id === id ? { ...x, invalid: true } : x)) })
 }
 
 /** Days until the token of an account in settings ends; null for the normal login. */

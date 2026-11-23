@@ -12,7 +12,7 @@ const SERVICE: &str = "session-dashboard";
 /// it must be set after that.
 pub const TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
-fn ok_id(id: &str) -> Result<(), String> {
+pub fn ok_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("not an account id".into());
     }
@@ -63,25 +63,6 @@ pub fn apply(cmd: &mut Command, account: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-// ---------- reading a token out of `claude setup-token`'s output ----------
-
-/// The token in a stretch of terminal output, and where it is (byte range).
-pub fn find_token(bytes: &[u8]) -> Option<(usize, usize)> {
-    let start = bytes.windows(10).position(|w| w == b"sk-ant-oat")?;
-    let len = bytes[start..].iter().take_while(|b| b.is_ascii_alphanumeric() || **b == b'-' || **b == b'_').count();
-    let end = start + len;
-    looks_like_token(std::str::from_utf8(&bytes[start..end]).ok()?).then_some((start, end))
-}
-
-/// The output with the token replaced by dots, so it never reaches the web view.
-pub fn mask(bytes: &mut [u8], range: (usize, usize)) {
-    let (s, e) = range;
-    // keep the prefix readable: "sk-ant-oat01-••••"
-    for b in bytes[(s + 13).min(e)..e].iter_mut() {
-        *b = b'*';
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,19 +104,5 @@ mod tests {
         apply(&mut plain, Some("")).unwrap();
         apply(&mut plain, None).unwrap();
         assert!(plain.get_envs().all(|(k, _)| k != TOKEN_ENV));
-    }
-
-    #[test]
-    fn finds_and_masks_the_token_in_terminal_output() {
-        let out = format!("\x1b[32m✓ Long-lived token created\x1b[0m\r\n\r\n  {T}\r\n\r\nStore this token securely.");
-        let mut bytes = out.clone().into_bytes();
-        let r = find_token(&bytes).unwrap();
-        assert_eq!(std::str::from_utf8(&bytes[r.0..r.1]).unwrap(), T);
-        mask(&mut bytes, r);
-        let shown = String::from_utf8(bytes).unwrap();
-        assert!(!shown.contains(&T[20..]));
-        assert!(shown.contains("sk-ant-oat01-****"));
-        assert!(shown.ends_with("Store this token securely."));
-        assert!(find_token(b"no token here, sk-ant-oat01-short").is_none());
     }
 }

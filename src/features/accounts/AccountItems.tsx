@@ -123,6 +123,11 @@ export function AccountItems({
             at limit
           </span>
         )}
+        {a.invalid && (
+          <span className="shrink-0 rounded-sm bg-st-error/15 px-1 text-[11px] text-st-error-fg">
+            sign-in invalid
+          </span>
+        )}
         <span className="ml-auto flex size-4 shrink-0 items-center justify-center">
           {check && a.id === active && <Check className="size-3.5" />}
         </span>

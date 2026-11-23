@@ -346,6 +346,17 @@ export function resumeSession(id: ID) {
 }
 
 /**
+ * A finished session back in the list, ready for your next message, without opening it (Ctrl+K →
+ * Resume): its claude starts on the active account and waits.
+ */
+export function resumeQuietly(id: ID) {
+  const s = getApp().sessions[id]
+  if (!s) return
+  if (REAL) realStart({ cwd: s.startCwd ?? s.cwd, resume: id, model: s.model, effort: s.effort, permissionMode: s.permissionMode, machine: s.machine })
+  else setStatus(id, "idle", { control: "owned", archived: false })
+}
+
+/**
  * "continue" for a session that stopped (at a usage limit, say): sent in the app, or by taking a
  * terminal session over (it stops there and goes on here).
  */

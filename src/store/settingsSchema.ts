@@ -123,6 +123,15 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
       width: "w-20",
     },
   },
+  chatSummary: {
+    type: "boolean",
+    default: true,
+    row: {
+      page: "sessions",
+      label: "What a chat is about",
+      description: "Beside each chat, a short list of the features it builds or debugs (one sentence each, the one in the works with the session's status), or the question it answers, or the task it runs. Written by Claude Haiku after a turn, on the active account: one small call, nothing saved as a session.",
+    },
+  },
   sendKey: {
     type: "enum",
     default: "enter",
@@ -210,7 +219,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
   claudeConfigDir: { type: "string", default: "~/.claude" },
   claudeConfigDirs: { type: "list", default: [], item: isString },
   autoSwitchAccount: { type: "number", default: 0, min: 0, max: 100 },
-  accounts: { type: "list", default: [], item: (v) => isRecord(v) && isString(v.id) && isString(v.email) && isString(v.createdAt) && optional(v.plan, isString) && optional(v.label, isString) && optional(v.expiresAt, isString) },
+  accounts: { type: "list", default: [], item: (v) => isRecord(v) && isString(v.id) && isString(v.email) && isString(v.createdAt) && optional(v.plan, isString) && optional(v.label, isString) && optional(v.expiresAt, isString) && optional(v.invalid, (x) => typeof x === "boolean") },
   activeAccount: { type: "string", default: "" },
   machines: { type: "list", default: [], item: (m) => isRecord(m) && isString(m.host) },
   workspaces: { type: "list", default: [], item: isWorkspace },

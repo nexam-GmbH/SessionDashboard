@@ -6,14 +6,14 @@
 // the chat at that message), then repos (new session there) and a few commands.
 import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import { Command as Cmdk } from "cmdk"
-import { ArchiveRestore, ArrowUpDown, CornerDownLeft, LoaderCircle, MessageSquareText, Plus, Search } from "lucide-react"
+import { ArchiveRestore, Play, ArrowUpDown, CornerDownLeft, LoaderCircle, MessageSquareText, Plus, Search } from "lucide-react"
 import type { SearchHit } from "@/backend/real"
 import { useContentSearch } from "@/features/history/contentSearch"
 import { openSessionAt } from "@/features/session-view/find/find"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { getApp, useApp } from "@/store/app"
 import { selectNeedsYou, selectSessionOrder, useShownStatus } from "@/store/selectors"
-import { closePalette, openNewSession, openSession, takePaletteTypeAhead } from "@/store/actions"
+import { closePalette, openNewSession, openSession, resumeQuietly, takePaletteTypeAhead } from "@/store/actions"
 import { restoreWithUndo } from "@/features/notifications/undo"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { Kbd, Shortcut } from "@/components/common/bits"
@@ -37,12 +37,13 @@ export default function CommandPalette() {
   const query = useDeferredValue(raw.trim())
   const content = useContentSearch(query)
 
-  const { live, past, repos, commands } = useMemo(() => {
+  const { live, past, archived, repos, commands } = useMemo(() => {
     const s = getApp()
     const repoName = (x: Session) => (x.repoId ? (s.repos[x.repoId]?.name ?? "") : "main agent")
     const order = selectSessionOrder(s)
     let live: Hit[]
     let past: Hit[]
+    let archived: Hit[] = []
     if (!query) {
       // attention first, then what you had open most recently, then the rest in list order
       const needs = selectNeedsYou(s)
@@ -65,8 +66,9 @@ export default function CommandPalette() {
       // live sessions of every workspace (opening one switches to its workspace)
       const allLive = Object.keys(s.sessions).filter((id) => !s.sessions[id].archived && s.sessions[id].control !== "history")
       live = scored([...new Set([...order, ...allLive])]).slice(0, 10)
-      const pastIds = Object.keys(s.sessions).filter((id) => s.sessions[id].archived || s.sessions[id].control === "history")
-      past = scored(pastIds).slice(0, 8)
+      // finished (no process: Resume brings one back) and archived (Restore) in groups of their own
+      past = scored(Object.keys(s.sessions).filter((id) => !s.sessions[id].archived && s.sessions[id].control === "history")).slice(0, 8)
+      archived = scored(Object.keys(s.sessions).filter((id) => s.sessions[id].archived)).slice(0, 6)
     }
     const repos = query
       ? s.repoOrder
@@ -81,7 +83,7 @@ export default function CommandPalette() {
       .sort((a, b) => b.score - a.score)
       .slice(0, query ? 6 : 4)
       .map((x) => x.c)
-    return { live, past, repos, commands }
+    return { live, past, archived, repos, commands }
   }, [query])
 
   // Controlled selection: results arrive one render late (deferred query); fall back to the first
@@ -92,6 +94,7 @@ export default function CommandPalette() {
   const values = [
     ...live.map(({ x }) => `s:${x.id}`),
     ...past.map(({ x }) => `s:${x.id}`),
+    ...archived.map(({ x }) => `s:${x.id}`),
     ...inMessages.map((h) => `m:${h.sessionId}`),
     ...repos.map((r) => `r:${r.id}`),
     ...commands.map((c) => `c:${c.id}`),
@@ -134,8 +137,15 @@ export default function CommandPalette() {
               </Group>
             )}
             {past.length > 0 && (
-              <Group heading={query ? "Past and archived" : "Past sessions, last opened first"}>
+              <Group heading={query ? "Past sessions" : "Past sessions, last opened first"}>
                 {past.map(({ x, repo }) => (
+                  <SessionItem key={x.id} x={x} repo={repo} past onSelect={() => run(() => openSession(x.id))} />
+                ))}
+              </Group>
+            )}
+            {archived.length > 0 && (
+              <Group heading="Archived">
+                {archived.map(({ x, repo }) => (
                   <SessionItem key={x.id} x={x} repo={repo} past onSelect={() => run(() => openSession(x.id))} />
                 ))}
               </Group>
@@ -195,14 +205,20 @@ export default function CommandPalette() {
 
 function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; past?: boolean; onSelect: () => void }) {
   const status = useShownStatus(x.id)
-  // live: restoring it here shows at once
+  // live: restoring or resuming it here shows at once
   const archived = useApp((s) => !!s.sessions[x.id]?.archived)
+  const finished = useApp((s) => s.sessions[x.id]?.control === "history" && !s.sessions[x.id]?.archived)
   return (
     <Item value={`s:${x.id}`} onSelect={onSelect}>
       <StatusGlyph status={status} outcome={x.outcome} unread={!!x.unreadSince} size="sm" title={null} />
       <span className={past && !x.unreadSince ? "min-w-0 truncate text-muted-foreground" : cn("min-w-0 truncate text-foreground", x.unreadSince && "font-medium")}>{x.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground/70">{repo}</span>
       <span className="tabular ml-auto shrink-0 text-xs text-muted-foreground/70">{archived ? "archived" : relTime(x.updatedAt)}</span>
+      {finished && (
+        <RowButton label={`Resume ${x.title}`} title="Back into the session list, ready for your next message (doesn't open it)" onClick={() => resumeQuietly(x.id)}>
+          <Play size={12} /> Resume
+        </RowButton>
+      )}
       {archived && (
         <button
           type="button"
@@ -221,6 +237,26 @@ function SessionItem({ x, repo, past, onSelect }: { x: Session; repo: string; pa
         </button>
       )}
     </Item>
+  )
+}
+
+/** A button at the end of a row: its own click (the row, which opens the chat, does not get it). */
+function RowButton({ label, title, onClick, children }: { label: string; title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onClick()
+      }}
+      className="-mr-1 inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      {children}
+    </button>
   )
 }
 

@@ -1791,6 +1791,17 @@ function dropCopies() {
   }
 }
 
+/** A session's account answered 401: stop its retries, mark the account, say what to do. */
+const authFailed = new Set<ID>()
+function signInFailed(key: ID, account: string) {
+  void import("@/features/accounts/accountState").then((m) => m.markInvalid(account))
+  if (authFailed.has(key)) return
+  authFailed.add(key)
+  setTimeout(() => authFailed.delete(key), 30_000)
+  if (isRunning(key)) realInterrupt(key)
+  noticeError(key, `The sign-in of ${accountName(getApp(), account)} does not work (401). Settings → Accounts → Sign in again, or switch to another account bottom left.`)
+}
+
 export function realInterrupt(id: ID) {
   const own = owned.get(id)
   if (!own) return
@@ -2377,6 +2388,12 @@ function onEvent({ key, event, exit }: EventPayload) {
           noticeInfo(key, `${broken.length === 1 ? `MCP server ${broken[0]} is` : `MCP servers ${broken.join(", ")} are`} not connected. Run /mcp to see why and reconnect.`)
         }
       }
+      // a 401 on an account's token: it does not work. No ten retries: the turn stops, the account
+      // is marked (footer, Settings → Accounts: sign in again)
+      if (event.subtype === "api_retry" && (event.error === "authentication_failed" || event.error_status === 401) && own.account) {
+        signInFailed(key, own.account)
+        break
+      }
       // an API error Claude Code is retrying: say when it tries again instead of looking stuck
       if (event.subtype === "api_retry") {
         const ms = typeof event.retry_delay_ms === "number" ? event.retry_delay_ms : 0
@@ -2399,6 +2416,7 @@ function onEvent({ key, event, exit }: EventPayload) {
     }
     case "result": {
       void import("@/features/session-view/sessionStore").then((m) => m.clearStopping(key))
+      if (event.is_error === true && own.account && /(?<![0-9])401(?![0-9])|OAuth access token is invalid|Failed to authenticate/i.test(String(event.result ?? ""))) signInFailed(key, own.account)
       // the turn you stopped ends with an error result: that is not a failure
       // an API error ends as subtype "success" with is_error; error subtypes carry their text in errors[]
       const failed = (event.is_error === true || (typeof event.subtype === "string" && event.subtype !== "success")) && !own.interrupting

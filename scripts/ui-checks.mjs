@@ -490,6 +490,30 @@ check("accounts: the footer shows the active e-mail; the switcher makes another 
   expect(!(await visible("[role=dialog]").first().innerText()).includes(".claude-"), "a folder shows as an account")
 })
 
+check("accounts: Add waits for the checked token before Signed in; an invalid sign-in says so and leads to Sign in again", async () => {
+  await load("#/")
+  await action("openSettings", "accounts:add")
+  const dialog = () => visible("[role=dialog]").filter({ hasText: "Add a Claude account" }).first()
+  await dialog().waitFor({ timeout: 3000 })
+  await dialog().getByLabel("E-mail").fill("new@firm.de")
+  await dialog().getByRole("button", { name: "Sign in" }).click()
+  // waiting: not signed in yet, the field for a code or token is there
+  await dialog().getByText(/Waiting for the sign-in of/).waitFor({ timeout: 2000 })
+  expect(!(await dialog().innerText()).includes("Signed in."), "Signed in before the token was checked")
+  expect(await dialog().getByLabel("Code or token").isVisible(), "no field for a code or token while waiting")
+  await dialog().getByText("Signed in.", { exact: false }).waitFor({ timeout: 4000 })
+  expect(await until(() => app((s) => (s.settings.accounts ?? []).some((a) => a.email === "new@firm.de"))), "the account was not kept")
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("Escape")
+  // a 401 marked the active account: the footer says so, its menu offers Sign in again
+  await action("patchSettings", { accounts: [{ ...WORK, invalid: true }], activeAccount: "a1" })
+  const footer = visible("[data-slot=sidebar-footer]").first()
+  await footer.getByText("Sign-in invalid · sign in again").waitFor({ timeout: 3000 })
+  await footer.getByRole("button", { name: /^Account: work@firm\.de/ }).click()
+  await page.getByRole("menuitem", { name: /Sign work@firm\.de in again/ }).click()
+  await visible("[role=dialog]").filter({ hasText: "Sign work@firm.de in again" }).first().waitFor({ timeout: 3000 })
+})
+
 check("usage limit card: Switch and continue makes another account active and continues there", async () => {
   await load("#/")
   const card = () => visible('section[aria-label="Sessions at the usage limit"]').first()
@@ -550,6 +574,40 @@ check("search: a long title keeps the list in place; Restore brings an archived 
   await visible('button[aria-label="More actions"]').first().click()
   await page.getByRole("menuitem", { name: "Restore from archive" }).click()
   expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "the menu's Restore didn't restore")
+})
+
+check("search: past and archived sessions in groups of their own; Resume brings a past one back without opening it", async () => {
+  await load("#/")
+  await page.keyboard.press("Control+k")
+  await visible("[cmdk-input]").first().type("Rate limiting for")
+  const group = visible("[cmdk-group]").filter({ has: page.locator("[cmdk-group-heading]", { hasText: /^Past sessions$/ }) }).first()
+  await group.waitFor({ timeout: 3000 })
+  const row = group.locator("[cmdk-item]").filter({ hasText: "Rate limiting for /v1/chat" }).first()
+  const id = await app((s) => Object.values(s.sessions).find((x) => x.title === "Rate limiting for /v1/chat" && x.control === "history")?.id)
+  await row.getByRole("button", { name: /^Resume / }).click()
+  expect(await until(() => app((s, id) => s.sessions[id].control === "owned", id)), "Resume did not bring the session back")
+  expect((await hash()) === "#/", "Resume opened the session")
+  expect((await visible("[cmdk-group-heading]").filter({ hasText: "Past and archived" }).count()) === 0, "the mixed group is still there")
+  await page.keyboard.press("Escape")
+})
+
+check("in this chat: the rail lists what the chat works on, the newest with the session's status", async () => {
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.idle}`)
+  const inChat = () => visible("aside section").filter({ has: page.getByRole("button", { name: "In this chat", exact: true }) })
+  const section = inChat().first()
+  await section.waitFor({ timeout: 6000 })
+  const items = section.locator("li")
+  await items.first().waitFor({ timeout: 6000 })
+  const n = await items.count()
+  expect(n >= 1 && n <= 6, `${n} items`)
+  // every item one line of text with a status glyph
+  const glyphs = await section.locator("li [role=img]").count()
+  expect(glyphs === n, `${glyphs} glyphs for ${n} items`)
+  // off in Settings: gone
+  await action("patchSettings", { chatSummary: false })
+  expect(await until(async () => (await inChat().count()) === 0), "still shown with the setting off")
 })
 
 check("search: Ctrl+K finds a past session; Resume brings it back to life", async () => {

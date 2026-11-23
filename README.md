@@ -36,8 +36,9 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
 - **Accounts by e-mail.** Bottom left shows the account the app runs on, its plan and 5-hour use; one
   click switches the whole app to another one (Ctrl+K too). New sessions start on it, and a session
   continues on it with your next message: same session, same history, all in `~/.claude`. Settings →
-  Accounts adds one with no command to type (`claude setup-token` runs in the built-in terminal; the
-  token goes to the system's credential store, never into the app's settings), shows each account's
+  Accounts adds one with no command to type (`claude setup-token` runs in a terminal of its own; the
+  token is checked against the API, then goes to the system's credential store, never into the app's
+  settings; a session that gets a 401 stops and says to sign in again), shows each account's
   limits and when its token ends, and can switch accounts by itself at the limit.
 - **Pull requests.** Status and checks in the details panel; a red check's failing log lines go to the
   session with one click.

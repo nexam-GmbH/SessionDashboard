@@ -50,6 +50,8 @@ export interface Settings {
    * be taken over into ~/.claude (Settings → Accounts). Accounts are now `accounts`.
    */
   claudeConfigDirs: string[]
+  /** "In this chat" beside a chat: what it builds or debugs, written by a small model after a turn */
+  chatSummary: boolean
   /** Claude accounts beside your normal login (their tokens are in the system's credential store) */
   accounts: ClaudeAccount[]
   /** the account the app runs on: "" = your normal Claude Code login, else an id from `accounts` */
@@ -102,6 +104,8 @@ export interface ClaudeAccount {
   createdAt: string
   /** when its token ends (a year after it was made) */
   expiresAt?: string
+  /** a session on it got a 401: the token does not work (sign in again) */
+  invalid?: boolean
 }
 
 export interface Workspace {
