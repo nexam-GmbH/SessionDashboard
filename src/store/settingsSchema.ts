@@ -123,6 +123,15 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
       width: "w-20",
     },
   },
+  chatSummary: {
+    type: "boolean",
+    default: true,
+    row: {
+      page: "sessions",
+      label: "What a chat is about",
+      description: "Beside each chat, a short list of the features it builds or debugs (one sentence each, the one in the works with the session's status), or the question it answers, or the task it runs. Written by Claude Haiku after a turn, on the active account: one small call, nothing saved as a session.",
+    },
+  },
   sendKey: {
     type: "enum",
     default: "enter",

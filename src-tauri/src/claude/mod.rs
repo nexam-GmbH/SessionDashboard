@@ -426,6 +426,12 @@ pub async fn claude_copy_transcript(session_id: String, from_dir: Option<String>
     blocking(move || accounts::copy_transcript(&session_id, from_dir.as_deref(), to_dir.as_deref())).await
 }
 
+/// The chat summary beside a chat: one small model call (no tools, nothing saved) on `account_id`.
+#[tauri::command]
+pub async fn claude_quick_prompt(prompt: String, system: String, account_id: Option<String>) -> Result<String, String> {
+    blocking(move || discover::quick_prompt(&prompt, &system, account_id.as_deref(), std::time::Duration::from_secs(90))).await
+}
+
 /// Settings → Accounts: save an account's token (pasted) in the credential store.
 #[tauri::command]
 pub async fn account_token_save(account_id: String, token: String) -> Result<(), String> {
