@@ -64,3 +64,8 @@ mimalloc = "0.1"
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "0.28", default-features = false }
 
+
+# no debug info for the dependencies in dev builds (most of target/debug's size); ours keeps it,
+# so a backtrace still names our lines
+[profile.dev.package."*"]
+debug = false
