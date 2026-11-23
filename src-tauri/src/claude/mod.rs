@@ -2,6 +2,7 @@
 //! commands and listens to `claude-event` (see src/backend/real.ts).
 
 pub mod accounts;
+pub mod signin;
 pub mod tokens;
 pub mod control;
 pub mod discover;
@@ -435,7 +436,31 @@ pub async fn claude_quick_prompt(prompt: String, system: String, account_id: Opt
 /// Settings → Accounts: save an account's token (pasted) in the credential store.
 #[tauri::command]
 pub async fn account_token_save(account_id: String, token: String) -> Result<(), String> {
-    blocking(move || tokens::save(&account_id, &token)).await
+    // checked against the API first: a token that does not work is never kept
+    blocking(move || signin::save_checked(&account_id, &token, discover::check_token, tokens::save)).await
+}
+
+/// Settings → Accounts: `claude setup-token` for an account in a terminal of its own; `on_data`
+/// gets its output (token masked) and how it ends (saved once the token is checked).
+#[tauri::command]
+pub async fn account_signin_start(account_id: String, on_data: tauri::ipc::Channel<Value>) -> Result<(), String> {
+    blocking(move || signin::start(&account_id, on_data)).await
+}
+
+/// Type into a sign-in's terminal (a code the browser shows).
+#[tauri::command]
+pub async fn account_signin_input(account_id: String, text: String) -> Result<(), String> {
+    blocking(move || signin::input(&account_id, &text)).await
+}
+
+/// End a sign-in (the dialog closed): its claude and terminal go.
+#[tauri::command]
+pub async fn account_signin_cancel(account_id: String) -> Result<(), String> {
+    blocking(move || {
+        signin::cancel(&account_id);
+        Ok(())
+    })
+    .await
 }
 
 /// Forget an account's token (its sessions stay).

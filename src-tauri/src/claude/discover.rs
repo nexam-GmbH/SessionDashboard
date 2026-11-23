@@ -246,6 +246,59 @@ pub fn quick_prompt(prompt: &str, system: &str, account: Option<&str>, timeout: 
     v.get("result").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "no answer from claude".into())
 }
 
+/// Whether a token works: one tiny call to the smallest model with it (no tools, nothing saved).
+/// A 401 ("authentication_failed") says it does not, at its first try (claude would retry it ten
+/// times); an answer, or a usage limit, says it does.
+pub fn check_token(token: &str) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut cmd = crate::sys::command(claude_bin());
+    cmd.args(["-p", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", ""])
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    clean_env(&mut cmd);
+    cmd.env_remove("CLAUDE_CONFIG_DIR");
+    cmd.env("SD_HIDE", "1");
+    cmd.env(super::tokens::TOKEN_ENV, token);
+    let mut child = cmd.spawn().map_err(|e| format!("cannot run claude: {e}"))?;
+    let pid = child.id();
+    HELPERS.lock().unwrap().push(pid);
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"Reply with OK.");
+    }
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let auth_failed = |v: &Value| v.get("error").and_then(Value::as_str) == Some("authentication_failed") || v.get("error_status").and_then(Value::as_u64) == Some(401);
+            if v.get("subtype").and_then(Value::as_str) == Some("api_retry") && auth_failed(&v) {
+                let _ = tx.send(Err("This token is not valid (401). Sign in again or paste a new one.".into()));
+                return;
+            }
+            if v.get("type").and_then(Value::as_str) == Some("result") {
+                let text = v.get("result").and_then(Value::as_str).unwrap_or("");
+                let err = v.get("is_error").and_then(Value::as_bool) == Some(true);
+                let r = if !err || text.to_ascii_lowercase().contains("limit") {
+                    Ok(())
+                } else if text.contains("401") || text.to_ascii_lowercase().contains("authenticat") {
+                    Err("This token is not valid (401). Sign in again or paste a new one.".into())
+                } else {
+                    Err(format!("Could not check the token: {}", text.chars().take(160).collect::<String>()))
+                };
+                let _ = tx.send(r);
+                return;
+            }
+        }
+        let _ = tx.send(Err("Could not check the token: claude ended without an answer".into()));
+    });
+    let r = rx.recv_timeout(Duration::from_secs(60)).unwrap_or_else(|_| Err("Could not check the token: no answer within a minute".into()));
+    crate::sys::kill_tree(&mut child);
+    HELPERS.lock().unwrap().retain(|p| *p != pid);
+    r
+}
+
 /// The words Claude Code's spinner uses ("Drizzling…", and "Cooked for 26s" when a turn ends),
 /// read from the installed claude itself so the app says what the terminal says. Cached per claude
 /// build; the user's `spinnerVerbs` setting (append or replace) applies on top. None found: just

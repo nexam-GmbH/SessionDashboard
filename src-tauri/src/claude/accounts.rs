@@ -238,28 +238,18 @@ mod tests {
         let (from, to) = (base.join(".claude-work"), base.join(".claude"));
         let p = from.join("projects").join("-home-me-api");
         fs::create_dir_all(p.join("s1").join("subagents")).unwrap();
-        fs::write(p.join("s1.jsonl"), "one
-two
-").unwrap();
-        fs::write(p.join("s1").join("subagents").join("a.jsonl"), "{}
-").unwrap();
-        fs::write(p.join("s2.jsonl"), "x
-").unwrap();
+        fs::write(p.join("s1.jsonl"), "one\ntwo\n").unwrap();
+        fs::write(p.join("s1").join("subagents").join("a.jsonl"), "{}\n").unwrap();
+        fs::write(p.join("s2.jsonl"), "x\n").unwrap();
         // s2 is in the main folder already and went on there: it stays as it is
         let q = to.join("projects").join("-home-me-api");
         fs::create_dir_all(&q).unwrap();
-        fs::write(q.join("s2.jsonl"), "x
-and more
-").unwrap();
+        fs::write(q.join("s2.jsonl"), "x\nand more\n").unwrap();
         assert_eq!(not_taken_over(&from, &to), 1);
         assert_eq!(take_over(&from, &to).unwrap(), 1);
-        assert_eq!(fs::read_to_string(q.join("s1.jsonl")).unwrap(), "one
-two
-");
+        assert_eq!(fs::read_to_string(q.join("s1.jsonl")).unwrap(), "one\ntwo\n");
         assert!(q.join("s1").join("subagents").join("a.jsonl").is_file());
-        assert_eq!(fs::read_to_string(q.join("s2.jsonl")).unwrap(), "x
-and more
-");
+        assert_eq!(fs::read_to_string(q.join("s2.jsonl")).unwrap(), "x\nand more\n");
         assert!(p.join("s1.jsonl").is_file(), "the original stays");
         assert_eq!(not_taken_over(&from, &to), 0);
         // again: nothing new
