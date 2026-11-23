@@ -207,6 +207,45 @@ pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, account
     Ok(out)
 }
 
+/// One question to a small model with nothing around it: no tools, no settings, no MCP servers, no
+/// saved session (the chat summary beside a chat). The prompt goes in on stdin; the answer's text
+/// comes back. Runs as `account` (its token; None = your normal login).
+pub fn quick_prompt(prompt: &str, system: &str, account: Option<&str>, timeout: Duration) -> Result<String, String> {
+    use std::io::{Read, Write};
+    let mut cmd = crate::sys::command(claude_bin());
+    cmd.args(["-p", "--model", "haiku", "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--system-prompt", system])
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    clean_env(&mut cmd);
+    // a helper, never a session in the list
+    cmd.env("SD_HIDE", "1");
+    super::tokens::apply(&mut cmd, account)?;
+    let mut child = cmd.spawn().map_err(|e| format!("cannot run claude: {e}"))?;
+    let pid = child.id();
+    HELPERS.lock().unwrap().push(pid);
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(prompt.as_bytes());
+    }
+    let mut out = child.stdout.take().ok_or("no stdout")?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let _ = tx.send(s);
+    });
+    let got = rx.recv_timeout(timeout);
+    crate::sys::kill_tree(&mut child);
+    HELPERS.lock().unwrap().retain(|p| *p != pid);
+    let text = got.map_err(|_| "claude did not answer in time".to_string())?;
+    let v: Value = serde_json::from_str(text.trim()).map_err(|_| "no answer from claude".to_string())?;
+    if v.get("is_error").and_then(Value::as_bool) == Some(true) {
+        return Err(v.get("result").and_then(Value::as_str).unwrap_or("claude failed").to_string());
+    }
+    v.get("result").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "no answer from claude".into())
+}
+
 /// The words Claude Code's spinner uses ("Drizzling…", and "Cooked for 26s" when a turn ends),
 /// read from the installed claude itself so the app says what the terminal says. Cached per claude
 /// build; the user's `spinnerVerbs` setting (append or replace) applies on top. None found: just

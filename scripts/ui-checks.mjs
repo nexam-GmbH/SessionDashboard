@@ -552,6 +552,40 @@ check("search: a long title keeps the list in place; Restore brings an archived 
   expect(await until(() => app((s, id) => !s.sessions[id].archived, id)), "the menu's Restore didn't restore")
 })
 
+check("search: past and archived sessions in groups of their own; Resume brings a past one back without opening it", async () => {
+  await load("#/")
+  await page.keyboard.press("Control+k")
+  await visible("[cmdk-input]").first().type("Rate limiting for")
+  const group = visible("[cmdk-group]").filter({ has: page.locator("[cmdk-group-heading]", { hasText: /^Past sessions$/ }) }).first()
+  await group.waitFor({ timeout: 3000 })
+  const row = group.locator("[cmdk-item]").filter({ hasText: "Rate limiting for /v1/chat" }).first()
+  const id = await app((s) => Object.values(s.sessions).find((x) => x.title === "Rate limiting for /v1/chat" && x.control === "history")?.id)
+  await row.getByRole("button", { name: /^Resume / }).click()
+  expect(await until(() => app((s, id) => s.sessions[id].control === "owned", id)), "Resume did not bring the session back")
+  expect((await hash()) === "#/", "Resume opened the session")
+  expect((await visible("[cmdk-group-heading]").filter({ hasText: "Past and archived" }).count()) === 0, "the mixed group is still there")
+  await page.keyboard.press("Escape")
+})
+
+check("in this chat: the rail lists what the chat works on, the newest with the session's status", async () => {
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.idle}`)
+  const inChat = () => visible("aside section").filter({ has: page.getByRole("button", { name: "In this chat", exact: true }) })
+  const section = inChat().first()
+  await section.waitFor({ timeout: 6000 })
+  const items = section.locator("li")
+  await items.first().waitFor({ timeout: 6000 })
+  const n = await items.count()
+  expect(n >= 1 && n <= 6, `${n} items`)
+  // every item one line of text with a status glyph
+  const glyphs = await section.locator("li [role=img]").count()
+  expect(glyphs === n, `${glyphs} glyphs for ${n} items`)
+  // off in Settings: gone
+  await action("patchSettings", { chatSummary: false })
+  expect(await until(async () => (await inChat().count()) === 0), "still shown with the setting off")
+})
+
 check("search: Ctrl+K finds a past session; Resume brings it back to life", async () => {
   await load("#/")
   const ids = await discover()

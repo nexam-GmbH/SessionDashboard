@@ -209,6 +209,7 @@ pub fn run() {
             claude::claude_set_user_setting,
             claude::claude_set_config_dirs,
             claude::claude_copy_transcript,
+            claude::claude_quick_prompt,
             claude::account_token_save,
             claude::account_token_delete,
             claude::account_has_token,

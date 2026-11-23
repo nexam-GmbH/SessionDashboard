@@ -48,6 +48,10 @@ import { setExpanded, useChangedFiles, useExpanded } from "../sessionStore"
 import { useVerification } from "../signals"
 import { StartFreshButton } from "./StartFresh"
 import { breakdown, compactHint, severity } from "./contextMath"
+import { lastItem, summarize, useSummaries, type SummaryKind } from "../summary/chatSummary"
+import { StatusGlyph } from "@/components/common/StatusGlyph"
+import { useShownStatus } from "@/store/selectors"
+import type { Outcome } from "@/lib/outcome"
 
 // ---------------------------------------------------------------- shell
 
@@ -72,6 +76,7 @@ export function DetailsPanel({ sessionId }: { sessionId: ID }) {
           : "mr-1.5",
       )}
     >
+      <InThisChat sessionId={sessionId} />
       <Environment sessionId={sessionId} />
       <Context sessionId={sessionId} />
       <Changes sessionId={sessionId} />
@@ -126,8 +131,8 @@ function useFloating(ref: React.RefObject<HTMLElement | null>) {
 
 // ---------------------------------------------------------------- sections
 
-type SectionId = "environment" | "context" | "changes" | "checks" | "servers" | "tasks"
-const DEFAULT_OPEN: Record<SectionId, boolean> = { environment: true, context: false, changes: true, checks: true, servers: true, tasks: true }
+type SectionId = "summary" | "environment" | "context" | "changes" | "checks" | "servers" | "tasks"
+const DEFAULT_OPEN: Record<SectionId, boolean> = { summary: true, environment: true, context: false, changes: true, checks: true, servers: true, tasks: true }
 const SECTIONS = Object.keys(DEFAULT_OPEN) as SectionId[]
 const STICKY = "sd.rail.open"
 
@@ -236,6 +241,70 @@ function useBranch(sessionId: ID) {
     return repo?.worktrees.find((w) => w.id === s?.worktreeId)?.branch || repo?.git?.branch || ""
   })
 }
+
+// ---------------------------------------------------------------- In this chat
+
+const DONE: Outcome = { tone: "green", kind: "done", label: "Done" }
+const KIND_NOTE: Record<SummaryKind, string | undefined> = { features: undefined, question: "Question", task: "Task" }
+
+/**
+ * What the chat is about: the features it builds or debugs (one sentence each), the question it
+ * answers, or the task it runs. The one still being worked on carries the session's own status
+ * glyph; finished ones a done mark. Written by a small model after a turn (chatSummary.ts).
+ */
+const InThisChat = memo(function InThisChat({ sessionId }: { sessionId: ID }) {
+  const on = useApp((st) => st.settings.chatSummary)
+  const summary = useSummaries((s) => s.map[sessionId])
+  const busy = useSummaries((s) => !!s.busy[sessionId])
+  const failed = useSummaries((s) => s.failed[sessionId])
+  const status = useShownStatus(sessionId)
+  const outcome = useApp((st) => st.sessions[sessionId]?.outcome)
+  const upto = useApp((st) => lastItem(st.transcripts[sessionId]))
+  const working = status === "working" || status === "starting"
+  const stale = !!upto && summary?.upto !== upto && failed !== upto
+  // after a turn: bring it up to date (a moment later: a quick follow-up costs no second call); a
+  // chat with none yet gets one at once, even while Claude works
+  const has = !!summary
+  useEffect(() => {
+    if (!on || !stale || (working && has)) return
+    const t = setTimeout(() => void summarize(sessionId), has ? 2500 : 600)
+    return () => clearTimeout(t)
+  }, [on, working, stale, has, upto, sessionId])
+  if (!on || (!summary && !busy && !stale)) return null
+  const items = summary?.items ?? []
+  // the one in the works: the newest open item (while Claude works on something not labelled yet,
+  // the newest item)
+  let cur = items.map((x) => x.state).lastIndexOf("open")
+  if (cur < 0 && working && items.length) cur = items.length - 1
+  const note = summary ? KIND_NOTE[summary.kind] : undefined
+  return (
+    <Section sessionId={sessionId} id="summary" title="In this chat" summary={cur >= 0 ? items[cur].text : note}>
+      {!summary && (
+        <div className="flex min-h-8 items-center gap-2.5 px-2 text-[13px] text-cc-fg3" aria-busy>
+          <span className="h-2.5 w-40 rounded-full bg-cc-wash-2" /> <span className="sr-only">Summarizing</span>
+        </div>
+      )}
+      <ul aria-label={summary ? (summary.kind === "features" ? "Features" : summary.kind === "question" ? "Question" : "Tasks") : undefined} className="flex flex-col">
+        {items.map((x, i) => (
+          <li key={i} className="flex min-h-8 min-w-0 items-start gap-2.5 rounded-lg px-2 py-1.5 text-sm leading-5">
+            <span className="grid size-5 shrink-0 place-items-center pt-px">
+              {i === cur ? (
+                <StatusGlyph status={status} outcome={outcome} size="sm" />
+              ) : x.state === "done" ? (
+                <StatusGlyph status="idle" outcome={DONE} size="sm" />
+              ) : (
+                <StatusGlyph status="stopped" size="sm" title={x.state === "dropped" ? "Dropped" : "Not finished"} />
+              )}
+            </span>
+            <span className={cn("min-w-0 flex-1", i === cur ? "text-cc-fg" : "text-cc-fg2", x.state === "dropped" && "line-through decoration-cc-fg3")}>{x.text}</span>
+            {note && i === items.length - 1 && <span className="shrink-0 pt-px text-[13px] text-cc-fg3">{note}</span>}
+          </li>
+        ))}
+      </ul>
+      {summary && busy && <span className="px-2 pb-1 text-xs text-cc-fg3">Updating…</span>}
+    </Section>
+  )
+})
 
 // ---------------------------------------------------------------- Environment
 
