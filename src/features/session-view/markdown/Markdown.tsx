@@ -96,7 +96,7 @@ function quoteText(el: HTMLElement): string {
     .join("\n\n")
 }
 
-/** A quote (often the text Claude wrote for you to send on) with its own Copy, shown on hover. */
+/** A quote (often the text Claude wrote for you to send on) with its own Copy, shown on hover beside its end, not across the column. */
 function Blockquote(all: ComponentProps<"blockquote"> & { node?: unknown }) {
   const { node: _node, children, ...props } = all
   const ref = useRef<HTMLQuoteElement>(null)

@@ -165,7 +165,13 @@
   font-style: normal;
 }
 
-/* Copy on a quote: over its top right while the pointer is on it */
+/* Copy on a quote: beside the end of its text (the quote as wide as its text, room for the
+   button after it), shown while the pointer is on it */
+.sd-markdown blockquote.sd-quote {
+  width: fit-content;
+  max-width: 100%;
+  padding-inline-end: 2.25rem;
+}
 .sd-quote-copy {
   opacity: 0;
 }

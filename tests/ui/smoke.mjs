@@ -446,6 +446,7 @@ test("chat: a quote in Claude's answer copies on its own, lists with their dashe
   const quote = transcript(page).locator("blockquote").last()
   await expectVisible(quote, "no quote in Claude's answer")
   await quote.hover()
+  if (process.env.UI_SHOTS) await quote.screenshot({ path: process.env.UI_SHOTS + "/quote.png" })
   await quote.getByRole("button", { name: "Copy quote" }).click()
   await expectValue(() => page.evaluate(() => window.__copied), "Shipped today:\n\n- the retry fix\n- its regression test", "the quote's Copy copied something else")
 })
