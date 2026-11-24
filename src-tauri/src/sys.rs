@@ -119,6 +119,15 @@ pub fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
+/// The app runs as root (Unix): Claude Code refuses its bypass flags there and exits.
+pub fn is_root() -> bool {
+    #[cfg(unix)]
+    // SAFETY: geteuid has no preconditions and cannot fail
+    return unsafe { libc::geteuid() } == 0;
+    #[cfg(not(unix))]
+    false
+}
+
 /// Ask a process to stop (SIGTERM; Windows: end it and its children).
 pub fn terminate(pid: u32) {
     #[cfg(windows)]

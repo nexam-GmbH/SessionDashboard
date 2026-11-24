@@ -132,6 +132,12 @@ pub fn start(app: AppHandle, procs: Procs, mut o: StartOpts) -> Result<(), Strin
     .iter()
     .map(|s| s.to_string())
     .collect();
+    // bypass can be picked in the composer while the session runs: Claude Code allows that switch
+    // only in a session started with this flag (it changes nothing else: the mode stays the one
+    // asked for). Not on a server (often root there) nor as root here: Claude Code exits on it then.
+    if o.host.is_none() && !crate::sys::is_root() {
+        args.push("--allow-dangerously-skip-permissions".into());
+    }
     let mut push = |k: &str, v: &Option<String>| {
         if let Some(v) = v.as_ref().filter(|v| !v.is_empty()) {
             args.push(k.into());

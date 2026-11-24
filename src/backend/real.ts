@@ -495,7 +495,7 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     pinned: !!persist.pinned?.includes(e.id),
     archived: persist.archived.includes(e.id),
     // a machine's past session: how it ended, from its transcript and the machine's git
-    outcome: persist.done?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_DONE) : e.facts ? keepOutcome(prev?.outcome, outcomeOf({ ...e.facts, git: gitByFolder.get(folderKey(e.machine, e.cwd)) })) : undefined,
+    outcome: persist.done?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_DONE) : e.facts ? keepOutcome(prev?.outcome, settledOutcome({ ...e.facts, git: gitByFolder.get(folderKey(e.machine, e.cwd)) }, e.updatedMs, prev?.outcome)) : undefined,
   }
 }
 
@@ -588,7 +588,9 @@ function buildSession(id: ID, prev?: Session): Session | null {
     fastMode: prev?.fastMode,
     ultracode: prev?.ultracode,
     outputStyle: prev?.outputStyle,
-    usage: { contextPct: prev?.usage.contextPct ?? 0, inputTokens: 0, outputTokens: 0, costUsd: meta?.costUsd ?? prev?.usage.costUsd ?? 0 },
+    // the context breakdown (asked after each turn) stays: dropping it here blinked the details
+    // panel's list to "Loading…" and back on every poll
+    usage: { contextPct: prev?.usage.contextPct ?? 0, context: prev?.usage.context, inputTokens: 0, outputTokens: 0, costUsd: meta?.costUsd ?? prev?.usage.costUsd ?? 0 },
     diff: { filesChanged: prev?.diff.filesChanged ?? 0, linesAdded: meta?.linesAdded ?? 0, linesRemoved: meta?.linesRemoved ?? 0, unpushed: 0 },
     backgroundTasks: 0,
     handle: live?.name ?? id.slice(0, 8),
@@ -644,6 +646,22 @@ export function realMarkDone(id: ID, on: boolean) {
   sync()
 }
 
+/** How long a transcript stands still before a turn without Claude's answer counts as stopped. */
+const ABORT_SETTLE_MS = 30_000
+
+/**
+ * "Stopped before it finished" only once the transcript has stood still: a turn that just ended is
+ * often read before Claude's last answer is in the file (a tool's result is still the last record),
+ * and that flashed red for a second before turning green. Until then: the colour it had, or the one
+ * it gets with its answer in.
+ */
+function settledOutcome(facts: Parameters<typeof outcomeOf>[0], lastMs: number | undefined, had: Outcome | undefined): Outcome {
+  const now = outcomeOf(facts)
+  if (now.kind !== "aborted" || lastMs === undefined || Date.now() - lastMs >= ABORT_SETTLE_MS) return now
+  if (had && had.kind !== "aborted") return had
+  return outcomeOf({ ...facts, endedTurn: true, lastRole: "assistant" })
+}
+
 /** What git decides: these colours wait for the folder's git; the others come from the transcript alone. */
 const FROM_GIT = new Set(["uncommitted", "unpushed", "no_pr", "landed", "merged", "removed"])
 let outcomesDirty: ReturnType<typeof setTimeout> | undefined
@@ -655,8 +673,10 @@ let outcomesDirty: ReturnType<typeof setTimeout> | undefined
  */
 function stableOutcome(id: ID, cwd: string, meta: Meta): Outcome {
   const git = gitByFolder.get(folderKey(undefined, cwd))
-  const now = outcomeOf({ apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, asksUser: meta.asksUser, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git })
+  const facts = { apiError: meta.apiError, endedTurn: meta.endedTurn, lastRole: meta.lastRole, madeChanges: meta.madeChanges, asksUser: meta.asksUser, prUrl: meta.prUrl, prNumber: meta.prNumber, branch: meta.gitBranch, git }
   const last = persist.outcomes?.[id]
+  const now = settledOutcome(facts, meta.lastAt ? Date.parse(meta.lastAt) : undefined, last)
+  if (now === last) return now
   if (!git && FROM_GIT.has(now.kind) && last) return last
   if (!last || last.tone !== now.tone || last.kind !== now.kind || last.label !== now.label) {
     persist.outcomes = { ...persist.outcomes, [id]: now }
@@ -1827,12 +1847,24 @@ function settingsOf(p: { fastMode?: boolean; ultracode?: boolean; outputStyle?: 
   return Object.keys(s).length ? s : null
 }
 
-export function realSettings(id: ID, patch: { model?: string; effort?: string; permissionMode?: PermissionMode; fastMode?: boolean; ultracode?: boolean; outputStyle?: string }) {
+export function realSettings(id: ID, patch: { model?: string; effort?: string; permissionMode?: PermissionMode; fastMode?: boolean; ultracode?: boolean; outputStyle?: string }, modeBefore?: PermissionMode) {
   if (!owned.has(id)) {
     picks.set(id, { ...picks.get(id), ...(patch as Partial<Session>) })
     return
   }
-  if (patch.permissionMode) invoke("claude_control", { key: id, request: { subtype: "set_permission_mode", mode: patch.permissionMode } }).catch(() => undefined)
+  // Claude Code can refuse a mode (bypass in a session not started to allow it, or turned off by
+  // settings): then the mode it still runs in shows again, with why, instead of a mode it is not in
+  if (patch.permissionMode) {
+    const want = patch.permissionMode
+    void ask(id, { subtype: "set_permission_mode", mode: want }).then((r) => {
+      if (r.ok || r.error === "no answer") return
+      setApp((st) => {
+        const cur = st.sessions[id]
+        return cur && cur.permissionMode === want ? { sessions: { ...st.sessions, [id]: { ...cur, permissionMode: modeBefore ?? "default" } } } : st
+      })
+      noticeError(id, `Claude Code kept the permission mode: ${r.error ?? "it refused the change"}`, false)
+    })
+  }
   if (patch.model) invoke("claude_control", { key: id, request: { subtype: "set_model", model: patch.model } }).catch(() => undefined)
   const flags: Record<string, unknown> = { ...(settingsOf({ ...patch, outputStyle: undefined }) ?? {}) }
   if (patch.outputStyle !== undefined) flags.outputStyle = patch.outputStyle

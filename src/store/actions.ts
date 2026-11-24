@@ -237,8 +237,9 @@ export function renameSession(id: ID, title: string) {
 
 export function setSessionSettings(id: ID, patch: { model?: string; effort?: Effort; permissionMode?: PermissionMode; fastMode?: boolean; ultracode?: boolean; outputStyle?: string }) {
   // an effort picked here is the session's from now on (passed again when it resumes)
+  const before = getApp().sessions[id]?.permissionMode
   patchSession(id, patch.effort ? { ...patch, effortSet: true } : patch)
-  if (REAL) realSettings(id, patch)
+  if (REAL) realSettings(id, patch, before)
 }
 
 /** "+ → Add folder" while a session runs (`--add-dir`): another repo's files join its context. */

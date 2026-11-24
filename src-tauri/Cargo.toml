@@ -63,6 +63,8 @@ mimalloc = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "0.28", default-features = false }
+# geteuid (sys::is_root); already in the build through tauri
+libc = "0.2"
 
 
 # no debug info for the dependencies in dev builds (most of target/debug's size); ours keeps it,
