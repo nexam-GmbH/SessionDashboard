@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useApp, getApp } from "@/store/app"
-import { openSettings, patchSettings, pushNotification } from "@/store/actions"
+import { closeSettings, openSettings, patchSettings, pushNotification } from "@/store/actions"
 import { REAL } from "@/backend/mode"
 import { IN_TAURI } from "@/lib/platform"
 import { plural } from "@/lib/format"
@@ -40,6 +40,7 @@ import {
   saveToken,
   setActiveAccount,
   signIn,
+  signInAgain,
   signInInput,
   useActiveAccount,
 } from "./accountState"
@@ -51,14 +52,14 @@ export function AccountsPage() {
   const choices = useAccountChoices()
   const active = useActiveAccount()
   // the Add dialog: new (no id), or signing an account in again (its id)
-  // "accounts:signin:<id>" (the footer, an invalid sign-in): that account signs in again
-  const [adding, setAdding] = useState<{ again?: AccountChoice } | null>(() =>
-    open === "accounts:add"
-      ? {}
-      : open?.startsWith("accounts:signin:")
-        ? { again: choices.find((a) => a.id === open.slice("accounts:signin:".length)) }
-        : null
-  )
+  // "accounts:signin:<id>[:use]" (the footer, an invalid sign-in): that account signs in again,
+  // and with ":use" it is the active one afterwards
+  const [adding, setAdding] = useState<{ again?: AccountChoice; use?: boolean } | null>(() => {
+    if (open === "accounts:add") return {}
+    if (!open?.startsWith("accounts:signin:")) return null
+    const [id, use] = open.slice("accounts:signin:".length).split(":")
+    return { again: choices.find((a) => a.id === id), use: use === "use" }
+  })
   return (
     <>
       <PageTitle
@@ -76,7 +77,7 @@ export function AccountsPage() {
             key={a.id || "login"}
             a={a}
             active={a.id === active}
-            onSignInAgain={() => setAdding({ again: a })}
+            onSignInAgain={(use?: boolean) => (a.login ? signInAgain("", { activate: use || a.id === active }) : setAdding({ again: a, use }))}
           />
         ))}
       </SettingsSection>
@@ -85,7 +86,7 @@ export function AccountsPage() {
       </SettingsSection>
       <OldFolders />
       {adding && (
-        <AddAccount again={adding.again} onClose={() => setAdding(null)} />
+        <AddAccount again={adding.again} use={adding.use} onClose={() => setAdding(null)} />
       )}
     </>
   )
@@ -98,7 +99,7 @@ function AccountRow({
 }: {
   a: AccountChoice
   active: boolean
-  onSignInAgain: () => void
+  onSignInAgain: (use?: boolean) => void
 }) {
   const [sure, setSure] = useState(false)
   const days = daysLeft(a)
@@ -185,9 +186,15 @@ function AccountRow({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setActiveAccount(a.id)}
+            // a sign-in that does not work: sign in first, active afterwards
+            onClick={() => (a.invalid ? onSignInAgain(true) : setActiveAccount(a.id))}
           >
             Use
+          </Button>
+        )}
+        {a.login && (
+          <Button size="sm" variant="ghost" onClick={() => onSignInAgain()} title="claude auth login in the terminal; the app reads who is signed in afterwards (no restart)">
+            <KeyRound /> Sign in again
           </Button>
         )}
         {!a.login && (
@@ -195,7 +202,7 @@ function AccountRow({
             <Button
               size="sm"
               variant="ghost"
-              onClick={onSignInAgain}
+              onClick={() => onSignInAgain()}
               title="A new token for this account (claude setup-token)"
             >
               <KeyRound /> Sign in again
@@ -318,7 +325,7 @@ function OldFolders() {
  * own (your browser opens). "Signed in" shows only once the token was read and checked against the
  * API. Until then a field takes a code the browser shows, or a token pasted by hand (checked too).
  */
-function AddAccount({ again, onClose }: { again?: AccountChoice; onClose: () => void }) {
+function AddAccount({ again, use, onClose }: { again?: AccountChoice; use?: boolean; onClose: () => void }) {
   const [email, setEmail] = useState(again?.email ?? "")
   const [label, setLabel] = useState(again?.label ?? "")
   const [plan, setPlan] = useState(again?.plan ?? "")
@@ -330,6 +337,13 @@ function AddAccount({ again, onClose }: { again?: AccountChoice; onClose: () => 
   const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   const finish = async (d: ReturnType<typeof draftAccount>) => {
     if (again) await replaceAccount(again.id, d)
+    // signed in from the account switcher: that account runs from now on
+    if (use) {
+      setActiveAccount(d.id, { note: "Signed in, active:" })
+      onClose()
+      closeSettings()
+      return
+    }
     else keepAccount(d)
     setPhase("done")
   }

@@ -26,7 +26,7 @@ export interface AccountView {
 }
 
 interface AccountSource {
-  settings: { accounts?: ClaudeAccount[]; activeAccount?: string }
+  settings: { accounts?: ClaudeAccount[]; activeAccount?: string; loginInvalid?: boolean }
   caps?: { account?: { email?: string; subscriptionType?: string } } | null
 }
 
@@ -41,7 +41,7 @@ export function accountsOf(st: AccountSource): AccountView[] {
   const me = st.caps?.account
   return [
     // the browser preview has no login: a stand-in address
-    { id: DEFAULT_ACCOUNT, email: me?.email ?? (REAL ? undefined : "you@example.com"), plan: planName(me?.subscriptionType) ?? (REAL ? undefined : "Max"), login: true },
+    { id: DEFAULT_ACCOUNT, email: me?.email ?? (REAL ? undefined : "you@example.com"), plan: planName(me?.subscriptionType) ?? (REAL ? undefined : "Max"), login: true, invalid: !!st.settings.loginInvalid },
     ...(st.settings.accounts ?? []).map((a) => ({ id: a.id, email: a.email, plan: a.plan, label: a.label, login: false, expiresAt: a.expiresAt, invalid: a.invalid })),
   ]
 }

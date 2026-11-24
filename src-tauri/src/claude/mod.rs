@@ -485,6 +485,12 @@ pub async fn claude_old_folders_pending(dirs: Vec<String>) -> Result<usize, Stri
     .await
 }
 
+/// Your normal login's state (`claude auth status`): signed in, e-mail, plan, when it ends.
+#[tauri::command]
+pub async fn claude_auth_status() -> Result<Value, String> {
+    blocking(|| Ok(discover::auth_status())).await
+}
+
 /// One session of an older account folder into ~/.claude before it goes on (on the active account).
 /// True when ~/.claude has it now.
 #[tauri::command]

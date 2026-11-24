@@ -98,7 +98,9 @@ function quoteText(el: HTMLElement): string {
 
 /** A quote (often the text Claude wrote for you to send on) with its own Copy, shown on hover beside its end, not across the column. */
 function Blockquote(all: ComponentProps<"blockquote"> & { node?: unknown }) {
-  const { node: _node, children, ...props } = all
+  // the markdown parser's node is not an attribute of the element
+  const { node, children, ...props } = all
+  void node
   const ref = useRef<HTMLQuoteElement>(null)
   const [done, setDone] = useState(false)
   return (

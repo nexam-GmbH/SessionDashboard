@@ -8,6 +8,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenuButton } from "@/components/ui/sidebar"
@@ -16,7 +19,7 @@ import { REAL } from "@/backend/mode"
 import { initialOf, WARN_DAYS, daysLeft } from "@/lib/accounts"
 import { cn } from "@/lib/utils"
 import { AccountItems, useAccountChoices } from "./AccountItems"
-import { setActiveAccount, useActiveAccount } from "./accountState"
+import { cancelLoginFlow, setActiveAccount, signInAgain, useActiveAccount, useLoginFlow } from "./accountState"
 
 export function AccountSwitcher() {
   const active = useActiveAccount()
@@ -30,18 +33,38 @@ export function AccountSwitcher() {
     return d != null && d <= WARN_DAYS
   })
   const five = me.five
+  const login = useLoginFlow((s) => s.phase)
+  // an account whose sign-in does not work signs in again first, and is active once that worked
+  const pick = (id: string) => {
+    const a = choices.find((x) => x.id === id)
+    if (a?.invalid || (a?.login && REAL && !a.email)) signInAgain(id, { activate: true })
+    else setActiveAccount(id)
+  }
+  if (login === "waiting" || login === "failed") {
+    return (
+      <SidebarMenuButton size="lg" onClick={cancelLoginFlow} className={login === "failed" ? "text-st-error-fg" : "text-muted-foreground"} title="Click to stop waiting">
+        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-medium" aria-hidden>
+          …
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="truncate text-[13px]">{login === "failed" ? "Sign-in not finished" : "Signing in…"}</span>
+          <span className="truncate text-[11px]">{login === "failed" ? "Click to close" : "Finish it in the terminal and the browser"}</span>
+        </span>
+      </SidebarMenuButton>
+    )
+  }
   if (signedOut) {
     return (
       <SidebarMenuButton
         size="lg"
-        onClick={() => openSettings("accounts")}
+        onClick={() => signInAgain("", { activate: true })}
         className="text-st-input-fg"
-        title="No Claude Code login found: Settings → Accounts"
+        title="No Claude Code login found: sign in"
       >
         <span className="grid size-7 shrink-0 place-items-center rounded-full bg-st-input/20 text-xs font-medium">
           ?
         </span>
-        <span className="truncate text-sm">Not signed in</span>
+        <span className="truncate text-sm">Not signed in · sign in</span>
       </SidebarMenuButton>
     )
   }
@@ -113,15 +136,28 @@ export function AccountSwitcher() {
       >
         {me.invalid && (
           <>
-            <DropdownMenuItem onSelect={() => openSettings(`accounts:signin:${me.id}`)} className="text-st-error-fg">
+            <DropdownMenuItem onSelect={() => signInAgain(me.id)} className="text-st-error-fg">
               <KeyRound /> Sign {me.email} in again
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
         )}
         <DropdownMenuLabel>Run on</DropdownMenuLabel>
-        <AccountItems choices={choices} onPick={(id) => setActiveAccount(id)} />
+        <AccountItems choices={choices} onPick={pick} />
         <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <KeyRound /> Sign in again
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="min-w-56">
+            {choices.map((a) => (
+              <DropdownMenuItem key={a.id || "login"} onSelect={() => signInAgain(a.id, { activate: a.id === active })}>
+                <span className="truncate">{a.email ?? "Your Claude login"}</span>
+                {a.invalid && <span className="ml-auto text-[11px] text-st-error-fg">invalid</span>}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuItem onSelect={() => openSettings("accounts:add")}>
           <Plus /> Add account
         </DropdownMenuItem>

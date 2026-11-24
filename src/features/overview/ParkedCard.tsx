@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigg
 import { useShallow } from "zustand/react/shallow"
 import { getApp, useApp } from "@/store/app"
 import { useNow } from "@/components/common/RelativeTime"
-import { limitsFor, resetOf, useUsage } from "@/features/usage/usageData"
+import { atLimit, limitsFor, resetOf, useUsage } from "@/features/usage/usageData"
 import { plural, clockTime } from "@/lib/format"
 import { accountName } from "@/lib/accounts"
 import { AccountItems, useAccountChoices, useHasAccounts } from "@/features/accounts/AccountItems"
@@ -41,6 +41,10 @@ export function ParkedCard() {
   const mixed = new Set(parked.map((s) => s?.accountId ?? active)).size > 1
   // sessions on this computer continue on another account; a server's keep its login
   const movable = chosen.filter((id) => !parked[ids.indexOf(id)]?.machine)
+  // they stopped on another account than the active one, and the active one has room: they can go on
+  // there now (asked here, not done by itself); the old limit is not this account's state
+  const elsewhere = parked.some((s) => s && s.accountId !== undefined && s.accountId !== active) && !atLimit(limitsFor(usage, active))
+  const activeName = accountName(getApp(), active)
   const switchTo = (id: string) => {
     setActiveAccount(id, { note: "Switched to" })
     scheduleContinue(movable, 0)
@@ -52,7 +56,9 @@ export function ParkedCard() {
         <span className="min-w-0 flex-1">
           {plan
             ? `${plural(plan.ids.length, "session")} will continue from ${clockTime(new Date(plan.at).toISOString())}, one every 45 s.`
-            : `${plural(ids.length, "session")} stopped at the usage limit${resetAt ? `; ${mixed ? "the last" : "it"} resets at ${clockTime(new Date(resetAt).toISOString())}` : ""}.`}
+            : elsewhere
+              ? `${plural(ids.length, "session")} stopped at another account's limit. Continue on ${activeName}?`
+              : `${plural(ids.length, "session")} stopped at the usage limit${resetAt ? `; ${mixed ? "the last" : "it"} resets at ${clockTime(new Date(resetAt).toISOString())}` : ""}.`}
         </span>
         {plan ? (
           <Button size="xs" variant="ghost" onClick={cancelContinue}>
@@ -80,10 +86,10 @@ export function ParkedCard() {
             <Button
               size="xs"
               disabled={!chosen.length}
-              title="In this order, one every 45 seconds, starting a minute after the reset"
-              onClick={() => scheduleContinue(chosen, resetAt && resetAt > now ? resetAt + 60_000 : 0)}
+              title={elsewhere ? `On ${activeName}, one every 45 seconds` : "In this order, one every 45 seconds, starting a minute after the reset"}
+              onClick={() => scheduleContinue(chosen, !elsewhere && resetAt && resetAt > now ? resetAt + 60_000 : 0)}
             >
-              {resetAt && resetAt > now ? "Continue at reset" : "Continue now"}
+              {elsewhere ? `Continue on ${activeName}` : resetAt && resetAt > now ? "Continue at reset" : "Continue now"}
             </Button>
           </>
         )}

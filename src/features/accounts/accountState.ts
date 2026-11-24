@@ -1,6 +1,7 @@
 // The active Claude account and what changes it: switching (the footer, Ctrl+K, the limit card, the
 // automatic switch at the limit), adding one (`claude setup-token` in the built-in terminal; Rust
 // reads the token it prints into the credential store) and removing one (its token only).
+import { create } from "zustand"
 import { useShallow } from "zustand/react/shallow"
 import { getApp, useApp, type ClaudeAccount } from "@/store/app"
 import { patchSettings } from "@/store/actions"
@@ -21,10 +22,11 @@ const desktop = () => IN_TAURI && REAL
 
 export function useAccounts(): AccountView[] {
   const list = useApp(useShallow((s) => s.settings.accounts ?? []))
+  const loginInvalid = useApp((s) => !!s.settings.loginInvalid)
   const email = useApp((s) => s.caps?.account?.email)
   const sub = useApp((s) => s.caps?.account?.subscriptionType)
   return accountsOf({
-    settings: { accounts: list },
+    settings: { accounts: list, loginInvalid },
     caps: { account: { email, subscriptionType: sub } },
   })
 }
@@ -195,7 +197,10 @@ export async function signInInput(id: string, text: string) {
 
 /** A session on this account got a 401: its sign-in does not work any more. */
 export function markInvalid(id: string) {
-  if (!id) return
+  if (!id) {
+    if (!getApp().settings.loginInvalid) patchSettings({ loginInvalid: true })
+    return
+  }
   const list = getApp().settings.accounts ?? []
   if (!list.some((x) => x.id === id && !x.invalid)) return
   patchSettings({ accounts: list.map((x) => (x.id === id ? { ...x, invalid: true } : x)) })
@@ -206,3 +211,71 @@ export const accountDays = (
   a: Pick<ClaudeAccount, "expiresAt">,
   now = Date.now()
 ) => (a.expiresAt ? Math.floor((Date.parse(a.expiresAt) - now) / 864e5) : null)
+
+// ---------- signing your normal login in again ----------
+
+interface AuthStatus {
+  loggedIn?: boolean
+  email?: string
+  subscriptionType?: string
+  loginExpiresAt?: string
+}
+
+/** Your normal login (`claude auth status`, no model call); null when claude does not answer. */
+export async function authStatus(): Promise<AuthStatus | null> {
+  if (!desktop()) return { loggedIn: true, email: "you@example.com" }
+  const { invoke } = await import("@tauri-apps/api/core")
+  return invoke<AuthStatus | null>("claude_auth_status").catch(() => null)
+}
+
+/** A sign-in of your normal login running in the built-in terminal (shown bottom left). */
+export const useLoginFlow = create<{ phase: "idle" | "waiting" | "done" | "failed"; activate?: boolean }>(() => ({ phase: "idle" }))
+let loginRun = 0
+
+/**
+ * Sign your normal Claude Code login in again: `claude auth login` in the built-in terminal (your
+ * browser opens). Done once `claude auth status` shows a new login: then who is signed in and the
+ * limits are read anew (no restart), and with `activate` it becomes the active account.
+ */
+export async function signInLogin(opts: { activate?: boolean } = {}) {
+  const run = ++loginRun
+  useLoginFlow.setState({ phase: "waiting", activate: opts.activate }, true)
+  const before = await authStatus()
+  const t = await import("@/features/terminal/terminals")
+  await t.runInTerminal("claude auth login", { cwd: "~" })
+  const until = Date.now() + 10 * 60_000
+  while (run === loginRun && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, desktop() ? 2000 : 800))
+    if (run !== loginRun) return
+    const now = await authStatus()
+    const fresh = now?.loggedIn && (!before?.loggedIn || !desktop() || now.loginExpiresAt !== before.loginExpiresAt || now.email !== before.email)
+    if (!fresh) continue
+    patchSettings({ loginInvalid: false })
+    if (desktop()) await (await import("@/backend/real")).realReloadAccount()
+    useLoginFlow.setState({ phase: "done" })
+    if (opts.activate) setActiveAccount(DEFAULT_ACCOUNT, { note: "Signed in, active:" })
+    else showUndo("Signed in", now?.email ?? "your Claude login", () => undefined)
+    setTimeout(() => run === loginRun && useLoginFlow.setState({ phase: "idle" }, true), 4000)
+    return
+  }
+  if (run === loginRun) useLoginFlow.setState({ phase: "failed" })
+}
+
+export function cancelLoginFlow() {
+  loginRun++
+  useLoginFlow.setState({ phase: "idle" }, true)
+}
+
+/**
+ * Sign an account in again (its sign-in does not work, or by choice): your normal login in the
+ * terminal, an account on a token in its dialog. With `activate` it is the active one afterwards.
+ */
+export function signInAgain(id: string, opts: { activate?: boolean } = {}) {
+  if (!id) {
+    // the terminal must be visible: no dialog over it
+    void import("@/store/actions").then((a) => a.closeSettings())
+    void signInLogin(opts)
+    return
+  }
+  void import("@/store/actions").then((a) => a.openSettings(`accounts:signin:${id}${opts.activate ? ":use" : ""}`))
+}

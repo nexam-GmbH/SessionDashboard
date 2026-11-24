@@ -56,6 +56,8 @@ export interface Settings {
   accounts: ClaudeAccount[]
   /** the account the app runs on: "" = your normal Claude Code login, else an id from `accounts` */
   activeAccount: string
+  /** a session on your normal login got a 401: it is signed out or expired (sign in again) */
+  loginInvalid: boolean
   /**
    * A session the app runs that stops at the usage limit continues on another account by itself,
    * when that account's 5-hour window is under this percentage; 0 = off (you choose on the limit card).

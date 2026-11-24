@@ -51,6 +51,8 @@ export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessio
   const machine = useApp((s) => s.sessions[sessionId]?.machine)
   const url = useApp((s) => s.sessions[sessionId]?.url)
   const hooks = useApp((s) => !!s.hooks?.installed)
+  // with more than one account: a session in a terminal runs on that terminal's login, not the active one
+  const accounts = useApp((s) => (s.settings.accounts ?? []).length > 0)
   const ago = useRelTime(updatedAt)
   if (control === "cloud") {
     return (
@@ -78,6 +80,7 @@ export const ControlBanner = memo(function ControlBanner({ sessionId }: { sessio
           {machine ? `Running in a terminal on ${machine}` : "Running in your terminal"}{" "}
           <span className="text-muted-foreground/70">
             {!REAL ? "· approve there" : hooks ? "· its prompts can be answered here or there" : "· prompts are answered there"}
+            {accounts && " · runs on its terminal's Claude login, not the account chosen bottom left (Take over moves it)"}
           </span>
         </span>
         {REAL && !hooks && !machine && (

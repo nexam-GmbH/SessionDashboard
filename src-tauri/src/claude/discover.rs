@@ -207,6 +207,23 @@ pub fn host_requests_in(requests: Vec<(&str, Value)>, timeout: Duration, account
     Ok(out)
 }
 
+/// Your normal Claude Code login as `claude auth status --json` reports it (signed in, e-mail, plan,
+/// when the login ends): no model call. Null when claude does not answer.
+pub fn auth_status() -> Value {
+    let mut cmd = crate::sys::command(claude_bin());
+    cmd.args(["auth", "status", "--json"]).current_dir(crate::sys::home());
+    clean_env(&mut cmd);
+    cmd.env_remove("CLAUDE_CONFIG_DIR");
+    crate::sys::output_timeout(&mut cmd, 20)
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .map(|v| {
+            // only what the app shows; nothing else leaves Rust
+            let pick = |k: &str| v.get(k).cloned().unwrap_or(Value::Null);
+            serde_json::json!({ "loggedIn": pick("loggedIn"), "email": pick("email"), "subscriptionType": pick("subscriptionType"), "loginExpiresAt": pick("loginExpiresAt") })
+        })
+        .unwrap_or(Value::Null)
+}
+
 /// One question to a small model with nothing around it: no tools, no settings, no MCP servers, no
 /// saved session (the chat summary beside a chat). The prompt goes in on stdin; the answer's text
 /// comes back. Runs as `account` (its token; None = your normal login).

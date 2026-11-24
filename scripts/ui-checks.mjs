@@ -490,6 +490,45 @@ check("accounts: the footer shows the active e-mail; the switcher makes another 
   expect(!(await visible("[role=dialog]").first().innerText()).includes(".claude-"), "a folder shows as an account")
 })
 
+check("accounts: a passed window is 0 % again, a full model window is not a full account, an invalid account signs in before it is active", async () => {
+  await load("#/")
+  await action("patchSettings", { accounts: [WORK] })
+  const usage = (fn, arg) =>
+    page.evaluate(
+      async ({ src, arg, moduleUrl }) => {
+        const m = await import(new Function(`return (${moduleUrl})`)()("/src/features/usage/usageData.ts"))
+        return new Function(`return (${src})`)()(m, arg)
+      },
+      { src: fn.toString(), arg, moduleUrl: MODULE_URL },
+    )
+  // a1 hit its 5-hour limit an hour ago, and its reset has passed: 0 % within the minute
+  const past = new Date(Date.now() - 3600e3).toISOString()
+  await usage((m, past) => {
+    m.useUsage.setState((s) => ({ accounts: { ...s.accounts, a1: { limits: [{ kind: "session", group: "session", percent: 100, resets_at: past }], samples: [], at: Date.now(), source: "session" } } }))
+    m.expireLimits()
+  }, past)
+  expect(await usage((m) => !m.atLimit(m.useUsage.getState().accounts.a1) && m.useUsage.getState().accounts.a1.limits[0].percent === 0), "a passed window still counts as full")
+  // only Fable's weekly window is full: the account is not
+  await usage((m) => m.useUsage.setState((s) => ({ accounts: { ...s.accounts, a1: { limits: [{ kind: "session", group: "session", percent: 20 }, { kind: "weekly_scoped", group: "weekly", percent: 100, scope: { model: { display_name: "Fable" } } }], samples: [], at: Date.now() } } })))
+  expect(await usage((m) => !m.atLimit(m.useUsage.getState().accounts.a1)), "a full model window made the account full")
+  // a1's sign-in does not work: picking it bottom left signs it in first, then it is active
+  await action("patchSettings", { accounts: [{ ...WORK, invalid: true }] })
+  const footer = visible("[data-slot=sidebar-footer]").first()
+  await footer.getByRole("button", { name: /^Account: you@example\.com/ }).click()
+  await page.getByRole("menuitem", { name: /^work@firm\.de/ }).click()
+  expect(await app((s) => s.settings.activeAccount !== "a1"), "an account with an invalid sign-in became active before signing in")
+  const dialog = visible("[role=dialog]").filter({ hasText: "Sign work@firm.de in again" }).first()
+  await dialog.waitFor({ timeout: 3000 })
+  await dialog.getByRole("button", { name: "Sign in" }).click()
+  expect(await until(() => app((s) => (s.settings.accounts ?? []).some((a) => a.email === "work@firm.de" && !a.invalid && s.settings.activeAccount === a.id)), 4000), "not active and valid after signing in")
+  // your normal login signs in again from bottom left, no restart
+  await action("patchSettings", { loginInvalid: true, activeAccount: "" })
+  await footer.getByRole("button", { name: /^Account: you@example\.com/ }).click()
+  await page.getByRole("menuitem", { name: /Sign you@example\.com in again/ }).click()
+  await footer.getByText("Signing in…").waitFor({ timeout: 3000 })
+  expect(await until(() => app((s) => !s.settings.loginInvalid), 5000), "the normal login is still marked invalid")
+})
+
 check("accounts: Add waits for the checked token before Signed in; an invalid sign-in says so and leads to Sign in again", async () => {
   await load("#/")
   await action("openSettings", "accounts:add")
