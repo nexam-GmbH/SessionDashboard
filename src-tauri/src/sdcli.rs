@@ -19,19 +19,28 @@ pub const POLL: Duration = Duration::from_secs(2);
 pub const USAGE: &str = "sd: drive Session Dashboard from a terminal, a script or another Claude Code session
 
 Usage:
-  sd list [--query Q] [--status S] [--workspace W] [--json]
+  sd list [--query Q] [--status S] [--workspace W] [--archived] [--json]
+                                     --archived: archived sessions too
   sd new --dir D [--prompt P | --prompt -] [--name N] [--model M] [--effort E]
-         [--mode M] [--worktree] [--open] [--json]       prints the new session's id
-  sd send <session> <text...>        text \"-\" reads it from stdin
+         [--mode M] [--worktree] [--open] [--notify] [--json]
+                                     prints the new session's id
+  sd send [--notify] <session> <text...>
+                                     text \"-\" reads it from stdin
   sd read <session> [--last N] [--json]
   sd status <session> [--json]       first line: the status alone
   sd wait <session> [--timeout SECONDS] [--json]
   sd stop <session>
   sd open <session>                  show it in the dashboard window
+  sd notify <session>                when the working session ends its turn, message the Claude
+                                     Code session this runs in (--notify on new/send: the same)
+  sd archive <session>               archive it, as the session menu does (not while it works
+                                     or waits for a permission answer, not your own session)
+  sd unarchive <session>             bring an archived session back
   sd mcp                             MCP server on stdio (for Claude Code)
   sd help
 
-<session> is an id, an id prefix (6+ characters) or a unique part of the title.
+<session> is an id, an id prefix (6+ characters) or a unique part of the title (for unarchive,
+among the archived sessions).
 Status: starting, working, waiting_permission, waiting_input, idle, done_unseen, error, stopped.
 
 sd wait asks every 2 s until the session is no longer starting or working (timeout 600 s).
@@ -313,6 +322,9 @@ pub fn fmt_list(v: &Value, full_ids: bool) -> String {
         if x.get("unread").and_then(Value::as_bool) == Some(true) && status != "done_unseen" {
             status.push_str(" *");
         }
+        if x.get("archived").and_then(Value::as_bool) == Some(true) {
+            status.push_str(" (archived)");
+        }
         let mut folder = short_path(s(x, "cwd"));
         if let Some(m) = x.get("machine").and_then(Value::as_str).filter(|m| !m.is_empty()) {
             folder = format!("{m}:{folder}");
@@ -364,15 +376,18 @@ pub fn fmt_status(v: &Value) -> String {
 pub enum Cmd {
     Help,
     Mcp,
-    List { query: Option<String>, status: Option<String>, workspace: Option<String>, json: bool },
-    New { dir: String, prompt: Option<String>, name: Option<String>, model: Option<String>, effort: Option<String>, mode: Option<String>, worktree: bool, open: bool, json: bool },
+    List { query: Option<String>, status: Option<String>, workspace: Option<String>, archived: bool, json: bool },
+    New { dir: String, prompt: Option<String>, name: Option<String>, model: Option<String>, effort: Option<String>, mode: Option<String>, worktree: bool, open: bool, notify: bool, json: bool },
     /// text "-": read from stdin
-    Send { session: String, text: String },
+    Send { session: String, text: String, notify: bool },
+    Notify { session: String },
     Read { session: String, last: Option<u64>, json: bool },
     Status { session: String, json: bool },
     Wait { session: String, timeout: u64, json: bool },
     Stop { session: String },
     Open { session: String },
+    Archive { session: String },
+    Unarchive { session: String },
 }
 
 struct Parsed {
@@ -451,18 +466,20 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
             Cmd::Mcp
         }
         "list" | "ls" => {
-            let mut p = split(rest, &["query", "status", "workspace"], &["json"])?;
+            let mut p = split(rest, &["query", "status", "workspace"], &["archived", "json"])?;
             no_pos(&p, "list")?;
-            Cmd::List { query: p.val("query"), status: p.val("status"), workspace: p.val("workspace"), json: p.flag("json") }
+            Cmd::List { query: p.val("query"), status: p.val("status"), workspace: p.val("workspace"), archived: p.flag("archived"), json: p.flag("json") }
         }
         "new" => {
-            let mut p = split(rest, &["dir", "prompt", "name", "model", "effort", "mode"], &["worktree", "open", "json"])?;
+            let mut p = split(rest, &["dir", "prompt", "name", "model", "effort", "mode"], &["worktree", "open", "notify", "json"])?;
             no_pos(&p, "new")?;
             let dir = p.val("dir").filter(|d| !d.trim().is_empty()).ok_or("sd new needs --dir (the project folder)")?;
-            Cmd::New { dir, prompt: p.val("prompt"), name: p.val("name"), model: p.val("model"), effort: p.val("effort"), mode: p.val("mode"), worktree: p.flag("worktree"), open: p.flag("open"), json: p.flag("json") }
+            Cmd::New { dir, prompt: p.val("prompt"), name: p.val("name"), model: p.val("model"), effort: p.val("effort"), mode: p.val("mode"), worktree: p.flag("worktree"), open: p.flag("open"), notify: p.flag("notify"), json: p.flag("json") }
         }
         "send" => {
-            // everything after the session is the message, options included
+            // everything after the session is the message, options included (--notify goes before it)
+            let notify = rest.first().map(String::as_str) == Some("--notify");
+            let rest = if notify { &rest[1..] } else { rest };
             let session = rest.first().filter(|s| !s.trim().is_empty()).ok_or("sd send needs a session and a message")?.clone();
             let mut words = &rest[1..];
             if words.first().map(String::as_str) == Some("--") {
@@ -472,7 +489,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
             if text.trim().is_empty() {
                 return Err("sd send needs a message (or - to read it from stdin)".into());
             }
-            Cmd::Send { session, text }
+            Cmd::Send { session, text, notify }
         }
         "read" => {
             let mut p = split(rest, &["last"], &["json"])?;
@@ -488,6 +505,9 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         }
         "stop" => Cmd::Stop { session: one_session(&split(rest, &[], &[])?, "stop")? },
         "open" => Cmd::Open { session: one_session(&split(rest, &[], &[])?, "open")? },
+        "notify" => Cmd::Notify { session: one_session(&split(rest, &[], &[])?, "notify")? },
+        "archive" => Cmd::Archive { session: one_session(&split(rest, &[], &[])?, "archive")? },
+        "unarchive" | "restore" => Cmd::Unarchive { session: one_session(&split(rest, &[], &[])?, "unarchive")? },
         other => return Err(format!("unknown command {other}")),
     })
 }
@@ -518,15 +538,18 @@ pub fn run(cmd: Cmd, backend: &Backend, poll: Duration) -> Result<(String, i32),
     Ok(match cmd {
         Cmd::Help => (USAGE.to_string(), 0),
         Cmd::Mcp => unreachable!("handled by main"),
-        Cmd::List { query, status, workspace, json } => {
+        Cmd::List { query, status, workspace, archived, json } => {
             let mut a = Map::new();
             put(&mut a, "query", query);
             put(&mut a, "status", status);
             put(&mut a, "workspace", workspace);
+            if archived {
+                a.insert("archived".into(), true.into());
+            }
             let v = backend("list", Value::Object(a))?;
             (if json { pretty(&v) } else { fmt_list(&v, false) }, 0)
         }
-        Cmd::New { dir, prompt, name, model, effort, mode, worktree, open, json } => {
+        Cmd::New { dir, prompt, name, model, effort, mode, worktree, open, notify, json } => {
             let mut a = Map::new();
             put(&mut a, "dir", Some(dir));
             put(&mut a, "prompt", prompt);
@@ -540,10 +563,25 @@ pub fn run(cmd: Cmd, backend: &Backend, poll: Duration) -> Result<(String, i32),
             if open {
                 a.insert("open".into(), true.into());
             }
+            if notify {
+                notify_args(&mut a);
+            }
             let v = backend("new", Value::Object(a))?;
+            notify_warning(&v);
             (if json { pretty(&v) } else { id_line(&v) }, 0)
         }
-        Cmd::Send { session, text } => (id_line(&backend("send", json!({"session": session, "text": text}))?), 0),
+        Cmd::Send { session, text, notify } => {
+            let mut a = Map::new();
+            a.insert("session".into(), session.into());
+            a.insert("text".into(), text.into());
+            if notify {
+                notify_args(&mut a);
+            }
+            let v = backend("send", Value::Object(a))?;
+            notify_warning(&v);
+            (id_line(&v), 0)
+        }
+        Cmd::Notify { session } => (id_line(&backend("notify", json!({"session": session, "caller": caller_sessions()}))?), 0),
         Cmd::Read { session, last, json } => {
             let mut a = json!({"session": session});
             if let Some(n) = last {
@@ -574,7 +612,52 @@ pub fn run(cmd: Cmd, backend: &Backend, poll: Duration) -> Result<(String, i32),
         }
         Cmd::Stop { session } => (id_line(&backend("stop", json!({"session": session}))?), 0),
         Cmd::Open { session } => (id_line(&backend("open", json!({"session": session}))?), 0),
+        Cmd::Archive { session } => (id_line(&backend("archive", json!({"session": session, "caller": caller_sessions()}))?), 0),
+        Cmd::Unarchive { session } => (id_line(&backend("unarchive", json!({"session": session}))?), 0),
     })
+}
+
+fn notify_args(a: &mut Map<String, Value>) {
+    a.insert("notify".into(), true.into());
+    a.insert("caller".into(), caller_sessions().into());
+}
+
+/// `--notify` that could not be set up: the command itself went through, so only a warning.
+fn notify_warning(v: &Value) {
+    if v.get("notify").and_then(Value::as_bool) == Some(false) {
+        eprintln!("sd: no notice when it is done: {}", s(v, "notifyError"));
+    }
+}
+
+/// The Claude Code session this command runs in, if any, so the app can refuse to let a session
+/// archive itself. Claude Code gives its MCP servers and Bash commands `CLAUDE_CODE_SESSION_ID`,
+/// fixed when the process started; the pid file of the nearest claude among our ancestors
+/// (`<claude dir>/sessions/<pid>.json`) has the id it runs under now (after /clear or a resume).
+pub fn caller_sessions() -> Vec<String> {
+    let mut chain = vec![];
+    let mut pid = std::process::id();
+    for _ in 0..12 {
+        match crate::sys::parent_of(pid) {
+            Some(pp) if pp > 1 && pp != pid => {
+                chain.push(pp);
+                pid = pp;
+            }
+            _ => break,
+        }
+    }
+    caller_ids(std::env::var("CLAUDE_CODE_SESSION_ID").ok(), &crate::claude::discover::claude_dir().join("sessions"), &chain)
+}
+
+fn caller_ids(env_id: Option<String>, sessions_dir: &std::path::Path, ancestors: &[u32]) -> Vec<String> {
+    let mut ids: Vec<String> = env_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).into_iter().collect();
+    let from_file = ancestors.iter().find_map(|pid| {
+        let v: Value = serde_json::from_slice(&std::fs::read(sessions_dir.join(format!("{pid}.json"))).ok()?).ok()?;
+        v.get("sessionId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
+    });
+    if let Some(id) = from_file.filter(|id| !ids.contains(id)) {
+        ids.push(id);
+    }
+    ids
 }
 
 /// `sd …`: parses, runs and prints; returns the exit code.
@@ -674,8 +757,9 @@ mod tests {
         assert_eq!(parse(&a("mcp")).unwrap(), Cmd::Mcp);
         assert_eq!(
             parse(&a("list --json --query login --status=working")).unwrap(),
-            Cmd::List { query: Some("login".into()), status: Some("working".into()), workspace: None, json: true }
+            Cmd::List { query: Some("login".into()), status: Some("working".into()), workspace: None, archived: false, json: true }
         );
+        assert_eq!(parse(&a("list --archived")).unwrap(), Cmd::List { query: None, status: None, workspace: None, archived: true, json: false });
         assert_eq!(
             parse(&a("new --dir /tmp/x --prompt - --mode plan --worktree --open --model opus --effort high --name N")).unwrap(),
             Cmd::New {
@@ -687,18 +771,41 @@ mod tests {
                 mode: Some("plan".into()),
                 worktree: true,
                 open: true,
+                notify: false,
                 json: false
             }
         );
-        assert_eq!(parse(&a("send abc123 fix the --json bug")).unwrap(), Cmd::Send { session: "abc123".into(), text: "fix the --json bug".into() });
-        assert_eq!(parse(&a("send abc123 -- -v flag")).unwrap(), Cmd::Send { session: "abc123".into(), text: "-v flag".into() });
-        assert_eq!(parse(&a("send abc123 -")).unwrap(), Cmd::Send { session: "abc123".into(), text: "-".into() });
+        assert_eq!(parse(&a("send abc123 fix the --json bug")).unwrap(), Cmd::Send { session: "abc123".into(), text: "fix the --json bug".into(), notify: false });
+        assert_eq!(parse(&a("send abc123 -- -v flag")).unwrap(), Cmd::Send { session: "abc123".into(), text: "-v flag".into(), notify: false });
+        assert_eq!(parse(&a("send abc123 -")).unwrap(), Cmd::Send { session: "abc123".into(), text: "-".into(), notify: false });
+        assert_eq!(parse(&a("send --notify abc123 go on --notify")).unwrap(), Cmd::Send { session: "abc123".into(), text: "go on --notify".into(), notify: true });
+        assert!(parse(&a("send --notify")).unwrap_err().contains("needs a session"));
+        assert_eq!(parse(&a("notify abc123")).unwrap(), Cmd::Notify { session: "abc123".into() });
+        assert!(matches!(parse(&a("new --dir /x --notify")).unwrap(), Cmd::New { notify: true, .. }));
         assert_eq!(parse(&a("read abc123 --last 5 --json")).unwrap(), Cmd::Read { session: "abc123".into(), last: Some(5), json: true });
         assert_eq!(parse(&a("status abc123")).unwrap(), Cmd::Status { session: "abc123".into(), json: false });
         assert_eq!(parse(&a("wait abc123")).unwrap(), Cmd::Wait { session: "abc123".into(), timeout: 600, json: false });
         assert_eq!(parse(&a("wait abc123 --timeout 30 --json")).unwrap(), Cmd::Wait { session: "abc123".into(), timeout: 30, json: true });
         assert_eq!(parse(&a("stop abc123")).unwrap(), Cmd::Stop { session: "abc123".into() });
         assert_eq!(parse(&a("open abc123")).unwrap(), Cmd::Open { session: "abc123".into() });
+        assert_eq!(parse(&a("archive abc123")).unwrap(), Cmd::Archive { session: "abc123".into() });
+        assert_eq!(parse(&a("unarchive abc123")).unwrap(), Cmd::Unarchive { session: "abc123".into() });
+        assert_eq!(parse(&a("restore abc123")).unwrap(), Cmd::Unarchive { session: "abc123".into() });
+        assert!(parse(&a("archive")).unwrap_err().contains("needs a session"));
+    }
+
+    #[test]
+    fn caller_from_env_and_the_nearest_claude_pid_file() {
+        let dir = std::env::temp_dir().join(format!("sd-caller-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("200.json"), r#"{"pid":200,"sessionId":"now-id"}"#).unwrap();
+        std::fs::write(dir.join("300.json"), r#"{"pid":300,"sessionId":"outer-claude"}"#).unwrap();
+        // a shell (100) under claude (200) under another claude (300): the nearest one counts
+        assert_eq!(caller_ids(Some("start-id".into()), &dir, &[100, 200, 300]), ["start-id", "now-id"]);
+        assert_eq!(caller_ids(Some("now-id".into()), &dir, &[200]), ["now-id"]);
+        assert_eq!(caller_ids(None, &dir, &[100]), Vec::<String>::new());
+        assert_eq!(caller_ids(Some(" ".into()), &dir, &[300]), ["outer-claude"]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -731,7 +838,8 @@ mod tests {
             Ok(match cmd {
                 "list" => json!({"sessions": [
                     {"id": "0123456789abcdef", "title": "Fix login", "status": "working", "cwd": "/srv/app", "control": "app", "updatedAt": 1},
-                    {"id": "fedcba9876543210", "title": "Docs", "status": "idle", "cwd": "/srv/docs", "machine": "box", "control": "app", "updatedAt": 2, "unread": true}
+                    {"id": "fedcba9876543210", "title": "Docs", "status": "idle", "cwd": "/srv/docs", "machine": "box", "control": "app", "updatedAt": 2, "unread": true},
+                    {"id": "aaaabbbbccccdddd", "title": "Old", "status": "idle", "cwd": "/srv/old", "control": "app", "updatedAt": 0, "archived": true}
                 ]}),
                 "new" => json!({"id": "newid-1", "title": "T"}),
                 _ => json!({"id": "0123456789abcdef", "title": "Fix login", "status": "idle"}),
@@ -740,17 +848,28 @@ mod tests {
         let (out, code) = run(parse(&a("list")).unwrap(), &backend, Duration::ZERO).unwrap();
         assert_eq!(code, 0);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines[0], "ID        STATUS   TITLE      FOLDER");
-        assert_eq!(lines[1], "01234567  working  Fix login  /srv/app");
-        assert_eq!(lines[2], "fedcba98  idle *   Docs       box:/srv/docs");
+        assert_eq!(lines[0], "ID        STATUS           TITLE      FOLDER");
+        assert_eq!(lines[1], "01234567  working          Fix login  /srv/app");
+        assert_eq!(lines[2], "fedcba98  idle *           Docs       box:/srv/docs");
+        assert_eq!(lines[3], "aaaabbbb  idle (archived)  Old        /srv/old");
         let (out, _) = run(parse(&a("new --dir /srv/app --prompt hi --mode plan --worktree")).unwrap(), &backend, Duration::ZERO).unwrap();
         assert_eq!(out, "newid-1\n");
         let (out, code) = run(parse(&a("wait 012345")).unwrap(), &backend, Duration::ZERO).unwrap();
         assert_eq!((out.lines().next(), code), (Some("idle"), 0));
+        let (out, code) = run(parse(&a("archive 012345")).unwrap(), &backend, Duration::ZERO).unwrap();
+        assert_eq!((out.as_str(), code), ("0123456789abcdef\n", 0));
+        let (out, _) = run(parse(&a("send --notify 012345 go on")).unwrap(), &backend, Duration::ZERO).unwrap();
+        assert_eq!(out, "0123456789abcdef\n");
         let seen = seen.lock().unwrap();
         assert_eq!(seen[0], ("list".to_string(), json!({})));
         assert_eq!(seen[1], ("new".to_string(), json!({"dir": "/srv/app", "prompt": "hi", "permissionMode": "plan", "worktree": true})));
         assert_eq!(seen[2], ("status".to_string(), json!({"session": "012345"})));
+        assert_eq!(seen[4].0, "send");
+        assert_eq!(seen[4].1["notify"], true);
+        assert!(seen[4].1["caller"].is_array());
+        assert_eq!(seen[3].0, "archive");
+        assert_eq!(seen[3].1["session"], "012345");
+        assert!(seen[3].1["caller"].is_array());
     }
 
     #[test]

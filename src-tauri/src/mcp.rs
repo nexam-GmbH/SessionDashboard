@@ -1,5 +1,5 @@
 //! `sd mcp`: an MCP server on stdio that lets Claude Code drive the running app (start, message,
-//! read and wait for dashboard sessions). Newline-delimited JSON-RPC 2.0 on stdin/stdout, logs
+//! read, wait for and archive dashboard sessions). Newline-delimited JSON-RPC 2.0 on stdin/stdout, logs
 //! only on stderr (MCP 2025-11-25, basic/transports "stdio"). Lifecycle: `initialize` answers the
 //! client's protocol version when supported, else the latest one here (basic/lifecycle "Version
 //! Negotiation"); `notifications/initialized` and other notifications get no reply; `ping` → {}.
@@ -22,7 +22,9 @@ pub const VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-
 const INSTRUCTIONS: &str = "Session Dashboard is the desktop app where the human runs and watches their Claude Code sessions. \
 These tools start sessions the human can follow there, message them, read them and wait for them. \
 Name a session by its id, an id prefix of 6+ characters, or a unique part of its title (list_sessions shows them). \
-A session in waiting_permission needs the human: they answer permission prompts in the dashboard (open_session shows it to them).";
+A session in waiting_permission needs the human: they answer permission prompts in the dashboard (open_session shows it to them). \
+Instead of waiting with wait_for_session you can pass notify_when_done to new_session or send_message (or call notify_when_done): when that session's turn ends you get one short message in this session, the way a user message arrives, and should then report back. \
+archive_session hides a finished session from the dashboard's lists, as the human's Archive does; unarchive_session brings it back.";
 
 pub fn run_stdio() -> i32 {
     eprintln!("session-dashboard MCP server {} on stdio", env!("CARGO_PKG_VERSION"));
@@ -132,6 +134,7 @@ pub fn serve<R: BufRead, W: Write + Send>(input: R, output: W, backend: &Backend
 // ---- tools ---------------------------------------------------------------------------------
 
 const SESSION_DESC: &str = "The session: its id, an id prefix of at least 6 characters, or a unique part of its title (see list_sessions).";
+const NOTIFY_DESC: &str = "Send you one short message in this session (title, status and the start of its last answer) when its turn ends: it finished, asks something, waits for a permission answer, failed or stopped. It arrives the way a user message does, also mid-turn. Use it when you will move on and must report back later. Default false.";
 
 fn session_schema() -> Value {
     json!({"type": "object", "properties": {"session": {"type": "string", "description": SESSION_DESC}}, "required": ["session"]})
@@ -144,12 +147,14 @@ pub fn tools() -> Value {
             "name": "list_sessions",
             "title": "List dashboard sessions",
             "description": "List the Claude Code sessions in Session Dashboard (the ones the dashboard runs and the terminal sessions it sees), with id, title, status, working folder (cwd), repo, machine, who controls it (control) and updatedAt. \
+Archived sessions are left out unless include_archived is true; they then carry archived: true. \
 Status is one of: starting, working, waiting_permission (blocked on a permission prompt the human answers in the dashboard), waiting_input (asked a question), idle (finished its turn), done_unseen (finished, the human has not looked yet), error, stopped. \
 Use this to find a session's id before send_message, read_session, session_status or wait_for_session.",
             "inputSchema": {"type": "object", "properties": {
                 "query": {"type": "string", "description": "Only sessions whose title, folder or text match this."},
                 "status": {"type": "string", "description": "Only sessions with this status, e.g. working or waiting_permission."},
-                "workspace": {"type": "string", "description": "Only sessions in this dashboard workspace (its name)."}
+                "workspace": {"type": "string", "description": "Only sessions in this dashboard workspace (its name)."},
+                "include_archived": {"type": "boolean", "default": false, "description": "Also list archived sessions (marked archived: true). Default false."}
             }},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         },
@@ -159,7 +164,7 @@ Use this to find a session's id before send_message, read_session, session_statu
             "description": "Start a new Claude Code session that Session Dashboard owns, in the folder dir, optionally with a first prompt, and return its id and title. \
 Use this rather than running `claude` yourself or a subagent when the work should be visible to the human and outlive you: the session shows in the dashboard with its live status, the human can read it, reply and answer its permission prompts there, and the dashboard restores it after an app restart. \
 Once running it is an ordinary Claude Code session, so Claude Code's native cross-session tools (ListAgents, SendMessage), where you have them, can reach it too; send_message, read_session and wait_for_session work either way. \
-Typical flow: new_session with a prompt, then wait_for_session, then read_session.",
+Typical flow: new_session with a prompt, then wait_for_session, then read_session; or new_session with notify_when_done and carry on until its message arrives.",
             "inputSchema": {"type": "object", "properties": {
                 "dir": {"type": "string", "description": "Absolute path of the project folder the session works in."},
                 "prompt": {"type": "string", "description": "The first message. Without it the session starts idle and waits for send_message."},
@@ -168,7 +173,8 @@ Typical flow: new_session with a prompt, then wait_for_session, then read_sessio
                 "effort": {"type": "string", "description": "Reasoning effort, e.g. low, medium, high. Default: the user's default."},
                 "permission_mode": {"type": "string", "description": "Claude Code permission mode, e.g. default, acceptEdits, plan. Default: the user's default. Do not loosen it unless the human asked."},
                 "worktree": {"type": "boolean", "description": "Run the session in a new git worktree of dir, so it does not touch the main checkout. Default false."},
-                "open": {"type": "boolean", "description": "Also show the session in the dashboard window. Default false."}
+                "open": {"type": "boolean", "description": "Also show the session in the dashboard window. Default false."},
+                "notify_when_done": {"type": "boolean", "default": false, "description": NOTIFY_DESC}
             }, "required": ["dir"]},
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
         },
@@ -176,10 +182,11 @@ Typical flow: new_session with a prompt, then wait_for_session, then read_sessio
             "name": "send_message",
             "title": "Message a session",
             "description": "Send a user message to a session, as if the human typed it in the dashboard. Best when the session is idle or waiting_input (check with session_status). \
-It does not wait for the answer: follow with wait_for_session, then read_session. The dashboard returns an error when it cannot deliver to that session.",
+It does not wait for the answer: follow with wait_for_session, then read_session, or pass notify_when_done to get a message when it is done. The dashboard returns an error when it cannot deliver to that session.",
             "inputSchema": {"type": "object", "properties": {
                 "session": {"type": "string", "description": SESSION_DESC},
-                "text": {"type": "string", "description": "The message."}
+                "text": {"type": "string", "description": "The message."},
+                "notify_when_done": {"type": "boolean", "default": false, "description": NOTIFY_DESC}
             }, "required": ["session", "text"]},
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
         },
@@ -224,6 +231,30 @@ On timeout the result has timedOut: true and the current status; call again to k
             "title": "Show a session to the human",
             "description": "Bring the Session Dashboard window forward with this session open, for when the human should look at it (for example a permission prompt in waiting_permission).",
             "inputSchema": session_schema(),
+            "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+        },
+        {
+            "name": "notify_when_done",
+            "title": "Notify me when a session is done",
+            "description": "Get one short message in this session when a session that is working now ends its turn (finished, asks something, waits for a permission answer, failed or stopped): its title, status and the start of its last answer, arriving the way a user message does, also mid-turn. \
+For a session you start or message, the notify_when_done option of new_session and send_message does the same. Refused when the session is not working, or when the dashboard cannot reach your session (then use wait_for_session).",
+            "inputSchema": session_schema(),
+            "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+        },
+        {
+            "name": "archive_session",
+            "title": "Archive a session",
+            "description": "Archive a session, exactly as Archive in the dashboard's session menu does: it leaves the dashboard's lists and goes to its Archive screen, nothing is deleted, the human gets an Undo notice, and unarchive_session brings it back. \
+Refused while the session is starting, working or waiting_permission (stop it or wait for it first), for the dashboard's main agent, and for your own session. \
+Archive only sessions whose work is finished and no longer needed, or when the human asked.",
+            "inputSchema": session_schema(),
+            "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+        },
+        {
+            "name": "unarchive_session",
+            "title": "Unarchive a session",
+            "description": "Bring an archived session back into the dashboard's lists, as Restore on its Archive screen does. A title part or id prefix is looked up among the archived sessions (list_sessions with include_archived shows them).",
+            "inputSchema": {"type": "object", "properties": {"session": {"type": "string", "description": "The archived session: its id, an id prefix of at least 6 characters, or a unique part of its title."}}, "required": ["session"]},
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
         }
     ])
@@ -307,6 +338,9 @@ fn run_tool(name: &str, a: &Args, backend: &Backend, poll: Duration, cancelled: 
                     q.insert(k.into(), v.into());
                 }
             }
+            if opt_bool(a, "include_archived")? == Some(true) {
+                q.insert("archived".into(), true.into());
+            }
             let v = app("list", Value::Object(q))?;
             Ok((sdcli::fmt_list(&v, true), v))
         }
@@ -323,13 +357,22 @@ fn run_tool(name: &str, a: &Args, backend: &Backend, poll: Duration, cancelled: 
                     q.insert(k.into(), b.into());
                 }
             }
+            notify_args(a, &mut q)?;
             let v = app("new", Value::Object(q))?;
-            let text = format!("Started session {} \"{}\". It shows in Session Dashboard; use wait_for_session to wait for its answer.", v["id"].as_str().unwrap_or(""), v["title"].as_str().unwrap_or(""));
+            let text = format!("Started session {} \"{}\". It shows in Session Dashboard; {}", v["id"].as_str().unwrap_or(""), v["title"].as_str().unwrap_or(""), notify_text(&v, "use wait_for_session to wait for its answer."));
             Ok((text, v))
         }
         "send_message" => {
-            let v = app("send", json!({"session": session()?, "text": req_str(a, "text")?}))?;
-            Ok((format!("Sent to session {}. Use wait_for_session to wait for the answer.", v["id"].as_str().unwrap_or("")), v))
+            let mut q = Map::new();
+            q.insert("session".into(), session()?.into());
+            q.insert("text".into(), req_str(a, "text")?.into());
+            notify_args(a, &mut q)?;
+            let v = app("send", Value::Object(q))?;
+            Ok((format!("Sent to session {}. {}", v["id"].as_str().unwrap_or(""), notify_text(&v, "Use wait_for_session to wait for the answer.")), v))
+        }
+        "notify_when_done" => {
+            let v = app("notify", json!({"session": session()?, "caller": sdcli::caller_sessions()}))?;
+            Ok((format!("You will get a message in this session when session {} \"{}\" ends its turn.", v["id"].as_str().unwrap_or(""), v["title"].as_str().unwrap_or("")), v))
         }
         "read_session" => {
             let last = opt_int(a, "last", 1, 500)?.unwrap_or(20);
@@ -368,11 +411,41 @@ fn run_tool(name: &str, a: &Args, backend: &Backend, poll: Duration, cancelled: 
             let v = app("stop", json!({"session": session()?}))?;
             Ok((format!("Stopped session {}.", v["id"].as_str().unwrap_or("")), v))
         }
+        "archive_session" => {
+            let v = app("archive", json!({"session": session()?, "caller": sdcli::caller_sessions()}))?;
+            let id = v["id"].as_str().unwrap_or("");
+            let text = if v["already"] == true { format!("Session {id} was already archived.") } else { format!("Archived session {id} \"{}\". unarchive_session brings it back.", v["title"].as_str().unwrap_or("")) };
+            Ok((text, v))
+        }
+        "unarchive_session" => {
+            let v = app("unarchive", json!({"session": session()?}))?;
+            let id = v["id"].as_str().unwrap_or("");
+            let text = if v["already"] == true { format!("Session {id} is not archived.") } else { format!("Session {id} \"{}\" is back in the dashboard's lists.", v["title"].as_str().unwrap_or("")) };
+            Ok((text, v))
+        }
         "open_session" => {
             let v = app("open", json!({"session": session()?}))?;
             Ok((format!("Session {} is open in Session Dashboard.", v["id"].as_str().unwrap_or("")), v))
         }
         _ => Err(format!("Unknown tool: {name}")),
+    }
+}
+
+/// notify_when_done: asks the app to message the calling session (its ids go along) when done.
+fn notify_args(a: &Args, q: &mut Args) -> Result<(), String> {
+    if opt_bool(a, "notify_when_done")? == Some(true) {
+        q.insert("notify".into(), true.into());
+        q.insert("caller".into(), sdcli::caller_sessions().into());
+    }
+    Ok(())
+}
+
+/// What happens next: the notice is set up, could not be, or (not asked) the usual hint.
+fn notify_text(v: &Value, otherwise: &str) -> String {
+    match v.get("notify").and_then(Value::as_bool) {
+        Some(true) => "You will get a message in this session when its turn ends.".into(),
+        Some(false) => format!("No notice when it is done ({}); use wait_for_session.", v["notifyError"].as_str().unwrap_or("not possible")),
+        None => otherwise.into(),
     }
 }
 
@@ -394,6 +467,7 @@ mod tests {
 
     fn backend(cmd: &str, args: Value) -> Result<Value, SdError> {
         match cmd {
+            "list" if args.get("archived").is_some() => Ok(json!({"sessions": [{"id": "aaaabbbbccccdddd", "title": "Old", "status": "idle", "cwd": "/srv/old", "archived": true}]})),
             "list" => Ok(json!({"sessions": [{"id": "0123456789abcdef", "title": "Fix login", "status": "working", "cwd": "/srv/app", "control": "app", "updatedAt": 1}]})),
             "new" => {
                 assert_eq!(args, json!({"dir": "/srv/app", "prompt": "hi", "permissionMode": "plan", "worktree": true}));
@@ -403,6 +477,24 @@ mod tests {
             "read" => Ok(json!({"id": "0123456789abcdef", "title": "Fix login", "status": "idle", "messages": [
                 {"role": "user", "text": "fix it"}, {"role": "assistant", "text": "Fixed in auth.rs."}]})),
             "send" if args["session"] == "missing" => Err(SdError::App("no session matches missing".into())),
+            "archive" => {
+                // the caller's own session ids travel along, so the app can refuse a self-archive
+                assert!(args["caller"].is_array());
+                match args["session"].as_str() {
+                    Some("busy") => Err(SdError::App("\"Busy\" is working: archive it once it has stopped".into())),
+                    Some("old") => Ok(json!({"id": "aaaabbbbccccdddd", "title": "Old", "archived": true, "already": true})),
+                    _ => Ok(json!({"id": "0123456789abcdef", "title": "Fix login", "archived": true})),
+                }
+            }
+            "unarchive" => Ok(json!({"id": "0123456789abcdef", "title": "Fix login", "archived": false})),
+            "send" if args.get("notify").is_some() => {
+                assert!(args["caller"].is_array());
+                Ok(if args["session"] == "term" { json!({"id": "t1", "notify": false, "notifyError": "your session runs in a terminal the dashboard cannot type into"}) } else { json!({"id": "0123456789abcdef", "notify": true}) })
+            }
+            "notify" => {
+                assert!(args["caller"].is_array());
+                if args["session"] == "idle" { Err(SdError::App("\"Docs\" is idle, not working: there is nothing to wait for".into())) } else { Ok(json!({"id": "0123456789abcdef", "title": "Fix login", "notify": true})) }
+            }
             _ => Ok(json!({"id": "0123456789abcdef"})),
         }
     }
@@ -446,7 +538,7 @@ mod tests {
         assert_eq!(init["capabilities"], json!({"tools": {}}));
         assert_eq!(init["serverInfo"]["name"], "session-dashboard");
         let names: Vec<&str> = r["2"]["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_sessions", "new_session", "send_message", "read_session", "session_status", "wait_for_session", "stop_session", "open_session"]);
+        assert_eq!(names, ["list_sessions", "new_session", "send_message", "read_session", "session_status", "wait_for_session", "stop_session", "open_session", "notify_when_done", "archive_session", "unarchive_session"]);
         assert!(r["2"]["result"]["tools"].as_array().unwrap().iter().all(|t| t["inputSchema"]["type"] == "object" && t["description"].as_str().unwrap().len() > 40));
         assert_eq!(r["3"]["result"], json!({}));
         let list = &r["4"]["result"];
@@ -467,6 +559,54 @@ mod tests {
         assert_eq!(r["10"]["result"]["isError"], true);
         assert_eq!(r["10"]["result"]["content"][0]["text"], "session is required");
         assert_eq!(r["11"]["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn archive_and_list_archived() {
+        let (all, r) = exchange(&[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
+            call(2, "archive_session", json!({"session": "Fix login"})),
+            call(3, "archive_session", json!({"session": "busy"})),
+            call(4, "archive_session", json!({"session": "old"})),
+            call(5, "unarchive_session", json!({"session": "012345"})),
+            call(6, "list_sessions", json!({"include_archived": true})),
+            call(7, "archive_session", json!({})),
+            call(8, "list_sessions", json!({"include_archived": "maybe"})),
+        ]);
+        assert_eq!(all.len(), 8);
+        assert_eq!(r["2"]["result"]["isError"], false);
+        assert_eq!(r["2"]["result"]["content"][0]["text"], "Archived session 0123456789abcdef \"Fix login\". unarchive_session brings it back.");
+        assert_eq!(r["2"]["result"]["structuredContent"]["archived"], true);
+        assert_eq!(r["3"]["result"]["isError"], true);
+        assert!(r["3"]["result"]["content"][0]["text"].as_str().unwrap().contains("is working"));
+        assert_eq!(r["4"]["result"]["content"][0]["text"], "Session aaaabbbbccccdddd was already archived.");
+        assert_eq!(r["5"]["result"]["content"][0]["text"], "Session 0123456789abcdef \"Fix login\" is back in the dashboard's lists.");
+        let list = r["6"]["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(list.contains("aaaabbbbccccdddd  idle (archived)  Old"), "{list}");
+        assert_eq!(r["6"]["result"]["structuredContent"]["sessions"][0]["archived"], true);
+        assert_eq!(r["7"]["result"]["content"][0]["text"], "session is required");
+        assert_eq!(r["8"]["result"]["isError"], true);
+    }
+
+    #[test]
+    fn notify_when_done() {
+        let (all, r) = exchange(&[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
+            call(2, "send_message", json!({"session": "Fix login", "text": "go on", "notify_when_done": true})),
+            call(3, "send_message", json!({"session": "term", "text": "go on", "notify_when_done": true})),
+            call(4, "notify_when_done", json!({"session": "Fix login"})),
+            call(5, "notify_when_done", json!({"session": "idle"})),
+            call(6, "send_message", json!({"session": "Fix login", "text": "x", "notify_when_done": 3})),
+            call(7, "send_message", json!({"session": "Fix login", "text": "x"})),
+        ]);
+        assert_eq!(all.len(), 7);
+        assert_eq!(r["2"]["result"]["content"][0]["text"], "Sent to session 0123456789abcdef. You will get a message in this session when its turn ends.");
+        assert_eq!(r["3"]["result"]["isError"], false);
+        assert_eq!(r["3"]["result"]["content"][0]["text"], "Sent to session t1. No notice when it is done (your session runs in a terminal the dashboard cannot type into); use wait_for_session.");
+        assert_eq!(r["4"]["result"]["content"][0]["text"], "You will get a message in this session when session 0123456789abcdef \"Fix login\" ends its turn.");
+        assert_eq!(r["5"]["result"]["isError"], true);
+        assert_eq!(r["6"]["result"]["content"][0]["text"], "notify_when_done must be true or false");
+        assert_eq!(r["7"]["result"]["content"][0]["text"], "Sent to session 0123456789abcdef. Use wait_for_session to wait for the answer.");
     }
 
     #[test]

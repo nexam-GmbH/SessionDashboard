@@ -75,16 +75,17 @@ Built with Tauri 2, React 19 and shadcn/ui. Runs on Linux, macOS and Windows.
 
 ## Drive it from Claude Code and scripts
 
-Settings → Sessions → **Let Claude Code drive the app** gives every Claude Code session the app's tools (an MCP server named `session-dashboard`): start a session the app runs, message it, read it, wait for it, stop it, show it. A session started this way is an ordinary session of the app: listed, restored after a restart, its permission prompts answered by you. Sessions the app runs also accept messages from your other sessions (Claude Code's SendMessage).
+Settings → Sessions → **Let Claude Code drive the app** gives every Claude Code session the app's tools (an MCP server named `session-dashboard`): start a session the app runs, message it, read it, wait for it, stop it, show it, archive it (not while it works or waits for your answer, and never the asking session itself) or bring it back. With `notify_when_done` the asking session gets a short message when the session it started or messaged ends its turn, the way your own messages reach it (a terminal session gets it typed into its terminal where the app can do that). A session started this way is an ordinary session of the app: listed, restored after a restart, its permission prompts answered by you. Sessions the app runs also accept messages from your other sessions (Claude Code's SendMessage).
 
 The same from a terminal or a script, with the `sd` command (the app binary under that name):
 
 ```
 sd new --dir ~/repo --name "Fix login" --prompt "Find why the login loops"
-sd send "Fix login" "Also add a test"
+sd send --notify "Fix login" "Also add a test"   # --notify: message me when it is done
 sd wait "Fix login"        # 0 done, 2 waiting for you, 1 error
 sd read "Fix login" --last 5
-sd list
+sd list                    # --archived: archived sessions too
+sd archive "Fix login"     # sd unarchive brings it back
 ```
 
 A session is named by its id, an id prefix or a unique part of its title.
