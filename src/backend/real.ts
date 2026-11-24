@@ -1452,8 +1452,16 @@ export function realStart(opts: StartOpts): ID {
   void _u
   void _o
   void _m
+  // a session in an older account folder (before v0.8.16): taken over into ~/.claude first, so it
+  // goes on on the active account like every other one (in its old folder it ran on that folder's
+  // login, whichever account was active, and its limits were counted as yours). It stays in its
+  // folder only when the copy did not work.
+  const oldFolder = opts.resume && !host && rest.configDir ? rest.configDir : undefined
+  const takenOver = oldFolder ? invoke<boolean>("claude_take_over_session", { sessionId: opts.resume, fromDir: oldFolder }).catch(() => false) : Promise.resolve(false)
   // a new session and a fork run under the id the app shows them by (a fork gets a new one)
-  invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, accountId: account || undefined, promptUuid, host, settings: Object.keys(flags).length ? JSON.stringify(flags) : undefined } }).catch((e) => {
+  void takenOver
+    .then((moved) => invoke("claude_start", { opts: { key: id, sessionId: opts.resume && !opts.fork ? undefined : id, ...rest, ...(moved ? { configDir: undefined } : {}), accountId: account || undefined, promptUuid, host, settings: Object.keys(flags).length ? JSON.stringify(flags) : undefined } }))
+    .catch((e) => {
     // "already running": it is, keep listening to it
     if (/already running/i.test(String(e))) return
     owned.delete(id)
@@ -1819,7 +1827,14 @@ function signInFailed(key: ID, account: string) {
   authFailed.add(key)
   setTimeout(() => authFailed.delete(key), 30_000)
   if (isRunning(key)) realInterrupt(key)
-  noticeError(key, `The sign-in of ${accountName(getApp(), account)} does not work (401). Settings → Accounts → Sign in again, or switch to another account bottom left.`)
+  noticeError(key, `The sign-in of ${accountName(getApp(), account)} does not work (401). Bottom left → Sign in again, or switch to another account there.`)
+}
+
+/** After signing in again: who is signed in (e-mail, plan) and the limits, read anew; no restart. */
+export async function realReloadAccount() {
+  await loadCaps()
+  const { refreshUsage } = await import("@/features/usage/usageData")
+  await refreshUsage({ limits: true })
 }
 
 export function realInterrupt(id: ID) {
@@ -2319,7 +2334,8 @@ function onEvent({ key, event, exit }: EventPayload) {
   switch (event.type) {
     case "rate_limit_event": {
       // the account's limits as this call saw them (accounts on a token report them only this way)
-      if (!own.host && event.rate_limit_info) noteRateLimit(own.account ?? "", event.rate_limit_info as RateLimitInfo)
+      // only when it is known which account it runs on (a process the app took back after a reload is not)
+      if (!own.host && own.account !== undefined && event.rate_limit_info) noteRateLimit(own.account, event.rate_limit_info as RateLimitInfo)
       break
     }
     case "stream_event": {
@@ -2422,7 +2438,7 @@ function onEvent({ key, event, exit }: EventPayload) {
       }
       // a 401 on an account's token: it does not work. No ten retries: the turn stops, the account
       // is marked (footer, Settings → Accounts: sign in again)
-      if (event.subtype === "api_retry" && (event.error === "authentication_failed" || event.error_status === 401) && own.account) {
+      if (event.subtype === "api_retry" && (event.error === "authentication_failed" || event.error_status === 401) && own.account !== undefined) {
         signInFailed(key, own.account)
         break
       }
@@ -2448,7 +2464,7 @@ function onEvent({ key, event, exit }: EventPayload) {
     }
     case "result": {
       void import("@/features/session-view/sessionStore").then((m) => m.clearStopping(key))
-      if (event.is_error === true && own.account && /(?<![0-9])401(?![0-9])|OAuth access token is invalid|Failed to authenticate/i.test(String(event.result ?? ""))) signInFailed(key, own.account)
+      if (event.is_error === true && own.account !== undefined && /(?<![0-9])401(?![0-9])|OAuth access token is invalid|Failed to authenticate/i.test(String(event.result ?? ""))) signInFailed(key, own.account)
       // the turn you stopped ends with an error result: that is not a failure
       // an API error ends as subtype "success" with is_error; error subtypes carry their text in errors[]
       const failed = (event.is_error === true || (typeof event.subtype === "string" && event.subtype !== "success")) && !own.interrupting

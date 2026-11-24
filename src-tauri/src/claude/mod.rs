@@ -485,6 +485,13 @@ pub async fn claude_old_folders_pending(dirs: Vec<String>) -> Result<usize, Stri
     .await
 }
 
+/// One session of an older account folder into ~/.claude before it goes on (on the active account).
+/// True when ~/.claude has it now.
+#[tauri::command]
+pub async fn claude_take_over_session(session_id: String, from_dir: String) -> Result<bool, String> {
+    blocking(move || accounts::take_over_session(&accounts::root_of(Some(&from_dir)), &discover::claude_dir(), &session_id)).await
+}
+
 /// Copy the sessions of older account folders into ~/.claude (the originals stay). Returns how many.
 #[tauri::command]
 pub async fn claude_take_over_folders(dirs: Vec<String>) -> Result<usize, String> {

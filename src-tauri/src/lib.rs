@@ -215,6 +215,7 @@ pub fn run() {
             claude::account_has_token,
             claude::claude_old_folders_pending,
             claude::claude_take_over_folders,
+            claude::claude_take_over_session,
             claude::account_signin_start,
             claude::account_signin_input,
             claude::account_signin_cancel,

@@ -147,6 +147,22 @@ pub fn remove_copy(session_id: &str, to_dir: Option<&str>) -> Result<(), String>
 /// originals stay. One already there is replaced only when the old folder's is newer and longer
 /// (it went on there since). Returns how many were copied.
 pub fn take_over(from_root: &Path, to_root: &Path) -> Result<usize, String> {
+    take_over_where(from_root, to_root, None)
+}
+
+/// One session of an older account folder into the main one (it is about to go on there, on the
+/// active account). True when the main folder has it now (copied, or there already and not older).
+pub fn take_over_session(from_root: &Path, to_root: &Path, session_id: &str) -> Result<bool, String> {
+    if session_id.is_empty() || session_id.contains(|c: char| c == '/' || c == '\\') || session_id.contains("..") {
+        return Err("not a session id".into());
+    }
+    let Some(src) = find_transcript(from_root, session_id) else { return Ok(find_transcript(to_root, session_id).is_some()) };
+    take_over_where(from_root, to_root, Some(session_id))?;
+    let project = src.parent().and_then(Path::file_name).ok_or("transcript outside a project folder")?;
+    Ok(to_root.join("projects").join(project).join(format!("{session_id}.jsonl")).is_file())
+}
+
+fn take_over_where(from_root: &Path, to_root: &Path, only: Option<&str>) -> Result<usize, String> {
     if from_root == to_root {
         return Ok(0);
     }
@@ -161,6 +177,9 @@ pub fn take_over(from_root: &Path, to_root: &Path) -> Result<usize, String> {
         for f in files.flatten() {
             let src = f.path();
             if src.extension().and_then(|e| e.to_str()) != Some("jsonl") || is_copy(&src) {
+                continue;
+            }
+            if only.is_some_and(|id| src.file_stem().and_then(|x| x.to_str()) != Some(id)) {
                 continue;
             }
             let dest = dest_dir.join(f.file_name());
@@ -254,6 +273,25 @@ mod tests {
         assert_eq!(not_taken_over(&from, &to), 0);
         // again: nothing new
         assert_eq!(take_over(&from, &to).unwrap(), 0);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn takes_one_session_over() {
+        let base = tmp("takeone");
+        let (from, to) = (base.join(".claude-work"), base.join(".claude"));
+        let p = from.join("projects").join("-home-me-api");
+        fs::create_dir_all(&p).unwrap();
+        fs::write(p.join("s1.jsonl"), "one\n").unwrap();
+        fs::write(p.join("s2.jsonl"), "two\n").unwrap();
+        assert!(take_over_session(&from, &to, "s1").unwrap());
+        let q = to.join("projects").join("-home-me-api");
+        assert!(q.join("s1.jsonl").is_file());
+        assert!(!q.join("s2.jsonl").exists(), "only the one asked for");
+        // not in the old folder, but in the main one: fine; nowhere: false
+        assert!(take_over_session(&base.join("none"), &to, "s1").unwrap());
+        assert!(!take_over_session(&from, &to, "s9").unwrap());
+        assert!(take_over_session(&from, &to, "../x").is_err());
         let _ = fs::remove_dir_all(&base);
     }
 

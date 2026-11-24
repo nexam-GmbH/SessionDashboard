@@ -43,6 +43,8 @@ export interface Limits {
   plan?: string
   samples: LimitSample[]
   at: number
+  /** where they came from: Claude Code's get_usage, or what a session's model call reported */
+  source?: "usage" | "session"
 }
 
 // ---------- prices (USD per million tokens; platform docs, 2026-11) ----------
@@ -384,11 +386,14 @@ export const fiveHourOf = (l?: Limits | null) => l?.limits.find((x) => x.group =
 /** The weekly window for all models. */
 export const weeklyOf = (l?: Limits | null) => l?.limits.find((x) => x.kind === "weekly_all") ?? l?.limits.find((x) => x.group === "weekly")
 /** A limit used up: no work goes on on this account until it resets. */
-export const atLimit = (l?: Limits | null) => !!l?.limits.some((x) => x.percent >= 99)
+/** A window for the whole account (5-hour, weekly for all models), not one model's weekly window: only
+ * these stop every session (a full "Weekly · Fable" does not make the account full). */
+export const accountWide = (x: Limit) => x.group === "session" || x.kind === "session" || x.kind === "five_hour" || x.kind === "weekly_all" || x.kind === "seven_day"
+export const atLimit = (l?: Limits | null) => !!l?.limits.some((x) => accountWide(x) && x.percent >= 99)
 
-/** When work can go on: the reset of the limit that is used up, else of the 5-hour window (ms). */
+/** When work can go on: the reset of the account-wide limit that is used up, else of the 5-hour window (ms). */
 export function resetOf(l?: Limits | null): number | null {
-  const spent = l?.limits.filter((x) => x.percent >= 99 && x.resets_at) ?? []
+  const spent = l?.limits.filter((x) => accountWide(x) && x.percent >= 99 && x.resets_at) ?? []
   const pick = spent.length ? spent : (l?.limits.filter((x) => x.group === "session" && x.resets_at) ?? [])
   return pick.length ? Math.max(...pick.map((x) => Date.parse(x.resets_at!))) : null
 }
@@ -415,14 +420,19 @@ export function noteRateLimit(id: string, info: RateLimitInfo) {
   const limits: Limit[] = []
   if (w.five_hour) limits.push({ kind: "session", group: "session", percent: pct(w.five_hour), resets_at: at(w.five_hour.resetsAt) })
   if (w.seven_day) limits.push({ kind: "weekly_all", group: "weekly", percent: pct(w.seven_day), resets_at: at(w.seven_day.resetsAt) })
-  // only the window that stopped it, no others
-  if (!limits.length && info.rateLimitType && info.status === "rejected") limits.push({ kind: info.rateLimitType === "five_hour" ? "session" : "weekly_all", group: info.rateLimitType === "five_hour" ? "session" : "weekly", percent: 100, resets_at: at(info.resetsAt) })
+  // only the window that stopped it, and only an account-wide one (a model's weekly window or overage
+  // says nothing about the account)
+  if (!limits.length && info.status === "rejected" && (info.rateLimitType === "five_hour" || info.rateLimitType === "seven_day"))
+    limits.push({ kind: info.rateLimitType === "five_hour" ? "session" : "weekly_all", group: info.rateLimitType === "five_hour" ? "session" : "weekly", percent: 100, resets_at: at(info.resetsAt) })
   if (!limits.length) return
   useUsage.setState((s) => {
     const prev = s.accounts[id]
+    // your normal login has Claude Code's own numbers (get_usage, every 5 minutes): a session's
+    // report only steps in to say it is full (two sources taking turns made the footer jump)
+    if (id === "" && prev?.source === "usage" && Date.now() - prev.at < 10 * 60_000 && !limits.some((l) => l.percent >= 100)) return s
     // keep what this report does not say (a model-scoped weekly window from get_usage)
     const rest = (prev?.limits ?? []).filter((l) => !limits.some((n) => n.group === l.group && (n.kind === l.kind || l.kind === "five_hour")))
-    const next: Limits = { limits: [...limits, ...rest], plan: prev?.plan, samples: prev?.samples ?? [], at: Date.now() }
+    const next: Limits = { limits: [...limits, ...rest], plan: prev?.plan, samples: prev?.samples ?? [], at: Date.now(), source: prev?.source === "usage" ? "usage" : "session" }
     return { accounts: { ...s.accounts, [id]: next }, ...(id === "" ? { limits: next } : {}) }
   })
 }
@@ -454,7 +464,7 @@ export async function refreshUsage(what: { ledger?: boolean; limits?: boolean } 
           const rl = a.usage?.rate_limits as { limits?: Limit[] } | undefined
           // signed out, offline: nothing to show for it
           if (!rl?.limits && !a.samples?.length) continue
-          accounts[a.accountId ?? ""] = { limits: rl?.limits ?? [], plan: a.usage?.subscription_type as string | undefined, samples: a.samples ?? [], at: Date.now() }
+          accounts[a.accountId ?? ""] = { limits: rl?.limits ?? [], plan: a.usage?.subscription_type as string | undefined, samples: a.samples ?? [], at: Date.now(), source: "usage" }
         }
         useUsage.setState({ limits: accounts[""] ?? useUsage.getState().limits, accounts })
       })
@@ -473,9 +483,27 @@ export async function refreshUsage(what: { ledger?: boolean; limits?: boolean } 
 }
 
 /** Limits every 5 minutes, history every 10 (only new lines are read after the first time). */
+/**
+ * A window whose reset has passed is empty again: 0 % until the next report. Accounts on a token only
+ * learn their limits from a session's model call, so without this one stayed "at limit" after its reset.
+ */
+export function expireLimits(now = Date.now()) {
+  const st = useUsage.getState()
+  let changed = false
+  const fresh = (l: Limits): Limits => {
+    if (!l.limits.some((x) => x.percent > 0 && x.resets_at && Date.parse(x.resets_at) <= now)) return l
+    changed = true
+    return { ...l, limits: l.limits.map((x) => (x.percent > 0 && x.resets_at && Date.parse(x.resets_at) <= now ? { ...x, percent: 0, resets_at: null } : x)) }
+  }
+  const accounts = Object.fromEntries(Object.entries(st.accounts).map(([k, l]) => [k, fresh(l)]))
+  const limits = st.limits ? fresh(st.limits) : st.limits
+  if (changed) useUsage.setState({ accounts, limits })
+}
+
 export function startUsage() {
   if (started) return
   started = true
+  setInterval(() => expireLimits(), 60_000)
   setTimeout(() => void refreshUsage(), 4000)
   setInterval(() => void refreshUsage({ limits: true }), 5 * 60_000)
   setInterval(() => void refreshUsage({ ledger: true }), 10 * 60_000)
