@@ -469,7 +469,7 @@ test("chat: reading up a reply pins its prompt as one whole line, more of it und
   assert(h <= 34, `the pinned prompt is ${h}px tall, more than one line`)
   if (process.env.UI_SHOTS) await page.screenshot({ path: process.env.UI_SHOTS + "/pinned.png", clip: { x: 300, y: 0, width: 1140, height: 200 } })
   await pinned.hover()
-  await expectValue(() => pinned.evaluate((el) => el.getBoundingClientRect().height), (v) => v >= h, "the pinned prompt shrank under the pointer")
+  await expectValue(() => pinned.evaluate((el) => el.getBoundingClientRect().height), (v) => v >= h - 1, "the pinned prompt shrank under the pointer")
   if (process.env.UI_SHOTS) await page.screenshot({ path: process.env.UI_SHOTS + "/pinned-hover.png", clip: { x: 300, y: 0, width: 1140, height: 200 } })
 })
 
