@@ -31,13 +31,23 @@ export const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextarea
     if (!el) return
     const shrank = value.length < lastLen.current
     lastLen.current = value.length
-    if (shrank || !el.style.height) el.style.height = "auto"
-    else if (el.scrollHeight <= el.clientHeight) return
+    // collapsing the box for a moment makes the chat above it taller: the browser clamps its scroll
+    // (and the box's own) and they stayed there once the box grew back (Backspace made the chat
+    // jump up). Where they were is put back in the same frame, so nothing moves on screen.
+    const kept: [Element, number][] = []
+    if (shrank || !el.style.height) {
+      for (let n: Element | null = el; n; n = n.parentElement) if (n.scrollTop > 0) kept.push([n, n.scrollTop])
+      // the chat beside it (not an ancestor)
+      const chat = el.closest("[data-session-view]")?.querySelector('[role="log"][aria-label="Session transcript"]')
+      if (chat && chat.scrollTop > 0) kept.push([chat, chat.scrollTop])
+      el.style.height = "auto"
+    } else if (el.scrollHeight <= el.clientHeight) return
     // +1: zoomed web views round heights to fractions; without it a scrollbar shows up empty
     const h = el.scrollHeight + 1
     el.style.height = `${Math.min(h, maxHeight)}px`
     // a scrollbar only once the text is taller than the box can grow
     el.style.overflowY = h > maxHeight ? "auto" : "hidden"
+    for (const [n, top] of kept) if (n.scrollTop !== top) n.scrollTop = top
   }, [value, maxHeight])
 
   // The wrapper always renders so toggling the layer never remounts (and blurs) the textarea.

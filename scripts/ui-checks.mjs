@@ -514,6 +514,33 @@ check("accounts: Add waits for the checked token before Signed in; an invalid si
   await visible("[role=dialog]").filter({ hasText: "Sign work@firm.de in again" }).first().waitFor({ timeout: 3000 })
 })
 
+check("composer: Backspace in a multi-line prompt leaves the chat where it is", async () => {
+  await load("#/")
+  const ids = await discover()
+  await go(`#/session/${ids.main}`)
+  const log = visible('[role="log"][aria-label="Session transcript"]').first()
+  await log.waitFor({ timeout: 3000 })
+  const box = visible("[data-session-view] textarea").first()
+  await box.click()
+  // a few lines in the box, then the chat scrolled to its end
+  await box.fill("one\ntwo\nthree\nfour\nfive\nsix")
+  await wait(200)
+  await log.evaluate((el) => (el.scrollTop = el.scrollHeight))
+  await wait(300)
+  const before = await log.evaluate((el) => el.scrollTop)
+  expect(before > 0, "the chat does not scroll in the demo world")
+  await box.focus()
+  await page.keyboard.press("End")
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Backspace")
+    await wait(60)
+  }
+  await wait(300)
+  const after = await log.evaluate((el) => ({ top: el.scrollTop, end: el.scrollHeight - el.clientHeight }))
+  // still at its end (it may only follow the box shrinking down, never jump up)
+  expect(after.top >= Math.min(before, after.end) - 2, `the chat jumped from ${before} to ${after.top} (end ${after.end})`)
+})
+
 check("usage limit card: Switch and continue makes another account active and continues there", async () => {
   await load("#/")
   const card = () => visible('section[aria-label="Sessions at the usage limit"]').first()
