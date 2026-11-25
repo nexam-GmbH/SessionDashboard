@@ -84,6 +84,17 @@ pub fn start(account: &str, on: Channel<Value>) -> Result<(), String> {
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
+            // the terminal's questions get a terminal's answers: Windows' pseudo console asks where the
+            // cursor is when it starts and waits for the reply (no answer: claude never got going and
+            // no browser opened); Claude Code's interface asks what terminal this is
+            let answer = replies(&buf[..n]);
+            if !answer.is_empty() {
+                runs(|m| {
+                    if let Some(r) = m.get_mut(&account).filter(|r| r.id == id) {
+                        let _ = r.writer.write_all(&answer).and_then(|_| r.writer.flush());
+                    }
+                });
+            }
             raw.extend_from_slice(&buf[..n]);
             if raw.len() > KEEP {
                 raw.drain(..raw.len() - KEEP);
@@ -180,6 +191,24 @@ pub fn plain(raw: &[u8]) -> String {
         i += 1;
     }
     out
+}
+
+/// What a terminal answers to the questions in this output: where the cursor is (`ESC[6n` →
+/// `ESC[1;1R`), what kind of terminal it is (`ESC[c` / `ESC[0c` → a VT100 with extras).
+pub fn replies(out: &[u8]) -> Vec<u8> {
+    let mut answer = Vec::new();
+    let mut i = 0;
+    while let Some(p) = out[i..].windows(2).position(|w| w == b"\x1b[") {
+        let at = i + p + 2;
+        let rest = &out[at..];
+        if rest.starts_with(b"6n") {
+            answer.extend_from_slice(b"\x1b[1;1R");
+        } else if rest.starts_with(b"c") || rest.starts_with(b"0c") {
+            answer.extend_from_slice(b"\x1b[?1;2c");
+        }
+        i = at;
+    }
+    answer
 }
 
 fn tok(c: char) -> bool {
@@ -309,6 +338,16 @@ mod tests {
         assert!(extract(&plain(format!("{head}{T}").as_bytes())).is_empty());
         assert!(extract(&plain(format!("{head}{T}\r\n").as_bytes())).is_empty());
         assert_eq!(extract(&plain(format!("{head}{T}\r\n\r\n").as_bytes()))[0], T);
+    }
+
+    /// Windows' pseudo console waits for an answer to where the cursor is before anything runs.
+    #[test]
+    fn answers_the_terminal_questions() {
+        assert_eq!(replies(b"\x1b[6n"), b"\x1b[1;1R");
+        assert_eq!(replies(b"\x1b[?25l\x1b[c hello"), b"\x1b[?1;2c");
+        assert_eq!(replies(b"\x1b[6nx\x1b[0c"), b"\x1b[1;1R\x1b[?1;2c".to_vec());
+        // colours, cursor moves: no answer
+        assert!(replies(b"\x1b[32mok\x1b[0m\x1b[2J\x1b[1;1H").is_empty());
     }
 
     #[test]

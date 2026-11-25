@@ -75,8 +75,11 @@ export default function NewSessionView({ repoId: asked }: { repoId?: ID }) {
   const capsMode = useApp((s) => s.caps?.defaultMode)
   const fromCaps = (m?: string) => (m === "manual" ? "default" : (m as PermissionMode | undefined))
   const [pickedMode, setMode] = useState<PermissionMode | null>(null)
-  // until you pick one, the mode follows your claude's default (which may arrive after this opens)
-  const mode = pickedMode ?? fromCaps(capsMode) ?? defaults.permissionMode
+  // until you pick one: the app's default when you chose one there (Settings → New sessions; bypass
+  // only while it is allowed), else your claude's own default (which may arrive after this opens)
+  const allowBypass = useApp((s) => s.settings.allowBypass)
+  const appMode = defaults.permissionMode === "bypassPermissions" && !allowBypass ? "default" : defaults.permissionMode
+  const mode = pickedMode ?? (appMode !== "default" ? appMode : (fromCaps(capsMode) ?? "default"))
   const [fast, setFast] = useState(false)
   const [ultra, setUltra] = useState(false)
   const [style, setStyle] = useState("default")

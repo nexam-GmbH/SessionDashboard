@@ -157,6 +157,7 @@ function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }
     return path[1] === undefined ? v : (v as Record<string, unknown>)[path[1]]
   })
   const off = row.unavailable?.()
+  const settings = useApp((s) => s.settings)
   const set = (v: unknown) => setSetting(path, v)
   return (
     <SettingRow title={row.label} description={row.description && richText(row.description)} hint={off} disabled={!!off}>
@@ -165,7 +166,7 @@ function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }
       ) : field.type === "number" ? (
         <SmallSelect value={String(value)} onChange={(v) => set(Number(v))} options={(field.options ?? []).map((o) => ({ value: String(o.value), label: o.label }))} width={row.width} />
       ) : (
-        <SmallSelect value={value as string} onChange={set} options={field.type === "enum" ? field.options.filter((o) => !field.offer || field.offer(o.value)) : (field.options ?? [])} width={row.width} />
+        <SmallSelect value={value as string} onChange={set} options={field.type === "enum" ? field.options.filter((o) => o.value === value || !field.offer || field.offer(o.value, settings)) : (field.options ?? [])} width={row.width} />
       )}
     </SettingRow>
   )

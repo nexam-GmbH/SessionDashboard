@@ -734,6 +734,31 @@ check("new session screen: Ctrl+N, type, Enter starts the session with only the 
   expect((await transcriptText()).includes(prompt), "prompt not shown in the transcript")
 })
 
+check("settings: Bypass permissions can be the default once allowed, and a new session starts in it", async () => {
+  await load("#/")
+  await action("openSettings", "new")
+  const menu = async () => {
+    await page.getByRole("combobox", { name: /^Permissions/ }).click()
+    const items = await page.getByRole("option").allInnerTexts()
+    await page.keyboard.press("Escape")
+    return items
+  }
+  expect(!(await menu()).includes("Bypass permissions"), "bypass offered while it is not allowed")
+  await action("patchSettings", { allowBypass: true })
+  expect((await menu()).includes("Bypass permissions"), "bypass not offered once allowed")
+  await action("patchSettings", { defaults: { ...(await app((s) => s.settings.defaults)), permissionMode: "bypassPermissions" } })
+  await page.keyboard.press("Escape")
+  await action("closeSettings")
+  await page.keyboard.press("Control+n")
+  const screen = visible("[data-new-session]").first()
+  await screen.waitFor({ timeout: 3000 })
+  await screen.getByRole("textbox", { name: "Message Claude" }).fill("Check the build")
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => location.hash.startsWith("#/session/"), null, { timeout: 4000 })
+  const id = (await page.evaluate(() => location.hash)).split("/")[2]
+  expect(await until(() => app((s, id) => s.sessions[id]?.permissionMode === "bypassPermissions", id)), "the new session did not start in bypass")
+})
+
 check("new session screen: Open folder adds a folder that isn't a project yet and starts there", async () => {
   await load("#/new")
   const before = await app((s) => s.repoOrder.length)

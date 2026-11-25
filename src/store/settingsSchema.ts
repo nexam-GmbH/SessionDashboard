@@ -44,8 +44,8 @@ interface EnumField<V extends string> {
   default: V
   /** every value a saved setting may hold */
   options: readonly Option<V>[]
-  /** the values the row's menu offers, when not all of them */
-  offer?(v: V): boolean
+  /** the values the row's menu offers, when not all of them (it may depend on other settings) */
+  offer?(v: V, settings: Settings): boolean
   row?: SettingRowSpec
 }
 interface StringField {
@@ -172,8 +172,9 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
         type: "enum",
         default: "default",
         options: MODES,
-        offer: (m) => m !== "bypassPermissions" && m !== "dontAsk",
-        row: { page: "new", label: "Permissions", description: "bypassPermissions is never used as a default." },
+        // bypass only with "Allow bypass permissions mode" on
+        offer: (m, s) => m !== "dontAsk" && (m !== "bypassPermissions" || s.allowBypass),
+        row: { page: "new", label: "Permissions", description: "The mode new sessions start in. Bypass permissions is offered once Allow bypass permissions mode is on; a session then never asks before acting." },
       },
       worktree: { type: "boolean", default: true, row: { page: "new", label: "Worktree", description: "Start new sessions in `.claude/worktrees/<name>` (`claude --worktree`)." } },
     },
