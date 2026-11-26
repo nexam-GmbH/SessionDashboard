@@ -650,6 +650,16 @@ export function realMarkDone(id: ID, on: boolean) {
   sync()
 }
 
+/**
+ * Sessions on this computer that opened a pull request (Claude Code records its link), with the
+ * branch they work on and when they last changed: what the PR watcher asks GitHub about.
+ */
+export function realPrSessions(): { id: ID; prUrl: string; branch?: string; cwd: string; updatedMs: number }[] {
+  const out: { id: ID; prUrl: string; branch?: string; cwd: string; updatedMs: number }[] = []
+  for (const [id, m] of metas) if (m.prUrl && m.cwd) out.push({ id, prUrl: m.prUrl, branch: m.gitBranch, cwd: m.cwd, updatedMs: m.updatedMs })
+  return out
+}
+
 /** Marked as waiting for you by hand (orange until it does something new), or taken back. */
 export function realMarkWaiting(id: ID, on: boolean) {
   const waiting = { ...persist.waiting }

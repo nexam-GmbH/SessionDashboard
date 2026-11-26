@@ -308,6 +308,37 @@ test("context menu: Open, Rename, Mark as done, Archive; Mark as done and Not do
   }, `glyph still says "Marked done" after Not done (was "${before}")`)
 })
 
+test("context menu: Mark as waiting for you makes it orange, Not waiting for me takes it back", async (page) => {
+  await row(page, IDLE).click({ button: "right" })
+  const menu = page.getByRole("menu")
+  await menu.getByRole("menuitem", { name: "Mark as waiting for you" }).click()
+  await menu.waitFor({ state: "detached" })
+  await eventually(async () => (await glyphLabel(page, IDLE)) === "Waiting for you", 'glyph did not change to "Waiting for you"')
+  await row(page, IDLE).click({ button: "right" })
+  await menu.getByRole("menuitem", { name: "Not waiting for me" }).click()
+  await eventually(async () => (await glyphLabel(page, IDLE)) !== "Waiting for you", "still waiting for you after Not waiting for me")
+})
+
+test("pr watch: a new failure is told once, the same one after a fix stops, green starts over", async (page) => {
+  const r = await page.evaluate(async () => {
+    const m = await import("/src/features/prwatch/prWatch.ts")
+    const pr = (checks, sha, extra = {}) => ({ number: 7, url: "u", title: "t", headRefName: "b", headRefOid: sha, baseRefName: "dev", statusCheckRollup: checks, ...extra })
+    const red = [{ name: "lint", conclusion: "FAILURE" }, { name: "test", conclusion: "SUCCESS" }]
+    const out = []
+    out.push(m.decide(pr(red, "a"), undefined)) // tell
+    const told = { sig: m.redOf(pr(red, "a")).sig, sha: "a" }
+    out.push(m.decide(pr(red, "a"), told)) // wait: nothing pushed yet
+    out.push(m.decide(pr([{ name: "lint", status: "IN_PROGRESS" }], "b"), told)) // wait: the fix is being checked
+    out.push(m.decide(pr(red, "b"), told)) // stop: the same check failed again after a push
+    out.push(m.decide(pr([{ name: "e2e", conclusion: "FAILURE" }], "b"), told)) // tell: a new failure
+    out.push(m.decide(pr([{ name: "lint", conclusion: "SUCCESS" }], "c"), told)) // forget: green
+    out.push(m.decide(pr([], "c", { mergeable: "CONFLICTING" }), undefined)) // tell: a conflict
+    out.push(m.decide(pr([{ name: "claude-review", conclusion: "SUCCESS" }], "c", { reviewDecision: "CHANGES_REQUESTED" }), undefined)) // tell
+    return out
+  })
+  assert(JSON.stringify(r) === JSON.stringify(["tell", "wait", "wait", "stop", "tell", "forget", "tell", "tell"]), `decisions were ${JSON.stringify(r)}`)
+})
+
 test("new session: a long typed path keeps its last folder visible in the folder picker", async (page) => {
   await page.getByRole("button", { name: "New session", exact: true }).click()
   const trigger = page.getByRole("button", { name: /^Folder:/ })

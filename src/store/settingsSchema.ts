@@ -123,6 +123,15 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
       width: "w-20",
     },
   },
+  prAutoFix: {
+    type: "boolean",
+    default: true,
+    row: {
+      page: "sessions",
+      label: "Fix red pull requests by themselves",
+      description: "Every 2 minutes the app asks GitHub (gh, one call per repository) about the open pull requests your sessions opened. One that does not merge (a failed check, a reviewer asking for changes, a merge conflict) is sent back to its session with the reason, into its queue. Each failure once; when the same checks fail again after a fix, it stops, marks the session waiting for you and tells you.",
+    },
+  },
   chatSummary: {
     type: "boolean",
     default: true,

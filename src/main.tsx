@@ -17,6 +17,7 @@ import { IN_TAURI } from "./lib/platform"
 import { startReal } from "./backend/real"
 import { startUsage } from "./features/usage/usageData"
 import { startAccountWatch } from "./features/accounts/autoSwitch"
+import { startPrWatch } from "./features/prwatch/prWatch"
 
 // the desktop app shows your real Claude Code sessions; the browser preview runs the mock world
 if (REAL) {
@@ -44,6 +45,7 @@ markHidden()
 if (!POPOUT) {
   startUsage()
   startAccountWatch()
+  startPrWatch()
 }
 
 ;(window as unknown as { __sdLog?: (m: string, level?: number) => void }).__sdLog?.(`started ${innerWidth}x${innerHeight}`, 3)
