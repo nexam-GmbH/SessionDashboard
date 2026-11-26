@@ -19,7 +19,7 @@ import { onMovedOn, startHooks } from "./hooks"
 import { remoteTranscript, remoteTranscriptSince, startMachines } from "./machines"
 import { CLOUD, cloudSend, cloudTranscript, pollCloud, applyCloudList } from "./cloud"
 import { readGit } from "./git"
-import { MARKED_DONE, outcomeOf, type Outcome } from "@/lib/outcome"
+import { MARKED_DONE, MARKED_WAITING, outcomeOf, type Outcome } from "@/lib/outcome"
 import { startNotify } from "./notify"
 import { accountName, activeAccountOf } from "@/lib/accounts"
 import { noteRateLimit, type RateLimitInfo } from "@/features/usage/usageData"
@@ -118,6 +118,8 @@ type Persist = {
   pinned?: ID[]
   /** marked done by you, when (ms): holds while the session does nothing new */
   done?: Record<ID, number>
+  /** marked as waiting for you, when (ms): holds while the session does nothing new */
+  waiting?: Record<ID, number>
   /** sessions the app started only to run a terminal command (/permissions…): never listed */
   hidden?: ID[]
   /** each session's last colour (lib/outcome): shown after a start until its folder's git is read */
@@ -495,7 +497,7 @@ function buildExt(e: ExtSession, prev?: Session): Session {
     pinned: !!persist.pinned?.includes(e.id),
     archived: persist.archived.includes(e.id),
     // a machine's past session: how it ended, from its transcript and the machine's git
-    outcome: persist.done?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_DONE) : e.facts ? keepOutcome(prev?.outcome, settledOutcome({ ...e.facts, git: gitByFolder.get(folderKey(e.machine, e.cwd)) }, e.updatedMs, prev?.outcome)) : undefined,
+    outcome: persist.waiting?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_WAITING) : persist.done?.[e.id] !== undefined && !e.live ? keepOutcome(prev?.outcome, MARKED_DONE) : e.facts ? keepOutcome(prev?.outcome, settledOutcome({ ...e.facts, git: gitByFolder.get(folderKey(e.machine, e.cwd)) }, e.updatedMs, prev?.outcome)) : undefined,
   }
 }
 
@@ -604,7 +606,7 @@ function buildSession(id: ID, prev?: Session): Session | null {
     archived: persist.archived.includes(id),
     // how its work ended: marked done by you (until it does something new), else from the
     // transcript and the folder's git, so it stays after you look
-    outcome: markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, stableOutcome(id, cwd, meta)) : undefined,
+    outcome: markedDone(id, meta, persist.waiting) ? keepOutcome(prev?.outcome, MARKED_WAITING) : markedDone(id, meta) ? keepOutcome(prev?.outcome, MARKED_DONE) : meta ? keepOutcome(prev?.outcome, stableOutcome(id, cwd, meta)) : undefined,
   }
 }
 
@@ -620,8 +622,8 @@ function movedFrom(id: ID, prev?: Session): Session["movedFrom"] {
  * Marked done, and no new prompt or answer since (2 s for one being written as you marked). The
  * last message's time, not the file's: a title or other record written later is not new work.
  */
-function markedDone(id: ID, meta: Meta | undefined) {
-  const at = persist.done?.[id]
+function markedDone(id: ID, meta: Meta | undefined, marks = persist.done) {
+  const at = marks?.[id]
   if (at === undefined) return false
   const last = meta?.lastAt ? Date.parse(meta.lastAt) : (meta?.updatedMs ?? 0)
   return !(last > at + 2000)
@@ -642,6 +644,19 @@ export function realMarkDone(id: ID, on: boolean) {
   if (on) done[id] = Date.now()
   else delete done[id]
   persist.done = done
+  // one mark at a time
+  if (on && persist.waiting?.[id] !== undefined) persist.waiting = Object.fromEntries(Object.entries(persist.waiting).filter(([k]) => k !== id))
+  save()
+  sync()
+}
+
+/** Marked as waiting for you by hand (orange until it does something new), or taken back. */
+export function realMarkWaiting(id: ID, on: boolean) {
+  const waiting = { ...persist.waiting }
+  if (on) waiting[id] = Date.now()
+  else delete waiting[id]
+  persist.waiting = waiting
+  if (on && persist.done?.[id] !== undefined) persist.done = Object.fromEntries(Object.entries(persist.done).filter(([k]) => k !== id))
   save()
   sync()
 }

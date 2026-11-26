@@ -52,6 +52,7 @@ const OUTCOME_ICON: Record<OutcomeKind, LucideIcon> = {
   done: CircleCheck,
   marked: CircleCheck,
   asks: MessageCircleQuestion,
+  marked_wait: MessageCircleQuestion,
 }
 const AT_REST = new Set<SessionStatus>(["idle", "done_unseen", "stopped"])
 

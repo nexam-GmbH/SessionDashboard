@@ -13,8 +13,8 @@ import type { SettingRowEntry } from "./settingsSchema"
 import { selectNeedsYou, selectSessionOrder } from "./selectors"
 import { REAL } from "@/backend/mode"
 import { AWAY_MS, setAway, setNewSince } from "./away"
-import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
-import { MARKED_DONE } from "@/lib/outcome"
+import { realRename, realPin, homeDir, realAnswer, realArchive, realInterrupt, realMarkSeen, realMarkDone, realMarkWaiting, realResolve, realSend, realSettings, realStart, realTakeOver, realInject } from "@/backend/real"
+import { MARKED_DONE, MARKED_WAITING } from "@/lib/outcome"
 
 /**
  * Store actions — plain functions so components, palette commands, the mock
@@ -216,6 +216,11 @@ export function pinSession(id: ID, pinned?: boolean) {
 }
 
 /** You say it is done (or take that back): green until it works on something new. */
+export function markSessionWaiting(id: ID, on: boolean) {
+  if (REAL) realMarkWaiting(id, on)
+  else patchSession(id, { outcome: on ? MARKED_WAITING : undefined })
+}
+
 export function markSessionDone(id: ID, on: boolean) {
   if (REAL) realMarkDone(id, on)
   else patchSession(id, { outcome: on ? MARKED_DONE : undefined })

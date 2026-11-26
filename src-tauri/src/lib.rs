@@ -205,6 +205,8 @@ pub fn run() {
             claude::claude_permission_rule,
             claude::session_ports,
             claude::ci_failure_log,
+            claude::pr_list_mine,
+            claude::pr_feedback,
             claude::claude_user_setting,
             claude::claude_set_user_setting,
             claude::claude_set_config_dirs,

@@ -288,6 +288,60 @@ pub fn pr_status(cwd: &str) -> serde_json::Value {
     }
 }
 
+/// Your open pull requests in the repository of `cwd`, with their checks, in one call (the PR
+/// watcher asks this per repository, not per session). Null when `gh` is missing or not signed in.
+pub fn my_prs(cwd: &str) -> serde_json::Value {
+    let mut c = crate::sys::command("gh");
+    c.args(["pr", "list", "--author", "@me", "--state", "open", "--limit", "50", "--json", "number,url,title,headRefName,headRefOid,baseRefName,isDraft,mergeable,reviewDecision,statusCheckRollup"]);
+    c.current_dir(crate::sys::expand(cwd));
+    c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0");
+    match crate::sys::output_timeout(&mut c, 20) {
+        Some(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// What reviewers said on a pull request (a review bot's verdict that is no Actions run): the
+/// newest reviews and comments with a body, newest last, at most ~6k characters.
+pub fn pr_feedback(cwd: &str, number: u64) -> Result<String, String> {
+    let mut c = crate::sys::command("gh");
+    c.args(["pr", "view", &number.to_string(), "--json", "reviews,comments"]);
+    c.current_dir(crate::sys::expand(cwd));
+    c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0");
+    let o = crate::sys::output_timeout(&mut c, 20).ok_or("gh did not answer in 20 s")?;
+    if !o.status.success() {
+        return Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect());
+    }
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).map_err(|e| e.to_string())?;
+    Ok(feedback_text(&v))
+}
+
+/// Reviews and comments as text, by time, the newest kept when it is long.
+fn feedback_text(v: &serde_json::Value) -> String {
+    let mut items: Vec<(String, String)> = Vec::new();
+    for (key, at) in [("reviews", "submittedAt"), ("comments", "createdAt")] {
+        for r in v.get(key).and_then(|x| x.as_array()).into_iter().flatten() {
+            let body = r.get("body").and_then(|b| b.as_str()).unwrap_or("").trim();
+            if body.is_empty() {
+                continue;
+            }
+            let who = r.get("author").and_then(|a| a.get("login")).and_then(|l| l.as_str()).unwrap_or("someone");
+            let state = r.get("state").and_then(|s| s.as_str()).map(|s| format!(" ({})", s.to_lowercase().replace('_', " "))).unwrap_or_default();
+            let when = r.get(at).and_then(|t| t.as_str()).unwrap_or("").to_string();
+            items.push((when, format!("{who}{state}:\n{body}")));
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = String::new();
+    for (_, t) in items.iter().rev() {
+        if out.len() + t.len() > 6_000 {
+            break;
+        }
+        out = format!("{t}\n\n{out}");
+    }
+    out.trim().to_string()
+}
+
 /// The failing part of GitHub Actions runs (`gh run view --log-failed`), the last lines of each run,
 /// at most ~12k characters in all: what a session needs to fix a red check.
 pub fn ci_failure_log(cwd: &str, runs: &[u64]) -> Result<String, String> {
@@ -327,6 +381,20 @@ pub fn ci_failure_log(cwd: &str, runs: &[u64]) -> Result<String, String> {
 #[cfg(test)]
 mod direct_tests {
     use super::*;
+
+    /// Reviews and comments read in time order; empty bodies (a bare approval) left out.
+    #[test]
+    fn feedback_in_time_order() {
+        let v: serde_json::Value = serde_json::from_str(r#"{
+            "reviews": [{"author": {"login": "claude-review"}, "state": "CHANGES_REQUESTED", "body": "Missing ticket key", "submittedAt": "2026-11-26T10:00:00Z"},
+                        {"author": {"login": "me"}, "state": "COMMENTED", "body": "", "submittedAt": "2026-11-26T09:00:00Z"}],
+            "comments": [{"author": {"login": "bot"}, "body": "Lint failed", "createdAt": "2026-11-26T09:30:00Z"}]
+        }"#).unwrap();
+        let t = feedback_text(&v);
+        assert!(t.starts_with("bot:\nLint failed"));
+        assert!(t.ends_with("claude-review (changes requested):\nMissing ticket key"));
+        assert!(!t.contains("me ("));
+    }
 
     /// The direct git calls give what the script gave, on real repositories
     /// (`SD_GIT_REPOS=a:b cargo test same_as_the_script -- --ignored`).

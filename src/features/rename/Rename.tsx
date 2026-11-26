@@ -2,10 +2,10 @@
 // the pencil on a card, a double-click in the list, or F2 on a focused row. Enter keeps the name,
 // Esc leaves it; an empty name goes back to Claude's own title.
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { Archive, CircleCheck, CircleDashed, Crown, Pencil, SquareArrowOutUpRight } from "lucide-react"
+import { Archive, CircleCheck, CircleDashed, Crown, MessageCircleQuestion, Pencil, SquareArrowOutUpRight } from "lucide-react"
 import { create } from "zustand"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
-import { markSessionDone, openSession, renameSession } from "@/store/actions"
+import { markSessionDone, markSessionWaiting, openSession, renameSession } from "@/store/actions"
 import { archiveWithUndo } from "@/features/notifications/undo"
 import { setApp, useApp } from "@/store/app"
 import { REAL } from "@/backend/mode"
@@ -93,6 +93,7 @@ export function SessionMenu({ id, where, children }: { id: ID; where: string; ch
           <span className="ml-auto text-xs text-muted-foreground/70">F2</span>
         </ContextMenuItem>
         <DoneItem id={id} />
+        <WaitingItem id={id} />
         <LeadItem id={id} />
         <ArchiveItem id={id} />
       </ContextMenuContent>
@@ -108,6 +109,18 @@ function DoneItem({ id }: { id: ID }) {
   return (
     <ContextMenuItem className="text-sm" onSelect={() => markSessionDone(id, !marked)}>
       {marked ? <CircleDashed size={13} /> : <CircleCheck size={13} />} {marked ? "Not done" : "Mark as done"}
+    </ContextMenuItem>
+  )
+}
+
+/** Mark as waiting for you by hand (orange until it works on something new), or take it back. */
+function WaitingItem({ id }: { id: ID }) {
+  const marked = useApp((s) => s.sessions[id]?.outcome?.kind === "marked_wait")
+  const main = useApp((s) => s.sessions[id]?.role === "main")
+  if (main) return null
+  return (
+    <ContextMenuItem className="text-sm" onSelect={() => markSessionWaiting(id, !marked)}>
+      {marked ? <CircleDashed size={13} /> : <MessageCircleQuestion size={13} />} {marked ? "Not waiting for me" : "Mark as waiting for you"}
     </ContextMenuItem>
   )
 }

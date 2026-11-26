@@ -7,7 +7,7 @@ import type { RepoGit } from "./model"
 import { plural } from "./format"
 
 export type OutcomeTone = "red" | "orange" | "yellow" | "green"
-export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked" | "asks"
+export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked" | "marked_wait" | "asks"
 
 export interface Outcome {
   tone: OutcomeTone
@@ -59,6 +59,8 @@ export function outcomeOf(i: OutcomeInput): Outcome {
 
 /** You marked it done yourself (right-click → Mark as done): green until it works again. */
 export const MARKED_DONE: Outcome = { tone: "green", kind: "marked", label: "Marked done" }
+/** You marked it as waiting for you (right-click → Mark as waiting for you): orange until it works again. */
+export const MARKED_WAITING: Outcome = { tone: "orange", kind: "marked_wait", label: "Waiting for you" }
 
 export const OUTCOME_COLOR: Record<OutcomeTone, string> = {
   red: "var(--st-error)",

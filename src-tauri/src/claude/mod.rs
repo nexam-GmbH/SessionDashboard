@@ -240,6 +240,18 @@ pub async fn pr_status(cwd: String) -> Result<Value, String> {
     blocking(move || Ok(git::pr_status(&cwd))).await
 }
 
+/// Your open pull requests in the repository of `cwd`, with their checks (the PR watcher).
+#[tauri::command]
+pub async fn pr_list_mine(cwd: String) -> Result<Value, String> {
+    blocking(move || Ok(git::my_prs(&cwd))).await
+}
+
+/// What reviewers said on a pull request (reviews and comments), for sending to the session.
+#[tauri::command]
+pub async fn pr_feedback(cwd: String, number: u64) -> Result<String, String> {
+    blocking(move || git::pr_feedback(&cwd, number)).await
+}
+
 /// The failing GitHub Actions log lines of these runs, for sending to the session.
 #[tauri::command]
 pub async fn ci_failure_log(cwd: String, runs: Vec<u64>) -> Result<String, String> {
