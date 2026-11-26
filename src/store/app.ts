@@ -52,6 +52,8 @@ export interface Settings {
   claudeConfigDirs: string[]
   /** a pull request of a session that turns red is sent back to that session (the PR watcher) */
   prAutoFix: boolean
+  /** the repositories (GitHub names) the PR watcher looks at; none: every one */
+  prAutoFixRepos: string[]
   /** "In this chat" beside a chat: what it builds or debugs, written by a small model after a turn */
   chatSummary: boolean
   /** Claude accounts beside your normal login (their tokens are in the system's credential store) */

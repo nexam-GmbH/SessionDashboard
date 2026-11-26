@@ -294,6 +294,20 @@ function TerminalSync() {
   )
 }
 
+/** The repositories whose red pull requests go back to their sessions (GitHub names, comma separated). */
+function PrRepos() {
+  const on = useApp((st) => st.settings.prAutoFix)
+  const repos = useApp((st) => st.settings.prAutoFixRepos ?? [])
+  const [draft, setDraft] = useState(repos.join(", "))
+  const save = () => patchSettings({ prAutoFixRepos: draft.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean) })
+  if (!on) return null
+  return (
+    <SettingRow title="Watched repositories" description="Only pull requests of these GitHub repositories (by name, comma separated) are watched. Empty: every repository with a session that opened a pull request.">
+      <Input value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === "Enter" && save()} placeholder="every repository" aria-label="Watched repositories" className="h-7 w-64 text-xs" spellCheck={false} />
+    </SettingRow>
+  )
+}
+
 /**
  * Claude Code deletes transcripts older than cleanupPeriodDays (30 by default). The usage ledger
  * survives that, the chats themselves don't: offer a longer period, written on a click.
@@ -358,6 +372,7 @@ export function SourcesPage() {
       <Workspace />
       <SettingsSection>
         <RegistryRows page="sessions" />
+        <PrRepos />
         <TerminalSync />
         <ClaudeConnect />
         <KeepChats />

@@ -246,6 +246,12 @@ pub async fn pr_list_mine(cwd: String) -> Result<Value, String> {
     blocking(move || Ok(git::my_prs(&cwd))).await
 }
 
+/// The newest GitHub Actions runs on a branch (the PR watcher: is the base red too?).
+#[tauri::command]
+pub async fn branch_runs(cwd: String, branch: String) -> Result<Value, String> {
+    blocking(move || Ok(git::branch_runs(&cwd, &branch))).await
+}
+
 /// What reviewers said on a pull request (reviews and comments), for sending to the session.
 #[tauri::command]
 pub async fn pr_feedback(cwd: String, number: u64) -> Result<String, String> {

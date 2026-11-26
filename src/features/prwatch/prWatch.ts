@@ -44,7 +44,32 @@ interface Told {
   sig: string
   sha: string
   stopped?: boolean
+  /** workflows that were red on the base branch too: the session waits, and is told when they are green */
+  waitBase?: string[]
 }
+
+interface Run {
+  workflowName?: string
+  conclusion?: string
+  status?: string
+  createdAt?: string
+}
+
+/** Of these workflows, which are red and which green on a branch now (its newest finished run each). */
+export function baseState(runs: Run[], workflows: string[]) {
+  const red: string[] = []
+  const green: string[] = []
+  for (const w of workflows) {
+    const last = runs.filter((x) => x.workflowName === w && (x.status ?? "").toLowerCase() === "completed").sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0]
+    if (!last) continue
+    if (FAILED.test((last.conclusion ?? "").toUpperCase())) red.push(w)
+    else if (/SUCCESS/i.test(last.conclusion ?? "")) green.push(w)
+  }
+  return { red, green }
+}
+
+/** The repository of a pull request ("nexam-cloud" from https://github.com/nexam-GmbH/nexam-cloud/pull/7). */
+export const repoOfPr = (url: string) => /github\.com\/[^/]+\/([^/]+)\/pull\//.exec(url)?.[1] ?? ""
 
 const FAILED = /FAIL|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE/
 const DONE_OK = /SUCCESS|SKIPPED|NEUTRAL|CANCEL/
@@ -92,11 +117,17 @@ const keep = () => {
   }
 }
 
-/** The message a session gets about its red PR. */
-async function message(pr: WatchedPr, cwd: string): Promise<string> {
+/** The message a session gets about its red PR (`onBase`: failing workflows red on the base too). */
+async function message(pr: WatchedPr, cwd: string, onBase: string[]): Promise<string> {
   const { invoke } = await import("@tauri-apps/api/core")
   const r = redOf(pr)
   const parts: string[] = [`Pull request #${pr.number} (${pr.title}) does not merge.`]
+  // red on the base branch too: nothing this PR can fix; it waits, and the app says when to go on
+  if (onBase.length && onBase.length === new Set(r.failing.map((c) => c.workflowName || checkName(c))).size && !r.conflict && !r.changes) {
+    parts.push(`${onBase.join(", ")} is red on ${pr.baseRefName} too, so the cause is not in this PR. Do not change it for this and do not start a watcher of your own: the app tells you here as soon as ${pr.baseRefName} is green again, then merge it in and push. Say in one line what fails on ${pr.baseRefName}, then end your turn.`)
+    return parts.join("\n\n")
+  }
+  if (onBase.length) parts.push(`Red on ${pr.baseRefName} too (not from this PR): ${onBase.join(", ")}.`)
   const runs = [...new Set(r.failing.map((c) => /\/actions\/runs\/(\d+)/.exec(c.detailsUrl ?? "")?.[1]).filter((x): x is string => !!x).map(Number))]
   if (r.failing.length) parts.push(`Failing: ${[...new Set(r.failing.map(checkName))].join(", ")}.`)
   if (runs.length) {
@@ -143,8 +174,11 @@ async function tick() {
       const prs = await invoke<WatchedPr[] | null>("pr_list_mine", { cwd: sessions[0].cwd }).catch(() => null)
       if (!prs) continue
       let any = false
+      const only = st.settings.prAutoFixRepos ?? []
       for (const pr of prs) {
         if (pr.isDraft) continue
+        // only the repositories chosen in Settings (none listed: every one)
+        if (only.length && !only.some((r) => r.toLowerCase() === repoOfPr(pr.url).toLowerCase())) continue
         // the session that opened it (its recorded link), else the newest on its branch
         const mine = sessions.filter((p) => p.prUrl === pr.url)
         const onBranch = mine.length ? mine : sessions.filter((p) => p.branch === pr.headRefName)
@@ -164,14 +198,31 @@ async function tick() {
 async function act(id: ID, cwd: string, pr: WatchedPr) {
   const s = getApp().sessions[id]
   if (!s) return
+  const { invoke } = await import("@tauri-apps/api/core")
+  // waiting for the base: once it is green again, the session merges it in (once)
+  const t = told[pr.url]
+  if (t?.waitBase?.length && !redOf(pr).green) {
+    const runs = await invoke<Run[] | null>("branch_runs", { cwd, branch: pr.baseRefName }).catch(() => null)
+    const b = baseState(runs ?? [], t.waitBase)
+    if (runs && !b.red.length && b.green.length) {
+      told[pr.url] = { ...t, waitBase: undefined }
+      keep()
+      sendMessage(id, `${pr.baseRefName} is green again (${b.green.join(", ")}). Merge origin/${pr.baseRefName} into ${pr.headRefName} for pull request #${pr.number}, run the checks, and push.`, "queue")
+    }
+    return
+  }
   const what = decide(pr, told[pr.url])
   if (what === "forget") {
     delete told[pr.url]
     keep()
   } else if (what === "tell") {
-    told[pr.url] = { sig: redOf(pr).sig, sha: pr.headRefOid }
+    // the failing workflows that are red on the base branch too
+    const workflows = [...new Set(redOf(pr).failing.map((c) => c.workflowName).filter((x): x is string => !!x))]
+    const runs = workflows.length ? await invoke<Run[] | null>("branch_runs", { cwd, branch: pr.baseRefName }).catch(() => null) : null
+    const onBase = baseState(runs ?? [], workflows).red
+    told[pr.url] = { sig: redOf(pr).sig, sha: pr.headRefOid, ...(onBase.length ? { waitBase: onBase } : {}) }
     keep()
-    sendMessage(id, await message(pr, cwd), "queue")
+    sendMessage(id, await message(pr, cwd, onBase), "queue")
   } else if (what === "stop") {
     told[pr.url] = { ...told[pr.url], sha: pr.headRefOid, stopped: true }
     keep()

@@ -207,6 +207,7 @@ pub fn run() {
             claude::ci_failure_log,
             claude::pr_list_mine,
             claude::pr_feedback,
+            claude::branch_runs,
             claude::claude_user_setting,
             claude::claude_set_user_setting,
             claude::claude_set_config_dirs,

@@ -339,6 +339,26 @@ test("pr watch: a new failure is told once, the same one after a fix stops, gree
   assert(JSON.stringify(r) === JSON.stringify(["tell", "wait", "wait", "stop", "tell", "forget", "tell", "tell"]), `decisions were ${JSON.stringify(r)}`)
 })
 
+test("pr watch: a workflow red on the base branch too is seen as the base's, green once its newest run passes", async (page) => {
+  const r = await page.evaluate(async () => {
+    const m = await import("/src/features/prwatch/prWatch.ts")
+    const runs = [
+      { workflowName: "CI", status: "completed", conclusion: "failure", createdAt: "2026-11-26T20:00:00Z" },
+      { workflowName: "CI", status: "completed", conclusion: "success", createdAt: "2026-11-26T18:00:00Z" },
+      { workflowName: "Lint", status: "completed", conclusion: "success", createdAt: "2026-11-26T20:00:00Z" },
+    ]
+    const later = [{ workflowName: "CI", status: "in_progress", conclusion: "", createdAt: "2026-11-26T22:00:00Z" }, { workflowName: "CI", status: "completed", conclusion: "success", createdAt: "2026-11-26T21:00:00Z" }, ...runs]
+    return {
+      red: m.baseState(runs, ["CI", "Lint"]),
+      after: m.baseState(later, ["CI"]),
+      repo: m.repoOfPr("https://github.com/nexam-GmbH/nexam-cloud/pull/492"),
+    }
+  })
+  assert(JSON.stringify(r.red) === JSON.stringify({ red: ["CI"], green: ["Lint"] }), `on the base: ${JSON.stringify(r.red)}`)
+  assert(JSON.stringify(r.after) === JSON.stringify({ red: [], green: ["CI"] }), `after a passing run: ${JSON.stringify(r.after)}`)
+  assert(r.repo === "nexam-cloud", `repo: ${r.repo}`)
+})
+
 test("new session: a long typed path keeps its last folder visible in the folder picker", async (page) => {
   await page.getByRole("button", { name: "New session", exact: true }).click()
   const trigger = page.getByRole("button", { name: /^Folder:/ })

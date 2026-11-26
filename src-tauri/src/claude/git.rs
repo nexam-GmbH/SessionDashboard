@@ -301,6 +301,21 @@ pub fn my_prs(cwd: &str) -> serde_json::Value {
     }
 }
 
+/// The newest GitHub Actions runs on a branch (the base of a red PR: is it red there too?).
+pub fn branch_runs(cwd: &str, branch: &str) -> serde_json::Value {
+    if branch.is_empty() || branch.starts_with('-') {
+        return serde_json::Value::Null;
+    }
+    let mut c = crate::sys::command("gh");
+    c.args(["run", "list", "--branch", branch, "--limit", "30", "--json", "workflowName,conclusion,status,createdAt"]);
+    c.current_dir(crate::sys::expand(cwd));
+    c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0");
+    match crate::sys::output_timeout(&mut c, 20) {
+        Some(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(serde_json::Value::Null),
+        _ => serde_json::Value::Null,
+    }
+}
+
 /// What reviewers said on a pull request (a review bot's verdict that is no Actions run): the
 /// newest reviews and comments with a body, newest last, at most ~6k characters.
 pub fn pr_feedback(cwd: &str, number: u64) -> Result<String, String> {
