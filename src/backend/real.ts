@@ -2065,6 +2065,13 @@ function buildRequest(key: ID, requestId: string, r: CanUseTool): { req: Pending
 
 function onCanUseTool(key: ID, requestId: string, r: CanUseTool) {
   toolOf.set(requestId, { key, input: r.input, suggestions: r.permission_suggestions, toolUseId: r.tool_use_id })
+  // a session in Bypass permissions asks only for its background subagents (Claude Code starts
+  // those in the default mode, not the session's): you chose never to be asked, so it goes through.
+  // A question or a plan is for you and still shows.
+  if (getApp().sessions[key]?.permissionMode === "bypassPermissions" && r.tool_name !== "AskUserQuestion" && r.tool_name !== "ExitPlanMode") {
+    respond(requestId, { behavior: "allow", updatedInput: r.input })
+    return
+  }
   const { req, status, waiting } = buildRequest(key, requestId, r)
   setApp((s) => ({ requests: { ...s.requests, [requestId]: req } }))
   setStatusLocal(key, status, { waitingFor: waiting })
