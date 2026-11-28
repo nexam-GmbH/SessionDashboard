@@ -12,6 +12,8 @@ export interface CacheState {
   ms: number
   tokens: number
   ttl: number
+  /** the model of that call */
+  model: string
   cost: { warm: number; cold: number } | null
 }
 
@@ -21,7 +23,7 @@ export function useCache(sessionId: ID): CacheState | null {
   if (!last) return null
   const expires = Date.parse(last.at) + last.ttl * 1000
   const warm = now < expires
-  return { warm, ms: Math.abs(expires - now), tokens: last.tokens, ttl: last.ttl, cost: cacheCost(last.model, last.tokens, last.ttl) }
+  return { warm, ms: Math.abs(expires - now), tokens: last.tokens, ttl: last.ttl, model: last.model, cost: cacheCost(last.model, last.tokens, last.ttl) }
 }
 
 export const minutes = (ms: number) => {

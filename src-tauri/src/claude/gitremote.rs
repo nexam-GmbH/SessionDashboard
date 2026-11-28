@@ -75,6 +75,7 @@ sd_read() {
   echo "@@read $now"
   rv=$(git remote -v 2>/dev/null)
   echo "@@remotes"; [ -n "$rv" ] && printf '%s\n' "$rv"
+  echo "@@origin $(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
   wl=$(git worktree list --porcelain 2>/dev/null)
   heads=; cur=
   while IFS= read -r l; do
@@ -189,6 +190,7 @@ fn parse_read(out: &str, quick: bool) -> Option<(i64, String, Vec<RWt>)> {
     let mut lines = out.lines();
     let t: i64 = lines.next()?.strip_prefix("@@read ")?.trim().parse().ok()?;
     let (mut remotes, mut refs, mut graph, mut when) = (String::new(), String::new(), String::new(), String::new());
+    let mut default_branch = String::new();
     let mut wts: Vec<RWt> = vec![];
     let mut section = "";
     for l in lines {
@@ -200,6 +202,9 @@ fn parse_read(out: &str, quick: bool) -> Option<(i64, String, Vec<RWt>)> {
                 if let Some(w) = wts.last_mut() {
                     w.head = h.to_string();
                 }
+            } else if let Some(o) = rest.strip_prefix("origin") {
+                default_branch = Refs::default_branch_from(o);
+                section = "";
             } else if let Some(i) = rest.strip_prefix("ign ") {
                 if let Some(w) = wts.last_mut() {
                     w.ign.push(i.trim_end_matches('/').to_string());
@@ -238,7 +243,7 @@ fn parse_read(out: &str, quick: bool) -> Option<(i64, String, Vec<RWt>)> {
         buf.push_str(l);
         buf.push('\n');
     }
-    let r = Refs { remotes: Refs::remotes_from(&remotes), branches: Refs::branches_from(&refs), graph: Refs::graph_from(&graph), when: Refs::when_from(&when) };
+    let r = Refs { remotes: Refs::remotes_from(&remotes), default_branch, branches: Refs::branches_from(&refs), graph: Refs::graph_from(&graph), when: Refs::when_from(&when) };
     let report = r.render(wts.iter().map(|w| WtRow { path: &w.path, head: &w.head, flags: &w.flags, status: w.status.as_deref() }), quick);
     Some((t, report, wts))
 }

@@ -297,6 +297,9 @@ impl Repo {
         let top = self.main_top.to_string_lossy().to_string();
         let r = &mut self.refs;
         r.remotes = Refs::remotes_from(&git(&top, &["remote", "-v"]).unwrap_or_default());
+        // origin/HEAD is a symbolic ref, always its own file ("ref: refs/remotes/origin/main"): read, no git run
+        let head = std::fs::read_to_string(self.common.join("refs/remotes/origin/HEAD")).unwrap_or_default();
+        r.default_branch = head.trim().strip_prefix("ref: refs/remotes/").map(Refs::default_branch_from).unwrap_or_default();
         r.branches = Refs::branches_from(&git(&top, &["for-each-ref", &format!("--format={REF_FORMAT}"), "refs/heads"]).unwrap_or_default());
         let heads: Vec<String> = self.wts.iter().map(|w| w.head.clone()).filter(|h| !h.is_empty() && !h.bytes().all(|b| b == b'0')).collect();
         // every commit on no remote, with its parents: one rev-list for all branches and worktrees
@@ -381,6 +384,8 @@ pub(super) const REF_FORMAT: &str = "%(refname:short)%09%(upstream:short)%09%(up
 #[derive(Default)]
 pub(super) struct Refs {
     pub remotes: Vec<(String, String)>,
+    /// origin's default branch (`refs/remotes/origin/HEAD`), "" when the clone does not know it
+    pub default_branch: String,
     /// for-each-ref rows (name, upstream, track, date) and the tip
     pub branches: Vec<(String, String)>,
     /// commits on no remote → their parents
@@ -398,6 +403,12 @@ pub(super) struct WtRow<'a> {
 }
 
 impl Refs {
+    /// `git symbolic-ref --short refs/remotes/origin/HEAD` ("origin/main") → "main"
+    pub fn default_branch_from(text: &str) -> String {
+        let t = text.trim();
+        t.strip_prefix("origin/").unwrap_or(t).to_string()
+    }
+
     /// `git remote -v`: (name, url), the first url of each name
     pub fn remotes_from(text: &str) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = vec![];
@@ -452,7 +463,11 @@ impl Refs {
         use std::fmt::Write;
         let has_remote = !self.remotes.is_empty();
         let url = self.remotes.iter().find(|(n, _)| n == "origin").or(self.remotes.first()).map(|(_, u)| u.as_str()).unwrap_or("");
-        let mut out = format!("@@url {url}\n@@remotes\n");
+        let mut out = format!("@@url {url}\n");
+        if !self.default_branch.is_empty() {
+            let _ = writeln!(out, "@@defaultbranch {}", self.default_branch);
+        }
+        out.push_str("@@remotes\n");
         for (n, _) in &self.remotes {
             let _ = writeln!(out, "{n}");
         }

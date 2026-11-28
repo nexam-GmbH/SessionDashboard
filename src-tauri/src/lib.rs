@@ -178,6 +178,7 @@ pub fn run() {
             claude::claude_scan,
             claude::claude_transcript,
             claude::claude_transcript_since,
+            claude::claude_subagents,
             claude::claude_transcript_to,
             claude::search_sessions,
             claude::search_in_session,

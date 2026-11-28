@@ -41,6 +41,8 @@ export interface RepoGit {
   /** "owner/name" as the remote spells it ("acme/api") */
   slug?: string
   hasRemote: boolean
+  /** origin's default branch (refs/remotes/origin/HEAD); unknown when the clone never fetched it */
+  defaultBranch?: string
   branch?: string
   changed: number
   untracked: number
@@ -240,6 +242,27 @@ export interface Subagent {
   startedAt: string
   finishedAt?: string
   summary?: string
+  /** its own transcript (subagents/agent-<id>.jsonl): its chat opens from it */
+  path?: string
+  /** a Workflow run's agent: the run and its phase there */
+  workflow?: string
+  phase?: string
+  /** what it does now ("Reading page.tsx") */
+  activity?: string
+  /** tokens its newest call read: how full its context is */
+  tokens?: number
+  model?: string
+}
+
+/** A Workflow run a session started: its name and phases (its agents are in `subagents`). */
+export interface WorkflowRun {
+  runId: string
+  sessionId: ID
+  name?: string
+  status?: string
+  phases: string[]
+  totalTokens?: number
+  durationMs?: number
 }
 
 // ---------- transcript (shaped after ACP; Claude specifics on top) ----------

@@ -18,12 +18,10 @@ import { accountName, accountTitle } from "@/lib/accounts"
 import { useActiveAccount } from "@/features/accounts/accountState"
 import { limitLine, useAccountChoices, useHasAccounts } from "@/features/accounts/AccountItems"
 import { compactHint, severity } from "@/features/session-view/details/contextMath"
+import { untilCompact, windowOf } from "@/lib/contextWindow"
 import { minutes, useCache } from "./cache"
 import { GHOST, PANEL } from "./Pickers"
 
-const WINDOW_TOKENS = 200_000
-// claude compacts this far before the window ends (room for the reply and its buffer)
-const COMPACT_MARGIN = 33_000
 
 const kTokens = (n: number) => {
   const t = (x: number) => x.toFixed(1).replace(/\.0$/, "")
@@ -78,13 +76,13 @@ export function ContextRing({ sessionId, canCompact }: { sessionId: ID; canCompa
   if (!usage) return null
   // a session in your terminal has no context report: its newest call's size stands in
   const ctx = usage.context
-  const win = ctx?.max || (cache && cache.tokens > WINDOW_TOKENS ? 1_000_000 : WINDOW_TOKENS)
+  const win = ctx?.max || windowOf(cache?.model ?? model, cache?.tokens)
   const pct = Math.max(0, Math.min(100, ctx ? Math.round((ctx.used / Math.max(1, ctx.max)) * 100) : usage.contextPct || (cache ? Math.round((cache.tokens / win) * 100) : 0)))
   const used = ctx?.used ?? Math.round((pct / 100) * win)
   const cold = !!cache && !cache.warm && !!cache.cost && cache.cost.cold >= 0.25
   const color = severity(pct)
   const buffer = ctx?.categories.find((c) => c.kind === "buffer" || /compact buffer/i.test(c.name))
-  const left = ctx ? (buffer ? Math.max(0, ctx.max - buffer.tokens - ctx.used) : null) : Math.max(0, win - COMPACT_MARGIN - used)
+  const left = ctx ? (buffer ? Math.max(0, ctx.max - buffer.tokens - ctx.used) : null) : untilCompact(cache?.model ?? model, win, used)
   const hint = compactHint(left)
   const r = 6
   const c = 2 * Math.PI * r

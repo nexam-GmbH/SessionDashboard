@@ -10,9 +10,10 @@ import { selectNeedsYou } from "@/store/selectors"
 import { POPOUT, REAL } from "./mode"
 import { setHomeDir } from "@/lib/format"
 import { claudeEffort } from "@/lib/effort"
+import { noteWindow } from "@/lib/contextWindow"
 import { attachmentsText, takeImages } from "@/features/composer/images"
 import type { ClaudeCaps, Workspace } from "@/store/app"
-import { DEFAULT_MODEL, type ID, type PendingRequest, type PermissionMode, type PermissionOption, type PermissionRequest, type PlanApproval, type QuestionRequest, type Repo, type Session, type SessionStatus, type Transcript } from "@/lib/model"
+import { DEFAULT_MODEL, type ID, type PendingRequest, type PermissionMode, type PermissionOption, type PermissionRequest, type PlanApproval, type QuestionRequest, type Repo, type Session, type SessionStatus, type Subagent, type Transcript, type WorkflowRun } from "@/lib/model"
 import { addPendingUser, addShellRun, applyRecords, applyTextDelta, bashRecord, emptyTranscript, endTurn, markAwaiting, newMapState, noteOutput, setShellRun, type MapState } from "./mapTranscript"
 import { extByMachine, extSession, folderKey, gitByFolder, hookState, registerSync, requestSync, type ExtSession } from "./ext"
 import { onMovedOn, startHooks } from "./hooks"
@@ -80,6 +81,8 @@ interface Live {
   configDir?: string
   updatedAt?: number
   statusUpdatedAt?: number
+  /** "cli": claude in a terminal; "sdk-cli": a `claude -p` (the app's own, or another program's) */
+  entrypoint?: string
 }
 interface Chunk {
   records: Record<string, unknown>[]
@@ -912,7 +915,9 @@ function sync() {
   for (const [id, r] of Object.entries(repos)) {
     const g = gitByFolder.get(folderKey(r.machine === CLOUD ? undefined : r.machine, r.rootPath))
     if (g && g !== r.git) {
-      repos[id] = { ...r, git: g }
+      // the branch PRs go into: origin's default; a clone that never learnt it, its main or master
+      const def = g.defaultBranch ?? (g.branches?.main ? "main" : g.branches?.master ? "master" : r.defaultBranch)
+      repos[id] = { ...r, git: g, defaultBranch: def }
       changedStruct = true
     }
   }
@@ -963,7 +968,23 @@ async function pollPids(): Promise<boolean> {
     const key = JSON.stringify(list)
     if (key === pidsKey) return false
     pidsKey = key
-    pidLive = new Map(list.filter((l) => l.sessionId).map((l) => [l.sessionId, l]))
+    // one session in two processes (the app's own `claude -p` and `claude --resume` in your
+    // terminal): the terminal's is the one it shows and the one replies are typed into
+    const next = new Map<ID, Live>()
+    for (const l of list) {
+      if (!l.sessionId) continue
+      const had = next.get(l.sessionId)
+      if (!had || (had.entrypoint === "sdk-cli" && l.entrypoint !== "sdk-cli")) next.set(l.sessionId, l)
+    }
+    pidLive = next
+    // continued in your terminal while the app's own process for it rests: the app lets go of it,
+    // so it shows what the terminal does and what you send here is typed into that terminal
+    if (!POPOUT) {
+      for (const [id, l] of pidLive) {
+        const own = owned.get(id)
+        if (l.entrypoint && l.entrypoint !== "sdk-cli" && own && !own.host && !own.sending && !isRunning(id)) realStop(id)
+      }
+    }
     return true
   } catch (e) {
     console.warn("claude_pids", e)
@@ -1029,6 +1050,7 @@ async function tailOpen() {
   }
 }
 async function tailOnce() {
+  await tailSubagents()
   const st = getApp()
   for (const id of st.recent.slice(0, 6)) {
     const meta = metas.get(id)
@@ -1053,6 +1075,147 @@ async function tailOnce() {
       await reloadWindow(id)
     }
   }
+}
+
+// ---------- subagents ----------
+interface RawSub {
+  id: string
+  path: string
+  agentType: string
+  description: string
+  toolUseId?: string
+  workflow?: string
+  phase?: string
+  background: boolean
+  model?: string
+  startedMs: number
+  updatedMs: number
+  toolCount: number
+  activity?: string
+  done: boolean
+  tokens: number
+  result?: string
+}
+interface RawRun {
+  runId: string
+  name?: string
+  status?: string
+  phases: string[]
+  totalTokens?: number
+  durationMs?: number
+}
+/** when each session's subagents were last read */
+const subRead = new Map<ID, number>()
+/** an agent's file still growing this recently: it works (a background one may outlive its session's turn) */
+const SUB_QUIET_MS = 120_000
+
+/** The chat key of a subagent's own transcript. */
+export const subagentKey = (agentId: ID) => `sub:${agentId}`
+
+/** Read the subagents of the sessions on screen: while they or their agents work every round, else now and then. */
+async function tailSubagents() {
+  const st = getApp()
+  const now = Date.now()
+  for (const id of st.recent.slice(0, 6)) {
+    const meta = metas.get(id)
+    if (!meta || placeOf(id).kind !== "local") continue
+    const s = st.sessions[id]
+    const busy = s?.status === "working" || s?.status === "starting" || (st.subagentIdsBySession[id] ?? []).some((a) => st.subagents[a]?.status === "running")
+    if (now - (subRead.get(id) ?? 0) < (busy ? 1400 : 30_000)) continue
+    subRead.set(id, now)
+    try {
+      const r = await invoke<{ agents: RawSub[]; workflows: RawRun[] }>("claude_subagents", { path: meta.path })
+      applySubagents(id, r.agents, r.workflows)
+    } catch {
+      // the folder went away (a cleanup): nothing to show
+    }
+  }
+  // the subagent chats that are open: what their files gained
+  for (const key of openSubs) {
+    const sub = getApp().subagents[key.slice(4)]
+    const off = offsets.get(key)
+    if (!sub?.path || off == null || loading.has(key)) continue
+    try {
+      const chunk = await invoke<Chunk>("claude_transcript_since", { path: sub.path, offset: off, tip: tips.get(key) })
+      offsets.set(key, chunk.offset)
+      tips.set(key, chunk.tip ?? tips.get(key))
+      if (chunk.records.length) patchTranscript(key, (t, m) => applyRecords(t, m, chunk.records, { running: sub.status === "running" }))
+      if (sub.status !== "running" && getApp().transcripts[key]?.turns.at(-1)?.status === "in_progress") patchTranscript(key, (t, m) => endTurn(t, m, false))
+    } catch {
+      offsets.delete(key)
+      openSubs.delete(key)
+    }
+  }
+}
+
+function applySubagents(sessionId: ID, agents: RawSub[], runs: RawRun[]) {
+  const st = getApp()
+  const parentWorks = st.sessions[sessionId]?.status === "working" || st.sessions[sessionId]?.status === "starting"
+  const now = Date.now()
+  const next: Record<ID, Subagent> = {}
+  for (const a of agents) {
+    const status: Subagent["status"] = a.done ? "completed" : now - a.updatedMs < SUB_QUIET_MS || parentWorks ? "running" : "stopped"
+    const prev = st.subagents[a.id]
+    const sub: Subagent = {
+      id: a.id,
+      sessionId,
+      parentToolUseId: a.toolUseId ?? "",
+      agentType: a.agentType,
+      description: a.description,
+      status: prev?.status === "waiting_permission" && status === "running" ? "waiting_permission" : status,
+      background: a.background,
+      spawnDepth: 1,
+      toolCount: a.toolCount,
+      startedAt: iso(a.startedMs),
+      ...(a.done ? { finishedAt: iso(a.updatedMs) } : {}),
+      ...(a.result ? { summary: a.result } : {}),
+      path: a.path,
+      ...(a.workflow ? { workflow: a.workflow } : {}),
+      ...(a.phase ? { phase: a.phase } : {}),
+      ...(a.activity ? { activity: a.activity, lastTool: a.activity } : {}),
+      tokens: a.tokens,
+      ...(a.model ? { model: a.model } : {}),
+    }
+    next[a.id] = prev && JSON.stringify(prev) === JSON.stringify(sub) ? prev : sub
+  }
+  const ids = agents.map((a) => a.id)
+  const wf: WorkflowRun[] = runs.map((r) => ({ ...r, sessionId }))
+  const sameIds = sameList(st.subagentIdsBySession[sessionId] ?? [], ids)
+  const sameSubs = ids.every((i) => st.subagents[i] === next[i])
+  const sameRuns = JSON.stringify(st.workflowRuns?.[sessionId] ?? []) === JSON.stringify(wf)
+  if (sameIds && sameSubs && sameRuns) return
+  setApp((s) => ({
+    subagents: { ...s.subagents, ...next },
+    subagentIdsBySession: sameIds ? s.subagentIdsBySession : { ...s.subagentIdsBySession, [sessionId]: ids },
+    ...(sameRuns ? {} : { workflowRuns: { ...s.workflowRuns, [sessionId]: wf } }),
+    ...(sameIds ? {} : { structVersion: s.structVersion + 1 }),
+  }))
+}
+
+/** subagent chats open now (at most a few are kept reading) */
+const openSubs = new Set<string>()
+
+/** Open a subagent's own chat: read its transcript, then keep it live while it is on screen. */
+export function realOpenSubagent(agentId: ID) {
+  const key = subagentKey(agentId)
+  const sub = getApp().subagents[agentId]
+  openSubs.delete(key)
+  openSubs.add(key)
+  while (openSubs.size > 3) openSubs.delete(openSubs.values().next().value as string)
+  if (!sub?.path || getApp().transcripts[key] || loading.has(key)) return
+  loading.add(key)
+  invoke<Chunk>("claude_transcript", { path: sub.path, max: WINDOW })
+    .then((chunk) => {
+      offsets.set(key, chunk.offset)
+      tips.set(key, chunk.tip)
+      const m = newMapState()
+      let t = applyRecords(emptyTranscript(key), m, chunk.records, { running: sub.status === "running" })
+      if (sub.status !== "running") t = endTurn(t, m, false)
+      maps.set(key, m)
+      setApp((s) => ({ transcripts: { ...s.transcripts, [key]: t } }))
+    })
+    .catch((e) => console.warn("claude_transcript (subagent)", e))
+    .finally(() => loading.delete(key))
 }
 
 /** Read a transcript's window again and swap it in at once (the old one stays on screen meanwhile). */
@@ -1415,6 +1578,9 @@ export function realStart(opts: StartOpts): ID {
   // an effort is passed only when it was chosen (a new session's picker, or picked in the app for
   // this one); a resumed session the app never set runs at what your settings give its model
   if (opts.resume && !opts.keepEffort && !getApp().sessions[opts.resume]?.effortSet) opts = { ...opts, effort: undefined }
+  // "default" (Settings → New sessions): the model your Claude Code settings pick, as claude names it;
+  // before claude answered, no --model at all (it then runs its own default as well)
+  if (opts.model === "default") opts = { ...opts, model: getApp().caps?.models.find((m) => m.value === "default")?.resolvedModel }
   const id = opts.resume && !opts.fork ? opts.resume : crypto.randomUUID()
   const host = opts.machine && opts.machine !== CLOUD ? opts.machine : undefined
   failed.delete(id)
@@ -1545,6 +1711,17 @@ export function realSend(id: ID, text: string, attachments?: string[]) {
     cloudSend(id, body)
       .then(() => setTimeout(() => void pollCloud(), 1500))
       .catch((e) => noticeError(id, `Could not send to the cloud session: ${String(e)}`))
+    return
+  }
+  // open in your terminal (claude --resume there): typed into that terminal, never a second process
+  // on the same conversation
+  const term = liveFor(id)
+  if (!owned.has(id) && !s.machine && term?.entrypoint && term.entrypoint !== "sdk-cli") {
+    void realInjectWay(id).then((way) =>
+      way && way !== "headless"
+        ? realInject(id, body).catch((e) => noticeError(id, `Could not type into its terminal: ${String(e)}`, false))
+        : noticeError(id, "It runs in a terminal the app can't type into: answer there, or turn on Settings → Sessions → Sync terminal sessions and start claude there again.", false),
+    )
     return
   }
   if (!owned.has(id)) {
@@ -2001,11 +2178,13 @@ function noticeInfo(id: ID, text: string) {
   patchTranscript(id, (t, m) => applyRecords(t, m, [{ type: "system", subtype: "informational", level: "info", content: text, uuid: `note-${crypto.randomUUID()}`, timestamp: new Date().toISOString() }], { running: isRunning(id) }))
 }
 
-function onContextUsage(key: ID, resp: { categories?: { name?: string; tokens?: number; kind?: string; isDeferred?: boolean }[]; totalTokens?: number; maxTokens?: number; percentage?: number }) {
+function onContextUsage(key: ID, resp: { categories?: { name?: string; tokens?: number; kind?: string; isDeferred?: boolean }[]; totalTokens?: number; maxTokens?: number; percentage?: number; model?: string; autoCompactThreshold?: number; isAutoCompactEnabled?: boolean }) {
   const cats = resp.categories ?? []
   const used = resp.totalTokens ?? cats.filter((c) => c.kind === "used").reduce((n, c) => n + (c.tokens ?? 0), 0)
   const max = resp.maxTokens ?? cats.filter((c) => c.kind !== "deferred" && !c.isDeferred).reduce((n, c) => n + (c.tokens ?? 0), 0)
   if (!max) return
+  // the window and the compact point of this model, for every session on it that was not asked yet
+  noteWindow(resp.model ?? getApp().sessions[key]?.model, max, resp.isAutoCompactEnabled === false ? undefined : resp.autoCompactThreshold)
   const pct = Math.round(resp.percentage ?? (used / max) * 100)
   const context = { used, max, categories: cats.map((c) => ({ name: c.name ?? "", tokens: c.tokens ?? 0, kind: c.kind ?? "", deferred: c.isDeferred })) }
   setApp((s) => (s.sessions[key] ? { sessions: { ...s.sessions, [key]: { ...s.sessions[key], usage: { ...s.sessions[key].usage, contextPct: pct, context } } } } : s))

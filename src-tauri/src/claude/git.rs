@@ -43,6 +43,8 @@ pub struct GitState {
     pub has_remote: bool,
     /// origin's URL (or the first remote's): who this repository is, whatever folder it is in
     pub remote_url: Option<String>,
+    /// origin's default branch ("main", "master", "develop"), when the clone knows it
+    pub default_branch: Option<String>,
     pub worktrees: Vec<Worktree>,
     pub branches: Vec<Branch>,
     pub error: Option<String>,
@@ -116,6 +118,10 @@ pub(super) fn parse(path: &str, out: &str) -> GitState {
                 continue;
             }
             if rest == "url" {
+                continue;
+            }
+            if let Some(v) = rest.strip_prefix("defaultbranch ") {
+                st.default_branch = Some(v.trim().to_string()).filter(|b| !b.is_empty());
                 continue;
             }
             if let Some(v) = rest.strip_prefix("wtunpushed ") {
@@ -307,7 +313,7 @@ pub fn branch_runs(cwd: &str, branch: &str) -> serde_json::Value {
         return serde_json::Value::Null;
     }
     let mut c = crate::sys::command("gh");
-    c.args(["run", "list", "--branch", branch, "--limit", "30", "--json", "workflowName,conclusion,status,createdAt"]);
+    c.args(["run", "list", "--branch", branch, "--limit", "100", "--json", "workflowName,conclusion,status,createdAt"]);
     c.current_dir(crate::sys::expand(cwd));
     c.env("GH_PROMPT_DISABLED", "1").env("GIT_TERMINAL_PROMPT", "0");
     match crate::sys::output_timeout(&mut c, 20) {

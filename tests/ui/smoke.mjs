@@ -351,12 +351,12 @@ test("pr watch: a workflow red on the base branch too is seen as the base's, gre
     return {
       red: m.baseState(runs, ["CI", "Lint"]),
       after: m.baseState(later, ["CI"]),
-      repo: m.repoOfPr("https://github.com/nexam-GmbH/nexam-cloud/pull/492"),
+      repo: m.repoOfPr("https://github.com/acme/api/pull/492"),
     }
   })
   assert(JSON.stringify(r.red) === JSON.stringify({ red: ["CI"], green: ["Lint"] }), `on the base: ${JSON.stringify(r.red)}`)
   assert(JSON.stringify(r.after) === JSON.stringify({ red: [], green: ["CI"] }), `after a passing run: ${JSON.stringify(r.after)}`)
-  assert(r.repo === "nexam-cloud", `repo: ${r.repo}`)
+  assert(r.repo === "api", `repo: ${r.repo}`)
 })
 
 test("new session: a long typed path keeps its last folder visible in the folder picker", async (page) => {

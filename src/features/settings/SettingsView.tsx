@@ -24,6 +24,7 @@ import { pollCloud } from "@/backend/cloud"
 import { Input } from "@/components/ui/input"
 import { NOTICES } from "./notices"
 import { PermissionsPage } from "./PermissionsPage"
+import { repoName } from "@/features/prwatch/repos"
 import { AccountsPage } from "@/features/accounts/AccountsPage"
 
 /** The settings sections, in the order the dialog lists them. */
@@ -150,6 +151,9 @@ function RegistryRows({ page }: { page: SettingsPage }) {
   return SETTING_ROWS.filter((e) => e.row.page === page).map((e) => <RegistryRow key={e.path.join(".")} entry={e} />)
 }
 
+/** The menu with the saved value in it, also when the menu no longer lists it (an older model id). */
+const withValue = (opts: readonly { value: string; label: string }[], v: string) => (!v || opts.some((o) => o.value === v) ? opts : [...opts, { value: v, label: v }])
+
 /** One registry setting: a switch for on/off, a menu for a choice. */
 function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }) {
   const value = useApp((s) => {
@@ -158,6 +162,8 @@ function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }
   })
   const off = row.unavailable?.()
   const settings = useApp((s) => s.settings)
+  // a menu from the installed claude (models) fills in once it answered
+  useApp((s) => (field.type === "string" && field.liveOptions ? s.caps : null))
   const set = (v: unknown) => setSetting(path, v)
   return (
     <SettingRow title={row.label} description={row.description && richText(row.description)} hint={off} disabled={!!off}>
@@ -166,7 +172,7 @@ function RegistryRow({ entry: { path, field, row } }: { entry: SettingRowEntry }
       ) : field.type === "number" ? (
         <SmallSelect value={String(value)} onChange={(v) => set(Number(v))} options={(field.options ?? []).map((o) => ({ value: String(o.value), label: o.label }))} width={row.width} />
       ) : (
-        <SmallSelect value={value as string} onChange={set} options={field.type === "enum" ? field.options.filter((o) => o.value === value || !field.offer || field.offer(o.value, settings)) : (field.options ?? [])} width={row.width} />
+        <SmallSelect value={value as string} onChange={set} options={field.type === "enum" ? field.options.filter((o) => o.value === value || !field.offer || field.offer(o.value, settings)) : withValue(field.liveOptions?.() ?? field.options ?? [], value as string)} width={row.width} />
       )}
     </SettingRow>
   )
@@ -298,8 +304,16 @@ function TerminalSync() {
 function PrRepos() {
   const on = useApp((st) => st.settings.prAutoFix)
   const repos = useApp((st) => st.settings.prAutoFixRepos ?? [])
-  const [draft, setDraft] = useState(repos.join(", "))
-  const save = () => patchSettings({ prAutoFixRepos: draft.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean) })
+  const saved = repos.join(", ")
+  const [draft, setDraft] = useState(saved)
+  // changed elsewhere (a reset, another window): show that, so a blur does not write the old list back
+  const [was, setWas] = useState(saved)
+  if (was !== saved) {
+    setWas(saved)
+    setDraft(saved)
+  }
+  // "acme/api" is kept as "api": pull requests are matched by the repository's name
+  const save = () => patchSettings({ prAutoFixRepos: [...new Set(draft.split(/[,\s]+/).map(repoName).filter(Boolean))] })
   if (!on) return null
   return (
     <SettingRow title="Watched repositories" description="Only pull requests of these GitHub repositories (by name, comma separated) are watched. Empty: every repository with a session that opened a pull request.">

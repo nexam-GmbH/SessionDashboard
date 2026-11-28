@@ -10,7 +10,7 @@ import { duration } from "@/lib/format"
 import { useExpanded, useItem } from "../sessionStore"
 import { buildToolSummary, toolDurationMs } from "./toolSummary"
 import { ToolBody } from "./ToolBodies"
-import { PlanCard, SubagentCard } from "./CardTools"
+import { PlanCard, SubagentCard, WorkflowCard } from "./CardTools"
 import { ToolLine } from "./ToolLine"
 
 export const ToolRow = memo(function ToolRow({ sessionId, itemId }: { sessionId: ID; itemId: ID }) {
@@ -24,6 +24,7 @@ const ToolRowInner = memo(function ToolRowInner({ sessionId, call, itemId }: { s
   // Inputs and outputs are one click away: every row starts collapsed.
   const [open, setOpen] = useExpanded(`tool:${itemId}`, false)
   if (summary.family === "agent") return <SubagentCard sessionId={sessionId} call={call} itemId={itemId} />
+  if (call.name === "Workflow") return <WorkflowCard sessionId={sessionId} call={call} itemId={itemId} />
   if (summary.family === "plan") return <PlanCard sessionId={sessionId} call={call} itemId={itemId} />
   const ms = toolDurationMs(call)
   return (

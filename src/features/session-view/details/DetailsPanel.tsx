@@ -48,6 +48,7 @@ import { setExpanded, useChangedFiles, useExpanded } from "../sessionStore"
 import { useVerification } from "../signals"
 import { StartFreshButton } from "./StartFresh"
 import { breakdown, compactHint, severity } from "./contextMath"
+import { untilCompact, windowOf } from "@/lib/contextWindow"
 import { lastItem, summarize, useSummaries, type SummaryKind } from "../summary/chatSummary"
 import { StatusGlyph } from "@/components/common/StatusGlyph"
 import { useShownStatus } from "@/store/selectors"
@@ -425,6 +426,7 @@ const Context = memo(function Context({ sessionId }: { sessionId: ID }) {
   const working = useApp((st) => st.sessions[sessionId]?.status === "working" || st.sessions[sessionId]?.status === "starting")
   // the newest call's size stands in where no breakdown can be had (a session in your terminal)
   const lastTokens = useApp((st) => st.transcripts[sessionId]?.lastCall?.tokens ?? 0)
+  const model = useApp((st) => st.transcripts[sessionId]?.lastCall?.model ?? st.sessions[sessionId]?.model)
   const owned = control === "owned"
   // a session the app runs answers how full its context is: ask when shown and after each turn
   useEffect(() => {
@@ -432,7 +434,7 @@ const Context = memo(function Context({ sessionId }: { sessionId: ID }) {
   }, [sessionId, owned, working])
   const caps = capabilities(control ?? "history")
 
-  const win = c?.max || (lastTokens > 200_000 ? 1_000_000 : 200_000)
+  const win = c?.max || windowOf(model, lastTokens)
   const used = c?.used ?? (lastTokens || Math.round((contextPct / 100) * win))
   const known = !!c || lastTokens > 0 || contextPct > 0
   const pct = c ? Math.round((c.used / Math.max(1, c.max)) * 100) : contextPct || Math.round((used / win) * 100)
@@ -449,18 +451,18 @@ const Context = memo(function Context({ sessionId }: { sessionId: ID }) {
       {!known ? (
         <p className="px-1.5 py-1 text-[13px] leading-[17px] text-cc-fg2">Send a message to see context usage.</p>
       ) : (
-        <ContextBody sessionId={sessionId} pct={pct} used={used} win={win} over={over} canCompact={caps.changeSettings && machine !== "cloud"} working={working} freshOk={machine !== "cloud"} owned={owned} />
+        <ContextBody sessionId={sessionId} model={model} pct={pct} used={used} win={win} over={over} canCompact={caps.changeSettings && machine !== "cloud"} working={working} freshOk={machine !== "cloud"} owned={owned} />
       )}
     </Section>
   )
 })
 
-function ContextBody({ sessionId, pct, used, win, over, canCompact, working, freshOk, owned }: { sessionId: ID; pct: number; used: number; win: number; over: boolean; canCompact: boolean; working: boolean; freshOk: boolean; owned: boolean }) {
+function ContextBody({ sessionId, model, pct, used, win, over, canCompact, working, freshOk, owned }: { sessionId: ID; model?: string; pct: number; used: number; win: number; over: boolean; canCompact: boolean; working: boolean; freshOk: boolean; owned: boolean }) {
   const c = useApp((st) => st.sessions[sessionId]?.usage.context)
   const b = c ? breakdown(c) : null
   const max = c?.max ?? win
   const share = (t: number) => (max > 0 ? `${((t / max) * 100).toFixed(1)}%` : "—")
-  const left = b ? b.untilCompact : Math.max(0, win - 33_000 - used)
+  const left = b ? b.untilCompact : untilCompact(model, win, used)
   const hint = compactHint(left)
   const meterLabel = b ? b.segments.map((x) => `${x.name}: ${k(x.tokens)}, ${Number(((x.tokens / max) * 100).toPrecision(2))}%`).join("; ") : `${pct}% used`
   return (

@@ -32,6 +32,7 @@ interface RawGit {
   isRepo: boolean
   hasRemote: boolean
   remoteUrl?: string
+  defaultBranch?: string
   worktrees: RawWorktree[]
   branches: RawBranch[]
   error?: string
@@ -76,6 +77,7 @@ function toRepoGit(cwd: string, g: RawGit): RepoGit {
     remoteName: g.remoteUrl?.replace(/\.git$/, "").split(/[/:]/).pop(),
     slug: g.remoteUrl?.replace(/\.git$/, "").replace(/\/+$/, "").split(/[/:]/).slice(-2).join("/"),
     hasRemote: g.hasRemote,
+    defaultBranch: g.defaultBranch,
     branch: here?.branch,
     changed: (here?.changed ?? 0) + (here?.untracked ?? 0),
     untracked: here?.untracked ?? 0,
@@ -90,7 +92,7 @@ function toRepoGit(cwd: string, g: RawGit): RepoGit {
 }
 
 function same(a: RepoGit | undefined, b: RepoGit) {
-  return !!a && a.remote === b.remote && a.root === b.root && a.branch === b.branch && a.changed === b.changed && a.unpushed === b.unpushed && a.ahead === b.ahead && a.behind === b.behind && a.error === b.error && JSON.stringify(a.looseEnds) === JSON.stringify(b.looseEnds) && JSON.stringify(a.branches) === JSON.stringify(b.branches)
+  return !!a && a.remote === b.remote && a.root === b.root && a.defaultBranch === b.defaultBranch && a.branch === b.branch && a.changed === b.changed && a.unpushed === b.unpushed && a.ahead === b.ahead && a.behind === b.behind && a.error === b.error && JSON.stringify(a.looseEnds) === JSON.stringify(b.looseEnds) && JSON.stringify(a.branches) === JSON.stringify(b.branches)
 }
 
 /**
@@ -145,6 +147,7 @@ export function gitFromPorcelain(machine: string, cwd: string, text: string) {
     remote: prev?.remote,
     remoteName: prev?.remoteName,
     slug: prev?.slug,
+    defaultBranch: prev?.defaultBranch,
     hasRemote: prev?.hasRemote ?? true,
     branch: branch === "(detached)" ? undefined : branch,
     changed: changed + untracked,

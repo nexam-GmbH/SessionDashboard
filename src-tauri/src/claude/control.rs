@@ -322,7 +322,7 @@ fn in_git(cwd: &str) -> bool {
 
 /// Whether a session's transcript exists in any project folder of its Claude config.
 fn transcript_exists(id: &str, config_dir: Option<&str>) -> bool {
-    let base = config_dir.filter(|d| !d.is_empty()).map(|d| std::path::PathBuf::from(crate::sys::expand(d))).unwrap_or_else(|| crate::sys::home().join(".claude"));
+    let base = config_dir.filter(|d| !d.is_empty()).map(|d| std::path::PathBuf::from(crate::sys::expand(d))).unwrap_or_else(super::discover::claude_dir);
     let file = format!("{id}.jsonl");
     std::fs::read_dir(base.join("projects")).map(|dirs| dirs.flatten().any(|d| d.path().join(&file).is_file())).unwrap_or(true)
 }

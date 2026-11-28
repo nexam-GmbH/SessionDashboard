@@ -6,6 +6,9 @@ import type { FileChange, ID, Item, ToolCall, ToolKind, Transcript, Turn, Pictur
 import { normPath } from "@/lib/format"
 import { classifyTool } from "@/features/session-view/tools/toolSummary"
 
+/** How Claude Code words a tool call that was not allowed (and the app's own "deny"). */
+const DENIED = /^\s*(?:Error: )?(?:The user doesn't want to (?:proceed|take this action)|The user denied this|Permission (?:for|to use) .{0,80}?(?:was|has been) denied|.{0,40}\btool use was rejected)/i
+
 type Usage = { output_tokens?: number; input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number } }
 type Rec = Record<string, unknown> & { type?: string; uuid?: string; timestamp?: string; message?: { id?: string; role?: string; content?: unknown; model?: string; stop_reason?: string; usage?: Usage } }
 type Block = Record<string, unknown> & { type?: string }
@@ -297,7 +300,9 @@ function applyRecord(b: Builder, r: Rec) {
         if (p.type !== "tool_result" || typeof p.tool_use_id !== "string") continue
         const failed = p.is_error === true
         const output = textOf(p.content).slice(0, 12000)
-        const denied = failed && /denied|rejected|doesn't want/i.test(output)
+        // denied by you, a rule, a safety check or auto mode: Claude Code's own wording at the start
+        // (not "Permission denied (publickey)" from a command that failed by itself)
+        const denied = failed && DENIED.test(output)
         const images = picturesOf(p.content)
         // SendUserFile: the files as delivered (size, type, claude.ai's id)
         const tur = (r as unknown as { toolUseResult?: { type?: string; attachments?: { path?: string; size?: number; media_type?: string; file_uuid?: string }[] } }).toolUseResult

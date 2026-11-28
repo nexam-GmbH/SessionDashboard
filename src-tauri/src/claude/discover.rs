@@ -103,8 +103,7 @@ pub fn capabilities() -> Result<Value, String> {
 /// The effort a session gets when none is chosen, from your Claude Code settings: `effortLevel`
 /// and `modelSettings.<model>.effortLevel` (claude itself does not report it). Null: not set.
 fn effort_settings() -> Value {
-    let dir = std::env::var("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| crate::sys::home().join(".claude"));
-    let v: Value = std::fs::read_to_string(dir.join("settings.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+    let v: Value = std::fs::read_to_string(claude_dir().join("settings.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
     let mut by_model = serde_json::Map::new();
     if let Some(ms) = v.get("modelSettings").and_then(Value::as_object) {
         for (model, s) in ms {
@@ -797,11 +796,11 @@ fn pid_sessions_in(root: &Path, out: &mut Vec<Value>, live: Option<&std::collect
     }
 }
 
-fn tool_activity(name: &str, input: &Value) -> String {
+pub(super) fn tool_activity(name: &str, input: &Value) -> String {
     let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
     let file = |k: &str| {
         let p = s(k);
-        p.rsplit('/').next().unwrap_or(p).to_string()
+        p.rsplit(['/', '\\']).next().unwrap_or(p).to_string()
     };
     match name {
         "Bash" => format!("Running {}", s("command").lines().next().unwrap_or("").chars().take(80).collect::<String>()),
@@ -1007,11 +1006,18 @@ pub fn asks_user(text: &str) -> bool {
     }
     const LEFT: &[&str] = &[
         "что осталось", "осталось сделать", "осталось:", "тебе нужно", "от тебя нужно", "нужно, чтобы ты", "нужно чтобы ты", "проверь сам", "сделай сам", "запусти сам",
-        "you need to", "you'll need to", "you will need to", "left for you", "what's left", "what is left", "remaining:", "still open:", "next steps for you", "action needed", "action required", "requires your", "please run", "please check", "please confirm",
+        "you need to", "you'll need to", "you will need to", "left for you", "what's left", "what is left", "still open:", "next steps for you", "action needed", "action required", "requires your", "please run", "please check", "please confirm",
         "was noch fehlt", "noch offen", "du musst", "musst du", "bitte prüf", "bitte bestätig",
     ];
     let low = tail.to_lowercase();
-    LEFT.iter().any(|p| low.contains(p))
+    // "If you need to change it later…", "when you need to…": a hint, not something left for you
+    const IF: &[&str] = &["if ", "when ", "whenever ", "in case ", "если ", "когда ", "falls ", "wenn "];
+    LEFT.iter().any(|p| {
+        low.match_indices(p).any(|(at, _)| {
+            let before: String = low[..at].chars().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect();
+            !IF.iter().any(|w| before.ends_with(w))
+        })
+    })
 }
 
 fn apply_line(m: &mut SessionMeta, v: &Value, from_tail: bool) {
@@ -1506,6 +1512,8 @@ mod asks_tests {
         assert!(!asks_user("Fixed the bug, added a test, all 42 pass. Committed and pushed to main."));
         assert!(!asks_user("Готово: PR #12 смержен, CI зелёный."));
         assert!(!asks_user("Merged. Let me know if anything else comes up."));
+        assert!(!asks_user("Pushed and merged. If you need to change the port later, it is in config.toml."));
+        assert!(!asks_user("All green. Tests remaining: 0."));
         // a question in the middle, a conclusion at the end
         assert!(!asks_user("Was the cache the cause? Yes: clearing it fixed the build. Done."));
     }

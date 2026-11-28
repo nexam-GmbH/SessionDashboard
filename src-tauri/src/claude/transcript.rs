@@ -120,15 +120,20 @@ fn cut(v: &mut Value, max: usize) {
     }
 }
 
-/// Keep only what the chat renders.
-fn slim(v: Value) -> Option<Value> {
+/// A subagent's own transcript (`<session>/subagents/agent-<id>.jsonl`): all of it is its chat.
+fn is_subagent_file(path: &str) -> bool {
+    path.contains("/subagents/") || path.contains("\\subagents\\")
+}
+
+/// Keep only what the chat renders (`side`: a subagent's file, whose records are all sidechain).
+fn slim(v: Value, side: bool) -> Option<Value> {
     let ty = v.get("type")?.as_str()?.to_string();
     // a message you sent while Claude worked is an attachment record (queued_command) of its own
     let queued = ty == "attachment" && v.get("attachment").and_then(|a| a.get("type")).and_then(Value::as_str) == Some("queued_command");
     if !matches!(ty.as_str(), "user" | "assistant" | "system") && !queued {
         return None;
     }
-    if v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+    if !side && v.get("isSidechain").and_then(Value::as_bool) == Some(true) {
         return None;
     }
     let mut out = Map::new();
@@ -256,7 +261,7 @@ pub fn read_window(path: &str, max: usize) -> Result<TranscriptChunk, String> {
         // keep the partial first line uncounted for the next round
         counted_from = from;
     }
-    let mut chunk = parse_bytes(&tail, start, max, start > 0);
+    let mut chunk = parse_bytes_of(&tail, start, max, start > 0, is_subagent_file(path));
     if start > 0 {
         // older records exist before the window
         chunk.skipped = chunk.skipped.max(1);
@@ -317,6 +322,10 @@ fn window(kept: Vec<(usize, Value)>, links: &[(usize, Link)], max: usize, offset
 /// Records in a chunk of transcript bytes read elsewhere (a VPS over ssh). `base` is the file offset
 /// of `bytes[0]`; when `partial_head` the chunk starts mid-file, so its first line is dropped.
 pub fn parse_bytes(bytes: &[u8], base: u64, max: usize, partial_head: bool) -> TranscriptChunk {
+    parse_bytes_of(bytes, base, max, partial_head, false)
+}
+
+fn parse_bytes_of(bytes: &[u8], base: u64, max: usize, partial_head: bool, side: bool) -> TranscriptChunk {
     let mut start = 0usize;
     if partial_head {
         match bytes.iter().position(|b| *b == b'\n') {
@@ -341,7 +350,7 @@ pub fn parse_bytes(bytes: &[u8], base: u64, max: usize, partial_head: bool) -> T
             continue;
         }
         if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            if let Some(s) = slim(v) {
+            if let Some(s) = slim(v, side) {
                 kept.push((n, s));
             }
         }
@@ -365,6 +374,7 @@ pub fn read_since(path: &str, offset: u64, tip: Option<String>) -> Result<Transc
     let mut records = Vec::new();
     let mut last = tip;
     let mut branched = false;
+    let side = is_subagent_file(path);
     loop {
         buf.clear();
         let n = r.read_until(b'\n', &mut buf).map_err(|e| e.to_string())?;
@@ -387,7 +397,7 @@ pub fn read_since(path: &str, offset: u64, tip: Option<String>) -> Result<Transc
             continue;
         }
         if let Ok(v) = serde_json::from_slice::<Value>(&buf) {
-            if let Some(s) = slim(v) {
+            if let Some(s) = slim(v, side) {
                 records.push(s);
             }
         }

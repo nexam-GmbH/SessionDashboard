@@ -68,8 +68,8 @@ export function baseState(runs: Run[], workflows: string[]) {
   return { red, green }
 }
 
-/** The repository of a pull request ("nexam-cloud" from https://github.com/nexam-GmbH/nexam-cloud/pull/7). */
-export const repoOfPr = (url: string) => /github\.com\/[^/]+\/([^/]+)\/pull\//.exec(url)?.[1] ?? ""
+export { repoOfPr, repoName } from "./repos"
+import { repoOfPr, repoName } from "./repos"
 
 const FAILED = /FAIL|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE/
 const DONE_OK = /SUCCESS|SKIPPED|NEUTRAL|CANCEL/
@@ -117,13 +117,19 @@ const keep = () => {
   }
 }
 
+/** Every failure of the PR is a workflow that is red on its base too (no conflict, no review asking for changes). */
+function onlyBase(pr: WatchedPr, onBase: string[]) {
+  const r = redOf(pr)
+  return onBase.length > 0 && onBase.length === new Set(r.failing.map((c) => c.workflowName || checkName(c))).size && !r.conflict && !r.changes
+}
+
 /** The message a session gets about its red PR (`onBase`: failing workflows red on the base too). */
 async function message(pr: WatchedPr, cwd: string, onBase: string[]): Promise<string> {
   const { invoke } = await import("@tauri-apps/api/core")
   const r = redOf(pr)
   const parts: string[] = [`Pull request #${pr.number} (${pr.title}) does not merge.`]
   // red on the base branch too: nothing this PR can fix; it waits, and the app says when to go on
-  if (onBase.length && onBase.length === new Set(r.failing.map((c) => c.workflowName || checkName(c))).size && !r.conflict && !r.changes) {
+  if (onlyBase(pr, onBase)) {
     parts.push(`${onBase.join(", ")} is red on ${pr.baseRefName} too, so the cause is not in this PR. Do not change it for this and do not start a watcher of your own: the app tells you here as soon as ${pr.baseRefName} is green again, then merge it in and push. Say in one line what fails on ${pr.baseRefName}, then end your turn.`)
     return parts.join("\n\n")
   }
@@ -178,7 +184,7 @@ async function tick() {
       for (const pr of prs) {
         if (pr.isDraft) continue
         // only the repositories chosen in Settings (none listed: every one)
-        if (only.length && !only.some((r) => r.toLowerCase() === repoOfPr(pr.url).toLowerCase())) continue
+        if (only.length && !only.some((r) => repoName(r).toLowerCase() === repoOfPr(pr.url).toLowerCase())) continue
         // the session that opened it (its recorded link), else the newest on its branch
         const mine = sessions.filter((p) => p.prUrl === pr.url)
         const onBranch = mine.length ? mine : sessions.filter((p) => p.branch === pr.headRefName)
@@ -200,11 +206,17 @@ async function act(id: ID, cwd: string, pr: WatchedPr) {
   if (!s) return
   const { invoke } = await import("@tauri-apps/api/core")
   // waiting for the base: once it is green again, the session merges it in (once)
-  const t = told[pr.url]
+  let t = told[pr.url]
+  // the session pushed since, or something else fails now: no longer only the base's; decide again
+  if (t?.waitBase?.length && (pr.headRefOid !== t.sha || redOf(pr).sig !== t.sig)) {
+    t = told[pr.url] = { ...t, waitBase: undefined }
+    keep()
+  }
   if (t?.waitBase?.length && !redOf(pr).green) {
     const runs = await invoke<Run[] | null>("branch_runs", { cwd, branch: pr.baseRefName }).catch(() => null)
     const b = baseState(runs ?? [], t.waitBase)
-    if (runs && !b.red.length && b.green.length) {
+    // every workflow it waits for is green there again (one with no finished run yet is not)
+    if (runs && !b.red.length && t.waitBase.every((w) => b.green.includes(w))) {
       told[pr.url] = { ...t, waitBase: undefined }
       keep()
       sendMessage(id, `${pr.baseRefName} is green again (${b.green.join(", ")}). Merge origin/${pr.baseRefName} into ${pr.headRefName} for pull request #${pr.number}, run the checks, and push.`, "queue")
@@ -220,7 +232,8 @@ async function act(id: ID, cwd: string, pr: WatchedPr) {
     const workflows = [...new Set(redOf(pr).failing.map((c) => c.workflowName).filter((x): x is string => !!x))]
     const runs = workflows.length ? await invoke<Run[] | null>("branch_runs", { cwd, branch: pr.baseRefName }).catch(() => null) : null
     const onBase = baseState(runs ?? [], workflows).red
-    told[pr.url] = { sig: redOf(pr).sig, sha: pr.headRefOid, ...(onBase.length ? { waitBase: onBase } : {}) }
+    // it waits for the base only when nothing else fails (the message then says: wait, do not fix)
+    told[pr.url] = { sig: redOf(pr).sig, sha: pr.headRefOid, ...(onlyBase(pr, onBase) ? { waitBase: onBase } : {}) }
     keep()
     sendMessage(id, await message(pr, cwd, onBase), "queue")
   } else if (what === "stop") {

@@ -5,6 +5,7 @@
 // session and after a restart, until the work itself is done.
 import type { RepoGit } from "./model"
 import { plural } from "./format"
+import { isUsageLimit } from "./limit"
 
 export type OutcomeTone = "red" | "orange" | "yellow" | "green"
 export type OutcomeKind = "limit" | "error" | "aborted" | "uncommitted" | "unpushed" | "no_pr" | "pr" | "merged" | "landed" | "removed" | "done" | "marked" | "marked_wait" | "asks"
@@ -30,10 +31,11 @@ export interface OutcomeInput {
   git?: RepoGit
 }
 
+/** a default branch by its usual names, for a clone that does not know origin's (no origin/HEAD) */
 const DEFAULT_BRANCH = /^(main|master|develop|development|dev|trunk)$/
 
 export function outcomeOf(i: OutcomeInput): Outcome {
-  if (i.apiError) return /limit/i.test(i.apiError) ? { tone: "red", kind: "limit", label: "Hit the usage limit" } : { tone: "red", kind: "error", label: i.apiError }
+  if (i.apiError) return isUsageLimit(i.apiError) ? { tone: "red", kind: "limit", label: "Hit the usage limit" } : { tone: "red", kind: "error", label: i.apiError }
   // the last word is the prompt's or a tool's: Claude never answered it (stopped, killed, crashed)
   if (!i.endedTurn && (i.lastRole === "user" || i.lastRole === "tool")) return { tone: "red", kind: "aborted", label: "Stopped before it finished" }
   // Claude left you a question or steps to do: waiting for you, even when its PR is merged
@@ -50,7 +52,7 @@ export function outcomeOf(i: OutcomeInput): Outcome {
   const b = branch ? g.branches?.[branch] : undefined
   const unpushed = here ? g.unpushed : (b?.unpushed ?? 0)
   if (unpushed > 0) return { tone: "yellow", kind: "unpushed", label: `${plural(unpushed, "commit")} not pushed` }
-  if (branch && DEFAULT_BRANCH.test(branch)) return { tone: "green", kind: "landed", label: `On ${branch}` }
+  if (branch && (g.defaultBranch ? branch === g.defaultBranch : DEFAULT_BRANCH.test(branch))) return { tone: "green", kind: "landed", label: `On ${branch}` }
   // its upstream deleted after the merge, or the branch itself deleted: merged and cleaned up
   if (b?.gone) return { tone: "green", kind: "merged", label: "Branch merged" }
   if (branch && !here && g.branches && !b) return { tone: "green", kind: "merged", label: "Branch deleted" }

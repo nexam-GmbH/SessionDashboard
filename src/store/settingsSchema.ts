@@ -2,11 +2,10 @@
 // its label, hover text and page. The store derives its defaults from this and checks what it reads
 // from localStorage against it, so a value of the wrong kind falls back to its default instead of
 // breaking a screen. Adding a simple setting = a field in `Settings` and an entry here.
-import type { Settings, Workspace } from "./app"
-import { DEFAULT_MODEL } from "@/lib/model"
+import { getApp, type Settings, type Workspace } from "./app"
 import { OS } from "@/lib/platform"
 import { MOD } from "@/components/common/bits"
-import { EFFORTS, MODES } from "@/features/composer/options"
+import { EFFORTS, MODELS, MODES } from "@/features/composer/options"
 
 /** localStorage key of the settings (kept since the first version: renaming it loses them all) */
 export const SETTINGS_KEY = "sd.settings"
@@ -53,6 +52,8 @@ interface StringField {
   default: string
   /** a menu of common values; any string still loads (a model id the menu does not list) */
   options?: readonly Option<string>[]
+  /** the menu when it comes from elsewhere at run time (the models the installed claude offers) */
+  liveOptions?: () => readonly Option<string>[] | undefined
   row?: SettingRowSpec
 }
 interface NumberField {
@@ -132,7 +133,7 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
       description: "Every 2 minutes the app asks GitHub (gh, one call per repository) about the open pull requests your sessions opened. One that does not merge (a failed check, a reviewer asking for changes, a merge conflict) is sent back to its session with the reason, into its queue. Each failure once; when the same checks fail again after a fix, it stops, marks the session waiting for you and tells you.",
     },
   },
-  prAutoFixRepos: { type: "list", default: ["nexam-cloud", "nexam-hcm", "dentlink"], item: isString },
+  prAutoFixRepos: { type: "list", default: [], item: isString },
   chatSummary: {
     type: "boolean",
     default: true,
@@ -168,13 +169,13 @@ export const SETTINGS: { [K in keyof Settings]-?: FieldFor<Settings[K]> } = {
     fields: {
       model: {
         type: "string",
-        default: DEFAULT_MODEL,
-        options: [
-          { value: "claude-opus-5-5", label: "Opus 5.5" },
-          { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
-          { value: "claude-haiku-5-5", label: "Haiku 5.5" },
-          { value: "claude-fable-5-2", label: "Fable 5.2" },
-        ],
+        // "default": what your Claude Code settings pick (`model` in ~/.claude/settings.json)
+        default: "default",
+        options: [{ value: "default", label: "Default" }, ...MODELS.map((m) => ({ value: m.value, label: m.label }))],
+        liveOptions: () => {
+          const models = getApp().caps?.models
+          return models?.length ? models.map((m) => ({ value: m.value, label: m.displayName.replace(/ \(recommended\)$/, "") })) : undefined
+        },
         row: { page: "new", label: "Model" },
       },
       effort: { type: "enum", default: "high", options: EFFORTS, row: { page: "new", label: "Effort" } },

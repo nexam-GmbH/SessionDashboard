@@ -14,7 +14,9 @@ import { PromptQueue } from "./composer/PromptQueue"
 import { Composer } from "./composer/Composer"
 import { DiffWorkerPool } from "./tools/InlineDiff"
 import { StatusAnnouncer } from "./StatusAnnouncer"
-import { useUiValue } from "./sessionStore"
+import { setUiValue, useUiValue } from "./sessionStore"
+import { ArrowLeft } from "lucide-react"
+import { compact, plural } from "@/lib/format"
 import { DetailsPanel } from "./details/DetailsPanel"
 
 export default function SessionView({ sessionId }: { sessionId: string }) {
@@ -32,24 +34,70 @@ export default function SessionView({ sessionId }: { sessionId: string }) {
 
 const SessionLayout = memo(function SessionLayout({ sessionId }: { sessionId: ID }) {
   const details = useApp((s) => s.settings.detailsOpen)
+  // a subagent's chat open in place of the session's (its card's Open)
+  const agentId = useUiValue<ID | null>(`subview:${sessionId}`, null)
+  const agentKnown = useApp((s) => (agentId ? !!s.subagents[agentId] : false))
   return (
     <div data-session-view={sessionId} data-chat className="flex h-full min-h-0 bg-background [contain:strict]">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <StatusAnnouncer sessionId={sessionId} />
-        <ArchivedBanner sessionId={sessionId} />
-        <ControlBanner sessionId={sessionId} />
-        {/* the active request takes the composer's place (Claude Code desktop); a terminal session's sits at the conversation's end */}
-        <Transcript sessionId={sessionId} requests={<AttentionDock sessionId={sessionId} />} />
-        <div className="@container shrink-0 pt-1.5">
-          <ActivityBar sessionId={sessionId} />
-          <PromptQueue sessionId={sessionId} />
-          <AttentionDock sessionId={sessionId} composer={(dock, docked) => <ComposerSlot sessionId={sessionId} dock={dock} docked={docked} />} />
+      {agentId && agentKnown ? (
+        <SubagentChat sessionId={sessionId} agentId={agentId} />
+      ) : (
+        <div className="flex min-w-0 flex-1 flex-col">
+          <StatusAnnouncer sessionId={sessionId} />
+          <ArchivedBanner sessionId={sessionId} />
+          <ControlBanner sessionId={sessionId} />
+          {/* the active request takes the composer's place (Claude Code desktop); a terminal session's sits at the conversation's end */}
+          <Transcript sessionId={sessionId} requests={<AttentionDock sessionId={sessionId} />} />
+          <div className="@container shrink-0 pt-1.5">
+            <ActivityBar sessionId={sessionId} />
+            <PromptQueue sessionId={sessionId} />
+            <AttentionDock sessionId={sessionId} composer={(dock, docked) => <ComposerSlot sessionId={sessionId} dock={dock} docked={docked} />} />
+          </div>
         </div>
-      </div>
+      )}
       {details && <DetailsPanel sessionId={sessionId} />}
     </div>
   )
 })
+
+/**
+ * A subagent's own chat (read only: only its session can message it): a bar with Back, what it
+ * does and how far it is, then its transcript as the session's own is shown. Esc goes back.
+ */
+function SubagentChat({ sessionId, agentId }: { sessionId: ID; agentId: ID }) {
+  const sub = useApp((s) => s.subagents[agentId])
+  const key = `sub:${agentId}`
+  const back = () => setUiValue(`subview:${sessionId}`, null)
+  useEffect(() => {
+    void import("@/backend/real").then((r) => r.realOpenSubagent(agentId))
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector("[role=dialog]")) setUiValue(`subview:${sessionId}`, null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [sessionId, agentId])
+  if (!sub) return null
+  const running = sub.status === "running" || sub.status === "waiting_permission"
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-cc-wash px-3 text-sm">
+        <button type="button" onClick={back} className="flex h-7 items-center gap-1 rounded-md px-2 text-cc-fg2 hover:bg-cc-wash hover:text-foreground" title="Back to the session (Esc)">
+          <ArrowLeft size={14} /> Back
+        </button>
+        <span className="shrink-0 text-cc-fg3">{sub.agentType === "general-purpose" || sub.agentType === "workflow-subagent" ? (sub.phase ?? "Agent") : sub.agentType}</span>
+        <span className="min-w-0 flex-1 truncate text-foreground">{sub.description}</span>
+        <span className="shrink-0 text-cc-fg2 tabular">
+          {running ? (sub.activity ?? "Working") : sub.status === "completed" ? "Done" : "Stopped"} · {plural(sub.toolCount, "tool")}
+          {sub.tokens ? ` · ${compact(sub.tokens)} context` : ""}
+        </span>
+      </div>
+      <Transcript sessionId={key} />
+      <div className="shrink-0 px-4 py-2 text-center text-[13px] text-cc-fg3">
+        {running ? "This agent is working; its session gets its report when it is done." : "Subagents take messages only from their session: write there."}
+      </div>
+    </div>
+  )
+}
 
 /** Rewind sets a new prefill; remounting the composer with it keeps the composer free of sync effects. */
 function ComposerSlot({ sessionId, dock, docked }: { sessionId: ID; dock: ReactNode; docked: boolean }) {

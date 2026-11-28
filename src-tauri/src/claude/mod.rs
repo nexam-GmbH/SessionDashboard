@@ -16,6 +16,7 @@ pub mod ports;
 pub mod remote;
 pub mod search;
 pub mod shell;
+pub mod subagents;
 pub mod transcript;
 pub mod watch;
 
@@ -250,6 +251,12 @@ pub async fn pr_list_mine(cwd: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn branch_runs(cwd: String, branch: String) -> Result<Value, String> {
     blocking(move || Ok(git::branch_runs(&cwd, &branch))).await
+}
+
+/// The subagents a session started (its transcript's `subagents/` folder): what each does, done or not.
+#[tauri::command]
+pub async fn claude_subagents(path: String) -> Result<subagents::Subagents, String> {
+    blocking(move || Ok(subagents::list(&path))).await
 }
 
 /// What reviewers said on a pull request (reviews and comments), for sending to the session.

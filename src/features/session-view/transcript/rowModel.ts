@@ -97,6 +97,12 @@ export function buildRows(order: ID[], items: Record<ID, Item>, turns: Turn[], v
       rows.push({ kind: "files", key: id, itemId: id, turnId: it.turnId })
       continue
     }
+    // an agent or a workflow is a card of its own (Claude Code desktop), never folded into "Ran 3 commands"
+    if (it.type === "tool_call" && (it.call.name === "Agent" || it.call.name === "Task" || it.call.name === "Workflow")) {
+      flushGroup()
+      rows.push({ kind: "tool", key: id, itemId: id, turnId: it.turnId })
+      continue
+    }
     if (it.type === "tool_call") {
       if (groupTurn && groupTurn !== it.turnId) flushGroup()
       group.push(id)

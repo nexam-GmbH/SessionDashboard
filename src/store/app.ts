@@ -8,6 +8,7 @@ import type {
   Repo,
   Session,
   Subagent,
+  WorkflowRun,
   Transcript,
 } from "@/lib/model"
 import type { RepoSpec } from "@/mocks/catalog"
@@ -144,6 +145,8 @@ export interface DataState {
   mainSessionId: ID
   subagents: Record<ID, Subagent>
   subagentIdsBySession: Record<ID, ID[]>
+  /** Workflow runs by session (their agents are subagents with `workflow` set) */
+  workflowRuns?: Record<ID, WorkflowRun[]>
   requests: Record<ID, PendingRequest>
   notifications: AppNotification[]
   transcripts: Record<ID, Transcript>
