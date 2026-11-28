@@ -1122,13 +1122,7 @@ async function tailSubagents() {
     const s = st.sessions[id]
     const busy = s?.status === "working" || s?.status === "starting" || (st.subagentIdsBySession[id] ?? []).some((a) => st.subagents[a]?.status === "running")
     if (now - (subRead.get(id) ?? 0) < (busy ? 1400 : 30_000)) continue
-    subRead.set(id, now)
-    try {
-      const r = await invoke<{ agents: RawSub[]; workflows: RawRun[] }>("claude_subagents", { path: meta.path })
-      applySubagents(id, r.agents, r.workflows)
-    } catch {
-      // the folder went away (a cleanup): nothing to show
-    }
+    await realLoadSubagents(id)
   }
   // the subagent chats that are open: what their files gained
   for (const key of openSubs) {
@@ -1146,6 +1140,20 @@ async function tailSubagents() {
       openSubs.delete(key)
     }
   }
+}
+
+/** Read a session's subagents now (false: it has no transcript here). */
+export async function realLoadSubagents(id: ID): Promise<boolean> {
+  const meta = metas.get(id)
+  if (!meta) return false
+  subRead.set(id, Date.now())
+  try {
+    const r = await invoke<{ agents: RawSub[]; workflows: RawRun[] }>("claude_subagents", { path: meta.path })
+    applySubagents(id, r.agents, r.workflows)
+  } catch {
+    // the folder went away (a cleanup): nothing to show
+  }
+  return true
 }
 
 function applySubagents(sessionId: ID, agents: RawSub[], runs: RawRun[]) {

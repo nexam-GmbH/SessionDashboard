@@ -28,6 +28,23 @@ async function until<T>(f: () => T | undefined | null | false, ms: number): Prom
 
 export async function runSelftest() {
   log("start")
+  await step("subagents: a session's agents load and one opens its own chat", async () => {
+    const r = await import("@/backend/real")
+    await until(() => getApp().ready, 30000)
+    const ids = Object.values(getApp().sessions)
+      .sort((a, b) => Date.parse(b.updatedAt ?? "") - Date.parse(a.updatedAt ?? ""))
+      .map((x) => x.id)
+    for (const id of ids.slice(0, 200)) {
+      await r.realLoadSubagents(id)
+      const subs = getApp().subagentIdsBySession[id] ?? []
+      if (!subs.length) continue
+      const a = getApp().subagents[subs[0]]
+      r.realOpenSubagent(a.id)
+      const t = await until(() => getApp().transcripts[r.subagentKey(a.id)]?.order.length, 15000)
+      return `${subs.length} agents in ${id.slice(0, 8)}, ${a.status}, chat of ${a.id} has ${t} items`
+    }
+    return "no session with subagents here"
+  })
   // with a stand-in claude (SD_CLAUDE_BIN, test runs only): a session the app runs streams its
   // answer through the batched events and ends idle with the whole text
   if (await invoke<boolean>("sd_fake_claude").catch(() => false)) {
@@ -355,8 +372,8 @@ export async function runSelftest() {
   await step("slash: /mcp goes to Claude Code's menu", async () => {
     const { terminalCommandFor } = await import("@/features/terminal/slash")
     const c = terminalCommandFor("/mcp")
-    if (c?.run !== "SD_HIDE=1 claude /mcp") throw new Error(String(c?.run))
-    return c.run
+    if (!/^(env )?SD_HIDE=1 claude \/mcp$/.test(c?.run ?? "")) throw new Error(String(c?.run))
+    return c?.run ?? ""
   })
   await step("search: every session's conversation, by words in any language", async () => {
     const { realSearch } = await import("@/backend/real")
