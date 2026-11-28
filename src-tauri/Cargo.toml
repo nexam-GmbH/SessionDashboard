@@ -1,6 +1,6 @@
 [package]
 name = "session-dashboard"
-version = "0.8.24"
+version = "0.8.25"
 description = "Session Dashboard: one place for all your Claude Code sessions"
 authors = ["you"]
 edition = "2024"
